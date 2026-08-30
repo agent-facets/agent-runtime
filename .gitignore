@@ -1,0 +1,32 @@
+.turbo/
+.idea/
+lefthook-local.yml
+mise.local.toml
+.DS_Store
+
+# Facet Adapter targets
+.agents/
+.claude/
+.codex/
+.opencode/
+.pr-reviews/
+.mcp.json
+
+.env
+
+*.bun-build
+bun.lockb
+
+dist/
+node_modules/
+
+# prepack/postpack backup (safety net if postpack is interrupted)
+.package.json.bak
+
+# Tarballs produced by `bun pm pack` / `npm pack` during local publish dry-runs
+*.tgz
+
+# used for testing and whatnot
+tmp/
+
+.gstack/
