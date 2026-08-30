@@ -1,0 +1,134 @@
+schema: spec-driven
+
+# Project context: this is shown to the agent when creating artifacts.
+context: |
+  # Project Constitution
+
+  This constitution codifies the governing architectural constraints for this project. All specifications,
+  proposals, and implementations MUST comply with these articles unless an explicit override is documented
+  per the governance process below.
+
+  Keywords follow [RFC 2119](https://www.ietf.org/rfc/rfc2119.txt).
+
+  ---
+
+  ## Article I: RFC 2119 Keyword Compliance
+
+  ### Statement
+  All specifications, design documents, and requirement definitions MUST use RFC 2119 keywords (MUST, SHALL, SHOULD,
+  MAY and their negations) to express requirement levels. Informal language ("should", "needs to", "has to") MUST NOT be
+  used for normative requirements.
+
+  ### Rationale
+  AI agents interpret specifications literally. Ambiguous requirement language leads to inconsistent implementation
+  decisions. RFC 2119 keywords provide a shared, machine-interpretable vocabulary for requirement severity.
+
+  ### Enforcement
+  - Spec review checks for RFC 2119 keyword presence in all requirement blocks
+  - Proposals without RFC 2119 keywords in requirements sections SHALL be rejected
+
+  ### Override Process
+  Not applicable — this article governs spec format and cannot be overridden.
+
+  ---
+
+  ## Article II: Value-Centric Specifications
+
+  The authoritative source of truth for how specifications are written is @openspec/specs/spec-governance/spec.md.
+  All spec authoring — including value-centric requirements, domain naming, and avoidance of internal implementation
+  details — is governed by that spec. When this constitution and spec-governance conflict, spec-governance is correct.
+
+  ---
+
+  ## Article III: Documentation
+
+  ### Statement
+  Documentation in `docs/` describes the system and SHOULD mirror the specs we generate. When producing OpenSpec
+  artifacts, existing documentation MUST always be considered and updates to keep the documentation and system aligned
+  SHOULD be considered scoped work.
+
+  Implementations MUST NOT silently drift from documentation. Any drift MUST be considered and appropriate documentation
+  updates/changes SHOULD be detailed in the design and task artifacts.
+
+  ### Rationale
+  Documentation captures the state of our system. If docs diverge from our system specification, the system has two
+  conflicting sources of truth — leading to implementations that match one but not the other.
+
+  ### Enforcement
+  - Proposals referencing behavior covered by existing documentation MUST cite the documentation and any required updates
+  - Implementations that contradict documentation SHOULD thoroughly describe how to update the documentation and correct any misalignment
+
+# Add custom rules for specific artifacts.
+rules:
+  specs:
+    - All requirements MUST use RFC 2119 keywords to indicate requirement levels
+    - Each requirement MUST be atomic and focused on a single aspect of functionality or design
+    - All spec requirements and scenarios MUST comply with @openspec/specs/spec-governance/spec.md — read the spec before writing or reviewing any specification
+  proposal:
+    - A proposal SHOULD be between 300 and 1000 words, and it MUST be under 1500 words
+    - The proposal SHOULD be distilled down to the smallest thing we can do to deliver customer-focused value
+    - Refactors SHOULD be simple, small, OR incredibly well-justified
+    - MUST include a "Non-goals" section
+    - Each capability in the Capabilities section MUST correspond to a product domain, not a feature within a domain. Use domain names (e.g., `execution`, `planning`) not domain-feature compounds (e.g., NOT `execution-loop`, `auth-login`, `user-auth`, `data-export`). Check `openspec/specs/` for existing domain names before inventing new ones.
+    - MUST reference which documentation in `docs/` or root `README.md` informed the proposal. If no relevant documentation exists, state so explicitly.
+  design:
+    - MUST identify any user-facing documentation in `docs/` and root `README.md` that would need updating based on the proposed changes
+    - If the design changes observable behavior, CLI commands, APIs, or concepts covered in `docs/`, the design MUST note which doc files need updating
+    - MUST check whether the design conflicts with or diverges from user-facing documentation in `docs/` or root `README.md`, and MUST detail any documentation updates needed to keep the system aligned.
+    - |
+      A design document MUST define the "WHAT" at an engineering level. A design document SHALL specify:
+        1. Data models — Item shapes, discriminators, and unions SHALL be defined concretely enough to implement against. Where a discriminated union is used, the design SHALL define each variant such that illegal combinations are unrepresentable.
+        2. Key shapes and uniqueness boundaries — Key shapes SHALL be specified wherever they are load-bearing for correctness, including any key whose structure enforces uniqueness, prevents collisions across distinct record types, or establishes the authoritative boundary for a concurrent operation.
+        3. Interfaces and contracts — Classification outcomes, wire shapes, validation ordering, and error mappings SHALL be specified wherever they are observable to a consumer or are correctness-critical.
+        4. Atomicity boundaries — The design SHALL state what MUST occur within a single atomic operation and the invariant that requires it. The design SHALL NOT prescribe the step-by-step composition of that operation.
+    - |
+      The "HOW" SHALL be left to the tasks and the implementer unless it is critical to the "WHAT":
+        1. The design SHALL NOT include function signatures, exact ordering of operations within a transaction, or step-by-step code.
+        2. A mechanism SHALL be included only when omitting it would leave the WHAT ambiguous, or would permit an implementer to build something that violates a stated requirement.
+        3. Where the design records a decision, it SHOULD state the rationale and the alternatives considered, and SHOULD NOT restate implementation detail that the requirement or data model already determines.
+  tasks:
+    - |
+      Every tasks.md MUST begin with a preamble block before any task headings.
+      The preamble MUST instruct the executing agent to load the `viper-execution-rules` skill
+      before running any tasks. Use this exact preamble:
+
+      ```
+      > **Before executing any tasks below**, load the `viper-execution-rules` skill for the full VIPER step protocol (step types, execution rules, gating, and hard constraints).
+      ```
+    - Think, read, search, and explore to understand the problem before composing steps
+    - Ask the user clarifying questions — don't make large assumptions about intent
+    - Write the tasks as you see them
+    - ONLY AFTER writing the tasks, load the `viper-planning` skill — it defines all step types, naming conventions, and hard rules
+      - You MUST write the tasks first before loading the skill
+      - You MUST NOT load the skill until you've written the tasks
+    - Reclassify each step as its VIPER step type and prefix the step description with the type
+    - |
+      Tasks MUST be organized into logical blocks using the Research-then-Implementation pattern:
+
+      - Each block covers a cohesive area of work (e.g., "Create Wizard", "Build Command", "Tests + Docs")
+      - Closely related groups (e.g., a wizard UI and the scaffolding code it calls) SHOULD be combined into a single block rather than kept as separate blocks
+      - Each block MUST be split into two numbered groups using ## headings:
+        - A **Research** group (heading suffixed with "— Research") containing ALL Explore and Propose steps for that block, frontloaded before any implementation
+        - An **Implementation** group (heading suffixed with "— Implementation") containing ALL Implement steps followed by a Verify step.
+        - Each "implementation" group SHALL be shippable as a partial PR, so all tests should be green. Any tests that need to be delayed for other groups SHOULD be commented out and clearly marked for follow up.  
+        - Branches will often be cut between blocks, so the Verify step should always pass all tests, typechecking, linting etc.
+        - If the Verify step does not fully pass because of expected failures that should be fixed later, skip the tests and clearly mark them with TODO comments so the branches stay green and future executions can clearly see what needs to be re-enabled (and when).
+      - Explore steps within a Research group SHOULD be scoped to independent topics so they can be executed in parallel via subagents (e.g., separate explores for "Rezi lifecycle", "Rezi widgets", "Rezi focus management" rather than one monolithic explore)
+      - The final Propose step in a Research group SHOULD cover the approach for the entire Implementation group, not just one task
+      - Setup/dependency groups (e.g., "install packages") that are trivial and don't need research MAY use a flat structure without the Research/Implementation split
+
+      Example:
+      ```
+      ## 3. <Block Name> — Research
+      - [ ] 3.1 Explore: <research topic A — scoped for parallel subagent>
+      - [ ] 3.2 Explore: <research topic B — scoped for parallel subagent>
+      - [ ] 3.3 Explore: <review existing code relevant to this block>
+      - [ ] 3.4 Propose: <approach for the whole implementation block>
+
+      ## 4. <Block Name> — Implementation
+      - [ ] 4.1 Implement: <change A>
+      - [ ] 4.2 Implement: <change B>
+      - [ ] 4.3 Implement: <change C>
+      - [ ] 4.4 Verify: <run checks for this block>
+      ```
+    - MUST check `docs/` and root `README.md` for content that references changed behavior, and SHOULD include documentation update tasks when affected docs are found
