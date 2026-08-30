@@ -1,0 +1,727 @@
+{
+  "lockfileVersion": 0.3,
+  "facets": {
+    "@agentfacets/openspec-adversary": {
+      "source": {
+        "kind": "registry",
+        "registry": "https://api.agentfacets.io"
+      },
+      "version": "3.2.2",
+      "integrity": "sha256:89a3469afc11bc207755689d74d1e33b9bb78c5e41275332d237c765f0e5f056",
+      "assets": [
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "openspec-adversary-author",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/openspec-adversary-author/SKILL.md",
+              "integrity": "sha256:4aff0ffe3509d75e1c63d62f6f525e3a69d5f7812f62f424cc613f8080e25d2c"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "openspec-adversary-compare",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/openspec-adversary-compare/SKILL.md",
+              "integrity": "sha256:7d275c80f90ea1d0b85573000d833f29fdbb2a6d51a86aea1c9d7ae00f08f3a4"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "openspec-adversary-reconcile",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/openspec-adversary-reconcile/SKILL.md",
+              "integrity": "sha256:d8c612e6a05e9e08be643de455d880631f12a84c64095c628bfb08b31a78c343"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "openspec-adversary-run",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/openspec-adversary-run/SKILL.md",
+              "integrity": "sha256:61c24fadddd5eba8dd095785e18c1ef4af796053e6aa3968499d88445135bcb3"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "agent",
+          "name": "openspec-adversary",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "agents/openspec-adversary.md",
+              "integrity": "sha256:393c074cbdc2535670d6cfcb6597a908ab65138b9e4567838edc1bd75d0812b1"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "reconcile-adversary",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/reconcile-adversary.md",
+              "integrity": "sha256:bb81dce97f2c2734cc5b2a460a1f4fd3358409157ff52d1df7cd4bb432784bbc"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "run-adversary",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/run-adversary.md",
+              "integrity": "sha256:405a35ab34f4e7126c09e2362c86f2f15301d5595a29cd7017083fdbdc53036c"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "run-inline-adversary",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/run-inline-adversary.md",
+              "integrity": "sha256:ca476ac6dd4a58d7489208a761ecce4fac2bca56b16ae5168bff29f465beb3ce"
+            }
+          ]
+        }
+      ]
+    },
+    "@agentfacets/review-openspec-design": {
+      "source": {
+        "kind": "registry",
+        "registry": "https://api.agentfacets.io"
+      },
+      "version": "2.3.0",
+      "integrity": "sha256:cca17795ad5e8091a2e16ef498087511494e125ab9212d880800ddc370fdb431",
+      "assets": [
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "openspec-design-review-rules",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/openspec-design-review-rules/SKILL.md",
+              "integrity": "sha256:bcf817e5513782cedc32add43391fc7149e882639d28b6e4c33447197bee7de3"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "review-openspec-design",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/review-openspec-design.md",
+              "integrity": "sha256:09fd9332d8959c6c5f955083791478d6b2346f9610f20b09ebd6528704bd77ab"
+            }
+          ]
+        }
+      ]
+    },
+    "facet-meta": {
+      "source": {
+        "kind": "registry",
+        "registry": "https://api.agentfacets.io"
+      },
+      "version": "1.0.0",
+      "integrity": "sha256:feffcd79aba75e6cefc65d7ed9d575ac0a89d84342668ca7684039ecb3f53084",
+      "assets": [
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "using-facets",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/using-facets/SKILL.md",
+              "integrity": "sha256:5354584990bbbacdff621c23062a8540d1849884b94ce739f86b429057042d24"
+            }
+          ]
+        }
+      ]
+    },
+    "graphite": {
+      "source": {
+        "kind": "registry",
+        "registry": "https://api.agentfacets.io"
+      },
+      "version": "0.1.0",
+      "integrity": "sha256:b179a91169fd8b82050b3306b50197749552789cb6f91c5a50cb2ef18d4ce550",
+      "assets": [
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "using-graphite",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/using-graphite/SKILL.md",
+              "integrity": "sha256:d6fdc7020a0c2e583b1e2c60c5508def4120848f666d8aa9011bd0ea17804f2e"
+            }
+          ]
+        }
+      ]
+    },
+    "openspec": {
+      "source": {
+        "kind": "registry",
+        "registry": "https://api.agentfacets.io"
+      },
+      "version": "0.1.0",
+      "integrity": "sha256:86b5779cd013f1fefcb1466d79e6e01ce552ed2333bf5e41a8c5739c9a68d1c3",
+      "assets": [
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "openspec-apply-change",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/openspec-apply-change/SKILL.md",
+              "integrity": "sha256:dad7cd96275faa6cfbc6d4c64bd53aaa58cecb8f0408a8e55324c4c7383ea3db"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "openspec-archive-change",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/openspec-archive-change/SKILL.md",
+              "integrity": "sha256:862e5f65150f817a3b5dd373911bd1b1f75df75aacbf25d30dda387aa37840fe"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "openspec-bulk-archive-change",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/openspec-bulk-archive-change/SKILL.md",
+              "integrity": "sha256:61a0e3f11658328fa463e4139a1caca91ae3a99900a7c020fc9126358a94e490"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "openspec-continue-change",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/openspec-continue-change/SKILL.md",
+              "integrity": "sha256:2a05ea2e921c930aac895cf54f0db08cd956a4575c11cce085a7187451d8066c"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "openspec-explore",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/openspec-explore/SKILL.md",
+              "integrity": "sha256:aa57a1e244bcf3c26b765d94e79961330e8b880f06959f48ba87967afe4d7107"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "openspec-ff-change",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/openspec-ff-change/SKILL.md",
+              "integrity": "sha256:336b4df5446c2893da7acd7ee9b2d01b2a38a388c0fdbb4fe664f85cab488bb8"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "openspec-new-change",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/openspec-new-change/SKILL.md",
+              "integrity": "sha256:1ccb6e5c123274511feb37292213ab8b9b708cea6a88e480824bfe2df16ee7f4"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "openspec-onboard",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/openspec-onboard/SKILL.md",
+              "integrity": "sha256:f8ab0da46a6c60e323d422ce1aed0547f2395f18ec695054b08aea07a43442d9"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "openspec-propose",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/openspec-propose/SKILL.md",
+              "integrity": "sha256:f7d2abb02d623ecdd13c27288e2d5f72b9676cb40d1b046ba76cdc5db278e521"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "openspec-sync-specs",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/openspec-sync-specs/SKILL.md",
+              "integrity": "sha256:6793649c35b9c289a0d8395d4f42c221b08470d9d3fdda1a8892d7639b389072"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "openspec-update-change",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/openspec-update-change/SKILL.md",
+              "integrity": "sha256:cbba8c14cd573a0d2eb327a16b70c8d7ec49eeff6b1df79f3b41075347618f26"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "openspec-verify-change",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/openspec-verify-change/SKILL.md",
+              "integrity": "sha256:1746efaa1606fd23b887eeb7dca457c7a6240bcaa81cfe7c28c5e3ffc65e6e64"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "install-openspec",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/install-openspec.md",
+              "integrity": "sha256:64510fbddad0ae6f284469b36102126de4276bb0613163d4b3177f7ed5f02d75"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "opsx-apply",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/opsx-apply.md",
+              "integrity": "sha256:24b68c17470886b74c2ba889465540cf5216fb0cf537ac6c1639e46664ac1bf1"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "opsx-archive",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/opsx-archive.md",
+              "integrity": "sha256:23a8531857fbfa9d8b1ee105ec7a975a176c14db02e48d113437a33c3598b589"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "opsx-bulk-archive",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/opsx-bulk-archive.md",
+              "integrity": "sha256:a39a2225d0268cdd7677523c9f05a7400da058874f72fadad6b32bfc8cae2484"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "opsx-continue",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/opsx-continue.md",
+              "integrity": "sha256:c11d3a8af1077b8d6ff424ec20c19829119441f14814f68ee399a94e673697da"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "opsx-explore",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/opsx-explore.md",
+              "integrity": "sha256:44652b2e41c75f61beb6a68faa94ebd149364a04c341794fb36fca7ac49f4a29"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "opsx-ff",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/opsx-ff.md",
+              "integrity": "sha256:f8a7b252bce9368b1e4b2b2b56c192ffd150b440104c69296232ed7b9834ea9c"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "opsx-new",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/opsx-new.md",
+              "integrity": "sha256:71facd424ca0deba5d9cd98bb5910a518333779cb186180e3a00773f8826bd79"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "opsx-onboard",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/opsx-onboard.md",
+              "integrity": "sha256:313787ed65e63bb96c65997199cbe2f852a4e56ceed20329e0bc46308149e933"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "opsx-propose",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/opsx-propose.md",
+              "integrity": "sha256:830b9a3ce59fccd329c4bc5ef3f79cf5e25319c4f937e062d8ea36387d08f265"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "opsx-sync",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/opsx-sync.md",
+              "integrity": "sha256:952ff62ed43dea37c006f57e0826aa44bcf1870928f0208cb615b914cc92d0a9"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "opsx-update",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/opsx-update.md",
+              "integrity": "sha256:a224d901128007bea4047b29105ca04d23b89c79884e387d37dce60c78e1c2af"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "opsx-verify",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/opsx-verify.md",
+              "integrity": "sha256:fe77ce349514f64272b91107559fe9270ff48fc6f87a01fd76f8b818d9f1c9ea"
+            }
+          ]
+        }
+      ]
+    },
+    "viper-plans": {
+      "source": {
+        "kind": "registry",
+        "registry": "https://api.agentfacets.io"
+      },
+      "version": "1.3.0",
+      "integrity": "sha256:be85be9bc09b87be4ffca314ec83cd317589a3da573ec73abc28e0cdda0e2ab2",
+      "assets": [
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "viper-execution-rules",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/viper-execution-rules/SKILL.md",
+              "integrity": "sha256:6b70bed17556faf5e131b2771c6475db23e93d26a39197ef21e143509545514f"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "viper-planning",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/viper-planning/SKILL.md",
+              "integrity": "sha256:cf326cb73bad44540fadd11f4c985b3f8634f734db7c8f87f9e8230bf895284c"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "viper-continue",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/viper-continue.md",
+              "integrity": "sha256:80f8444039799ae1f06286994a2d420be97f1fe95c600f96b9cbc80516d29b79"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "viper-plan",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/viper-plan.md",
+              "integrity": "sha256:1faa52ff624a8fc997a4ce1a25857d9ce6d205c9e4d26015722dcd355272ed2d"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "viper-run",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/viper-run.md",
+              "integrity": "sha256:ab4e2036931dc344424b52d0019e96853cf8e235e755a452e942953504000eee"
+            }
+          ]
+        }
+      ]
+    },
+    "worktrunk": {
+      "source": {
+        "kind": "registry",
+        "registry": "https://api.agentfacets.io"
+      },
+      "version": "0.1.0",
+      "integrity": "sha256:9a83ea1e20a7277f5a71ed2e19f1f5a23de6168fdb061d5ccbaaca15e2c76600",
+      "assets": [
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "using-worktrunk",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/using-worktrunk/SKILL.md",
+              "integrity": "sha256:5176af6d234b0c79f607e034c2792cd0e8fc6c28dbfd01dcb62afe04d835c603"
+            },
+            {
+              "path": "skills/using-worktrunk/install.md",
+              "integrity": "sha256:c25bb51bb92b95d636066938e1fee4b879a3611780bf093b52aba50164cb518a"
+            },
+            {
+              "path": "skills/using-worktrunk/reference/faq.md",
+              "integrity": "sha256:dd9a6506674e18855c5131af322f1b8a4e37a52d956fd607c21d2b2348586d6b"
+            },
+            {
+              "path": "skills/using-worktrunk/reference/list.md",
+              "integrity": "sha256:79451f8d3ac4e0ecfd9a9cb87ec62293b35f4c8d61761e1d5ef3fbb0eaf598d4"
+            },
+            {
+              "path": "skills/using-worktrunk/reference/merge.md",
+              "integrity": "sha256:3ed6cf71ca409302d8bfb53388d7d0d727ee24f48af6128fbde2398d88ac8fa9"
+            },
+            {
+              "path": "skills/using-worktrunk/reference/remove.md",
+              "integrity": "sha256:c604069ea4525019f2b6cf082c2ff1cc6f1a3ced604b7bb44e1e1a647d769e65"
+            },
+            {
+              "path": "skills/using-worktrunk/reference/shell-integration.md",
+              "integrity": "sha256:b617dca30ecdebc84d05701556098d9ded2dbf5f39849b625c3d799a49d576c8"
+            },
+            {
+              "path": "skills/using-worktrunk/reference/step.md",
+              "integrity": "sha256:d55aaec34eac79081dfb05819a052b4ef5ed58d6953e792e21d64381d2bc16fc"
+            },
+            {
+              "path": "skills/using-worktrunk/reference/switch.md",
+              "integrity": "sha256:5a479efe180c1fca1f50987a9c746bab0c847447110f90c1c5eb4625e2c4b30f"
+            },
+            {
+              "path": "skills/using-worktrunk/reference/worktrunk.md",
+              "integrity": "sha256:a6a279cfe47617e6cc7a677a61feede6f5b133bad06a73ed8279b9b3202de16d"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "wt-switch-create",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/wt-switch-create.md",
+              "integrity": "sha256:83eceb6ba0e8b8efd4d192dcfb2443740cb90c65b92edd95b64e92f0d9760ed9"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

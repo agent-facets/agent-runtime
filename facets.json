@@ -1,0 +1,12 @@
+{
+  "manifestVersion": 0.2,
+  "facets": {
+    "viper-plans": "1.3.0",
+    "facet-meta": "1.0.0",
+    "openspec": "0.1.0",
+    "@agentfacets/openspec-adversary": "3.2.2",
+    "@agentfacets/review-openspec-design": "2.3.0",
+    "worktrunk": "0.1.0",
+    "graphite": "0.1.0"
+  }
+}
