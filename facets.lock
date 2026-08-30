@@ -649,6 +649,30 @@
         }
       ]
     },
+    "voice-to-text": {
+      "source": {
+        "kind": "registry",
+        "registry": "https://api.agentfacets.io"
+      },
+      "version": "1.0.0",
+      "integrity": "sha256:40e2909d2d14404ded12a62d659878deb8a2e0c33cc65698f2c6e4179c0da7a5",
+      "assets": [
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "voice-to-text",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/voice-to-text/SKILL.md",
+              "integrity": "sha256:83c5da5275cd931d1f5eadb98cc568e1db3e1fcf85cbbf44154fe97dffae5d03"
+            }
+          ]
+        }
+      ]
+    },
     "worktrunk": {
       "source": {
         "kind": "registry",
