@@ -27,14 +27,17 @@ P0  spikes ──▶ P1 compose ──▶ P2 obsidian ──▶ P3 auth ──�
 
 Answer the questions that could change the architecture. Throwaway code.
 
-| Spike | Question |
-|---|---|
-| Obsidian headless | Does it boot, open a vault, and leave restricted mode without a GUI? |
-| Loopback bridge | Can a sidecar in a shared netns reach the plugin and preserve streaming? |
-| Anthropic parity | Does a decorated fetch from a LangChain client produce a request matching the reference profile? |
-| OpenAI device auth | Does device-code login complete inside a container and refresh? |
-| LangGraph durability | Kill the process mid-run and mid-interrupt; does it resume correctly? |
-| Postgres checkpointer | Do the official checkpointer and store behave as documented under concurrency? |
+| Spike | Question | Status |
+|---|---|---|
+| [Obsidian headless](./spike-reports/01-obsidian-headless.md) | Does it boot, open a vault, and leave restricted mode without a GUI? | **Pass** |
+| [Loopback bridge](./spike-reports/02-obsidian-loopback-bridge.md) | Can a sidecar in a shared netns reach the plugin and preserve streaming? | **Pass** |
+| [Anthropic parity](./spike-reports/03-anthropic-parity.md) | Does a decorated fetch from a LangChain client produce a request matching the reference profile? | **Pass** |
+| OpenAI device auth | Does device-code login complete inside a container and refresh? | Not started |
+| LangGraph durability | Kill the process mid-run and mid-interrupt; does it resume correctly? | Not started |
+| Postgres checkpointer | Do the official checkpointer and store behave as documented under concurrency? | Not started |
+
+Findings live in [spike-reports/](./spike-reports/). Harnesses live in
+`spikes/`.
 
 **Exit:** every spike answered yes, or the architecture is revised in writing
 before proceeding.
@@ -63,7 +66,8 @@ The memory appliance, deterministic and reproducible.
 - Slim Obsidian image, pinned by digest, multi-arch
 - Entrypoint converger: vault registry, plugin sync, settings merge, restricted
   mode, readiness gate
-- MCP bridge in a shared network namespace
+- MCP bridge in a shared network namespace — stock NGINX, configuration only,
+  no custom code (see [spike 02](./spike-reports/02-obsidian-loopback-bridge.md))
 - Layered health checks
 - Vault structure, frontmatter schema, `.gitignore` written **before** `git init`
 - Commit daemon with quiescence, single-flight lock, and a secret guard
@@ -79,7 +83,10 @@ The distinguishing capability. Nothing above it works without it.
 
 - `model-auth`: credential store, atomic rotation, single-flight refresh, typed
   errors
-- Anthropic subscription transport extracted from the existing plugin core
+- Anthropic subscription transport extracted from the existing plugin core —
+  request shaping is already proven end to end by
+  [spike 03](./spike-reports/03-anthropic-parity.md); what remains for this
+  phase is the credential lifecycle around it
 - Compatibility profile with captured fixtures and differential tests
 - OpenAI subscription transport with device-code login
 - API-key transports as fallback

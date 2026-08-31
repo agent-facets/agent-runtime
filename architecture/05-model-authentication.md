@@ -35,6 +35,40 @@ output · error wrapping · retry integration
 **We MUST NOT subclass `BaseChatModel` for this.** Doing so forfeits the upgrade
 path for all of the above.
 
+**Verified.** [Spike 03](./spike-reports/03-anthropic-parity.md) built the
+transport this way and Anthropic accepted it on a live subscription. The exact
+construction:
+
+```ts
+new ChatAnthropic({
+  model, maxTokens,
+  apiKey: <sentinel>,        // constructor guard only
+  maxRetries: 0,
+  clientOptions: {
+    fetch: subscriptionFetch,
+    dangerouslyAllowBrowser: false,
+  },
+});
+```
+
+Four operational details the design could not have known, each of which changes
+behaviour if missed:
+
+1. **A sentinel API key is mandatory.** `ChatAnthropic` refuses to construct
+   without one. The decorator deletes `x-api-key` before dispatch, so it never
+   reaches the provider — and a non-null key usefully disables the SDK's ambient
+   credential discovery, so no stray config file or environment variable can
+   supply a real key behind our back.
+2. **`maxRetries: 0` is required.** LangChain's own caller retries six times by
+   default, on top of the SDK. A subscription transport MUST NOT silently
+   multiply a failed request by seven.
+3. **`dangerouslyAllowBrowser: false` removes a header.** LangChain hardcodes it
+   true, which emits `anthropic-dangerous-direct-browser-access`. Overriding it
+   deletes that signal rather than shipping a novel one.
+4. **The beta query parameter MUST be appended exactly once.** LangChain routes
+   to the beta endpoint by itself whenever `betas` is non-empty. Setting betas at
+   the model layer *and* appending in the decorator doubles it.
+
 ## Why not the vendor agent SDKs
 
 Claude Agent SDK and Codex SDK both authenticate with subscriptions, and both
@@ -91,6 +125,24 @@ Two carry-over decisions worth changing in the port:
    chunk-boundary-fragile code in the whole path.
 2. **Refresh margin.** Refresh SHOULD trigger before expiry, not at it.
 
+**Decision 1 is now measured, not merely preferred.**
+[Spike 03](./spike-reports/03-anthropic-parity.md) fed both paths the identical
+response body and split it differently:
+
+| Chunking | Plugin's regex un-prefixer | Native naming |
+|---|---|---|
+| Whole body | `echo` — worked | `mcp_Echo` |
+| One byte at a time | `mcp_Echo` — **silently failed** | `mcp_Echo` |
+
+The rewriter has no cross-chunk buffering, so a tool name split across two
+network reads is never restored and the failure is silent. Native naming has
+nothing to break. The port MUST name tools in the client-native convention and
+MUST NOT rewrite response bytes.
+
+Decision 2 remains unimplemented: the spike consumed an existing token
+read-only and refused anything inside a 15-minute margin rather than refreshing.
+The refresh path itself is P3 work.
+
 Additions the plugin does not need but a long-running server does:
 
 - Rate-limit handling that honours `retry-after`.
@@ -129,10 +181,41 @@ Verification:
 - **Pinned profiles.** The active profile is recorded on every run so a
   behaviour change can be correlated with a profile change.
 
+**Verified.** [Spike 03](./spike-reports/03-anthropic-parity.md) implemented all
+four and measured them: five request shapes matched the reference exactly, the
+complete canonical wire diff was empty, and seventeen independent mutations each
+failed closed before dispatch with a specific violation code. The drift
+allowlist is committed and **empty**; an entry may not name a path inside the
+exact-match projection, which is enforced at load.
+
+Three implementation rules the spike settled:
+
+- **Tool schemas are profile-bearing and MUST be authored as JSON Schema
+  literals**, not generated from Zod. Generation injects `$schema` and shifts
+  `additionalProperties` across dependency bumps. `$schema`, `$id`, `$defs`, and
+  `definitions` are forbidden keys rather than allowlisted ones.
+- **Canonicalisation MUST NOT sort or deduplicate arrays, trim, case-fold, drop
+  unknown keys, coerce numbers, or redact before comparing.** Each of those can
+  hide a real difference. Only header-name casing and JSON object key order are
+  non-semantic enough to normalise.
+- **The provenance header derives from the first user message in the whole
+  history.** A `tool_result` turn serializes as a second `user` message, so a
+  multi-turn conversation stays stable — but only while the leading text turn is
+  present. A compacted history beginning with a tool result derives the header
+  from an empty string, producing a different client fingerprint. The validator
+  cannot detect this, because it recomputes from the same messages and is
+  self-consistent with the wrong answer. The transport MUST assert the first
+  message is a text user turn and MUST NOT send a truncated history.
+
 Honest limits: parity is necessary, not sufficient. The profile is a set of
 signals the provider can change unilaterally, and the maintenance model is
 re-capturing the reference client on each release. This is ongoing work, and it
 is why every agent definition MUST be able to fall back to an API transport.
+
+The oracle is also worth naming precisely: it is an in-house plugin, so parity
+against it proves bug-compatibility with a prior hypothesis about the real
+client. The live acceptance in spike 03 is the stronger evidence — and it is
+evidence about the provider's behaviour *today*.
 
 Anthropic's Agent SDK documentation states that third-party developers need
 prior approval to offer claude.ai login or rate limits in their products. This

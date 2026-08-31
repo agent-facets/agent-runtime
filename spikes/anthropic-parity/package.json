@@ -1,0 +1,23 @@
+{
+  "name": "anthropic-parity-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Throwaway P0 spike: differential parity between the shipped OpenCode Anthropic auth plugin and a decorated fetch under stock ChatAnthropic.",
+  "scripts": {
+    "parity": "node --no-warnings src/run.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.115.0",
+    "@ex-machina/opencode-anthropic-auth": "1.8.1",
+    "@langchain/anthropic": "1.5.8",
+    "@langchain/core": "1.2.9",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "1.14.50",
+    "@types/node": "24.12.2",
+    "typescript": "6.0.3"
+  }
+}

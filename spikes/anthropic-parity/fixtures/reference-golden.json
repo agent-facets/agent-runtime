@@ -1,0 +1,25 @@
+{
+  "profileId": "claude-cli/2.1.87",
+  "cases": {
+    "R1-minimal": {
+      "projection_sha256": "a59af9c6f97fc660e7bf05a200ffacf860a79d520bb03de1174851e2be8e1348",
+      "managed_sha256": "7fea7a5514f3883c9716c33ac3221bde16674313adce09df0f507d02a2bb3fe2"
+    },
+    "R2-header-merge": {
+      "projection_sha256": "3c66d56f23e1090dc5ac34fe3d9069190536e504a9bee44aac5cafa026a95197",
+      "managed_sha256": "08424de1ddee283feed63a7c8fa2cec2f28a1efd03eb9ba6a1d1aac11fc59440"
+    },
+    "R3-system-string": {
+      "projection_sha256": "e2730c2ca799d76d047126b4ebfad2c79d2cb66112bc588d936a120a7df0189d",
+      "managed_sha256": "f9fd61d50fae64cebda2c0915b512cf62c972cfc1c9eb61f9c3e1358ae3e9231"
+    },
+    "R4-system-blocks": {
+      "projection_sha256": "ca743c397da5d0311b9095ab26484f48aa5f8ef853dccc5fe3922e65c14bbc86",
+      "managed_sha256": "830ca6100df61b681d0817e9c2316bd661b2403cebb789a405ff099d5f05da39"
+    },
+    "R5-tools-multiturn": {
+      "projection_sha256": "4caa158d3761496de9216d728999481c4f737e121f1a40b2ab66a2ea42669c31",
+      "managed_sha256": "178f081c6ffbb8f88f23f8a345bb8b91cbc61bcdc4486ba4039eb31abfe94f87"
+    }
+  }
+}

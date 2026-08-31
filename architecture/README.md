@@ -20,6 +20,7 @@ recorded as an open question rather than resolved silently.
 | [08-execution-security.md](./08-execution-security.md)             | Trust tiers, MCP broker, sandboxing, secrets                |
 | [09-data-model-and-lifecycle.md](./09-data-model-and-lifecycle.md) | Entities, state machines, retention, idempotency            |
 | [10-delivery-phases.md](./10-delivery-phases.md)                   | What to build, in what order, with exit criteria            |
+| [spike-reports/](./spike-reports/)                                 | Measured findings from the P0 spikes                        |
 
 ## Terminology
 
@@ -62,5 +63,17 @@ of them invalidates multiple documents.
 
 ## Status
 
-Pre-implementation. No application code exists yet. The repository currently
-contains OpenSpec governance, facet tooling, and these documents.
+Pre-implementation. No application code exists yet. The repository contains
+OpenSpec governance, facet tooling, these documents, and the throwaway P0 spike
+harnesses under `spikes/`.
+
+P0 progress is tracked in the
+[spike report index](./spike-reports/README.md). Three spikes pass. Both
+Obsidian spikes — headless bootstrap and the loopback bridge — are reconciled
+into [03-obsidian-brain.md](./03-obsidian-brain.md); the bridge is stock NGINX
+in a shared network namespace, not custom code.
+
+The [Anthropic parity spike](./spike-reports/03-anthropic-parity.md) confirms
+the load-bearing authentication decision: a decorated `fetch` under a stock
+`ChatAnthropic` reproduces the reference client's request exactly, and Anthropic
+accepted it on a real subscription. No `BaseChatModel` subclass is required.

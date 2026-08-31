@@ -37,7 +37,7 @@ there is nothing to reconcile between them.
 
 | Constraint | Consequence |
 |---|---|
-| Obsidian's MCP plugin binds `127.0.0.1` and is desktop-only | Obsidian runs headless under Xvfb; a bridge shares its network namespace |
+| Obsidian's MCP plugin binds `127.0.0.1` and is desktop-only | Obsidian runs headless under Xvfb; a stock-NGINX bridge shares its network namespace |
 | Claude subscriptions are not API credentials | A dedicated OAuth transport is required per provider |
 | LangGraph checkpoints are state, not history | Runs, events, approvals, and idempotency are ours to build |
 | AWS SSO sessions expire | Unattended backup MUST NOT depend on an interactive login |
@@ -146,5 +146,9 @@ Volumes:
 - Whether the runtime and web UI ship as one container or two.
 - Whether the node's own agents should be reachable by other people's nodes, or
   only by the owner's clients.
-- Whether `mcp-bridge` stays a separate container or collapses into the
-  Obsidian image once the netns behaviour is proven.
+
+Resolved by [spike 02](./spike-reports/02-obsidian-loopback-bridge.md):
+`mcp-bridge` **stays a separate container**, running stock NGINX rather than
+custom code. It survived both an ordinary restart and a force-recreate of the
+Obsidian container, so the lifecycle fragility that would have justified
+collapsing it into the Obsidian image does not exist.

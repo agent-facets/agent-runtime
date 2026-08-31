@@ -1,0 +1,7 @@
+{
+  "comment": "Digests of the committed fixtures. The harness verifies these at load, so an edited fixture is a fault rather than a silent re-baseline. Regenerate deliberately after reviewing reference_golden_observed in a run.",
+  "files": {
+    "cases.json": "60751b3db80f6326193fcb2ab1f375217f8fe367085f86879c3505447739d9e4",
+    "reference-golden.json": "75377269625fa5e981c20dbfb6a4946df023dda9fd54572660090db141fa1b57"
+  }
+}

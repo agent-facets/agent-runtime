@@ -73,6 +73,13 @@ Agents
 Agents never talk to Obsidian directly. The broker is where policy lives, and
 it is described in [08-execution-security.md](08-execution-security.md).
 
+The bridge is deliberately **not** a policy layer.
+[Spike 02](./spike-reports/02-obsidian-loopback-bridge.md) implements it as
+stock NGINX that forwards every path and method to the plugin and does header
+hygiene only. Allowlisting, per-run scoping, schema pinning and request caps
+belong to the broker above it — splitting policy across both layers would
+leave neither able to state the whole rule.
+
 ## Remote management MCP
 
 The runtime exposes its **own** MCP server for coding agents — this is how

@@ -1,0 +1,124 @@
+{
+  "profileId": "claude-cli/2.1.87",
+  "model": "claude-sonnet-4-5-20250929",
+  "maxTokens": 1024,
+
+  "comment": [
+    "Tool bindings are deliberately asymmetric BEFORE transformation and must be",
+    "identical AFTER it. The reference lane is fed the OpenCode-native logical",
+    "name so the shipped plugin genuinely performs its rename; the candidate lane",
+    "is fed the Claude-native wire name so its decorator performs no rename at",
+    "all. wireName is asserted, never derived.",
+    "",
+    "Schemas are authored JSON Schema literals. They are passed straight to",
+    "bindTools as Anthropic-native tool objects so no Zod-to-JSON-Schema",
+    "converter can inject $schema or additionalProperties."
+  ],
+
+  "tools": {
+    "echo": {
+      "logicalName": "echo",
+      "wireName": "mcp_Echo",
+      "description": "Echo a short string back to the caller.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "value": { "type": "string", "description": "Text to echo." }
+        },
+        "required": ["value"]
+      }
+    },
+    "read_file": {
+      "logicalName": "read_file",
+      "wireName": "mcp_Read_file",
+      "description": "Read a file from the workspace.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "description": "Absolute path." },
+          "limit": { "type": "integer", "description": "Maximum lines." }
+        },
+        "required": ["path"]
+      }
+    }
+  },
+
+  "systemPrompts": {
+    "branded": "You are OpenCode, the best coding agent on the planet.\n\nYou have access to tools for reading files.\n\nReport issues at https://github.com/anomalyco/opencode please.\n\nCheck the docs at https://opencode.ai/docs for more info.\n\nIt is best if OpenCode honestly applies the same rigorous standards to all ideas.\n\nHere is some useful information about the environment you are running in:\n<env>\n  Working directory: /workspace\n</env>\n\nInstructions from: /workspace/.opencode/AGENTS.md\nRun opencode to start the CLI.",
+    "plain": "Answer concisely and cite file paths."
+  },
+
+  "cases": [
+    {
+      "id": "R1-minimal",
+      "purpose": "Baseline profile: bearer set, x-api-key removed, required betas, beta query param, billing header, no tools.",
+      "system": null,
+      "tools": [],
+      "extraHeaders": {},
+      "messages": [
+        { "role": "user", "text": "Summarise the parity spike in one sentence." }
+      ]
+    },
+    {
+      "id": "R2-header-merge",
+      "purpose": "Beta union/dedupe/order, authorization overwrite, injected x-api-key removal, idempotent beta query param.",
+      "system": null,
+      "tools": [],
+      "extraHeaders": {
+        "anthropic-beta": "custom-beta-1, oauth-2025-04-20",
+        "x-api-key": "sk-ant-api03-SENTINEL-injected-by-fixture",
+        "authorization": "Bearer SENTINEL-wrong-token-must-be-overwritten"
+      },
+      "messages": [
+        { "role": "user", "text": "Merge these beta flags without duplicating them." }
+      ]
+    },
+    {
+      "id": "R3-system-string",
+      "purpose": "String system prompt: sanitation, identity insertion, string-to-block conversion.",
+      "system": { "kind": "string", "key": "branded" },
+      "tools": [],
+      "extraHeaders": {},
+      "messages": [
+        { "role": "user", "text": "Explain the sanitation rules that applied to this prompt." }
+      ]
+    },
+    {
+      "id": "R4-system-blocks",
+      "purpose": "Block-array system prompt: per-block sanitation, cache_control preservation, block order preservation.",
+      "system": {
+        "kind": "blocks",
+        "blocks": [
+          { "key": "branded", "cacheControl": { "type": "ephemeral" } },
+          { "key": "plain" }
+        ]
+      },
+      "tools": [],
+      "extraHeaders": {},
+      "messages": [
+        { "role": "user", "text": "Preserve cache control while sanitising each block." }
+      ]
+    },
+    {
+      "id": "R5-tools-multiturn",
+      "purpose": "Two literal schemas, assistant tool_use replay, user tool_result, logical-vs-native tool naming.",
+      "system": { "kind": "string", "key": "branded" },
+      "tools": ["echo", "read_file"],
+      "extraHeaders": {},
+      "messages": [
+        { "role": "user", "text": "Echo the word ping and then read the manifest." },
+        {
+          "role": "assistant",
+          "text": "Let me echo that first.",
+          "toolCalls": [
+            { "tool": "echo", "id": "toolu_fixture_0001", "args": { "value": "ping" } }
+          ]
+        },
+        { "role": "tool", "toolCallId": "toolu_fixture_0001", "content": "ping" },
+        { "role": "user", "text": "Now read /workspace/manifest.json." }
+      ]
+    }
+  ],
+
+  "streamingCase": "R5-tools-multiturn"
+}

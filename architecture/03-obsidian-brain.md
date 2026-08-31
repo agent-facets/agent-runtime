@@ -60,19 +60,39 @@ The supported way out is Obsidian's own CLI over its Unix socket, which is
 armed by setting `"cli": true` in `obsidian.json`. Hand-editing LevelDB is not
 an option worth taking.
 
+**Verified.** [Spike 01](./spike-reports/01-obsidian-headless.md) confirms that
+writing `"cli": true` before first launch arms the CLI headlessly, and that
+`plugins:restrict off` then works. Obsidian documents the CLI only as a GUI
+toggle, so this was an assumption until measured.
+
 ```text
 1  render obsidian.json from template (fixed vault id, cli enabled)
 2  converge vault config files, union plugin list
 3  sync plugin binary if version/hash differs
 4  merge plugin settings from mounted secret     ← see below
-5  start Xvfb, start Obsidian
-6  wait for the CLI socket
-7  disable restricted mode via CLI if still on
-8  assert the plugin is loaded
-9  probe MCP until it answers
+5  start Xvfb, wait until it ANSWERS              ← not just a socket
+6  start Obsidian
+7  wait for the CLI socket, then assert it is ARMED
+8  disable restricted mode via CLI if still on
+9  assert the plugin is loaded
+10 probe MCP until it answers
 ```
 
 Every step is a converger, not an installer. Re-running MUST be a no-op.
+
+Three traps the spike surfaced, each of which silently breaks the above:
+
+- **A socket is not readiness.** A disabled CLI still creates its socket and
+  refuses every command; a dead X server still leaves `/tmp/.X11-unix/X99`
+  behind after a restart. Both readiness gates MUST issue a real query — a CLI
+  command, and `xdpyinfo` — and check the result. Testing for the socket makes
+  Obsidian start against a dead display and segfault.
+- **Stale X state MUST be cleared before launch.** A container restart reuses
+  the container filesystem, and Xvfb does not reliably clean up on `SIGTERM`.
+- **Convergence MUST compare canonical JSON, not bytes.** Obsidian and the
+  plugin both rewrite their config compactly at runtime, so a byte comparison
+  against pretty-printed output reports a diff on every boot and never
+  converges.
 
 ## Plugin configuration
 
@@ -92,7 +112,24 @@ replaced with a random one, which presents as a confusing 401 rather than a
 validation error.
 
 The merge MUST preserve unknown keys and counters so a restart produces no diff
-and triggers no plugin-side rewrite.
+and triggers no plugin-side rewrite. In practice the plugin writes back
+`livePort`, a `semanticSearch` slice, and a `toolLoading` slice; all of them
+survived five restarts untouched in the spike. `livePort` converging to the
+pinned `port` is the observable proof that the fallback scan is suppressed.
+
+Reading the token into the settings file MUST NOT route it through argv or the
+environment, where `docker inspect` and `/proc` expose it. The spike passes the
+secret file directly into the JSON merge and verifies afterwards that the token
+appears in no log, no snapshot, and no container metadata.
+
+**A Compose secret carries the host file's ownership.** Outside swarm the file
+is bind-mounted as-is, and the `uid`, `gid`, and `mode` options under
+`secrets:` are silently ignored. A `0600` secret is therefore readable only by
+the uid that owns it, so every container that must read one MUST run as that
+uid. [Spike 02](./spike-reports/02-obsidian-loopback-bridge.md) hit this as a
+whole failed run: authenticated calls returned empty bodies while
+unauthenticated ones worked, which looks like a proxy defect and is a file
+permission.
 
 ## Networking
 
@@ -118,14 +155,35 @@ so the patch fails open with no error.
 Compose caveat: a service using another service's netns has no DNS name of its
 own. The bridge is addressed by the Obsidian service's name.
 
+**Verified.** [Spike 02](./spike-reports/02-obsidian-loopback-bridge.md)
+measured all three legs. A container on the ordinary Compose network gets
+`ECONNREFUSED` reaching the Obsidian service address on the plugin's port, so
+the mediation is structural rather than a policy choice. A stock unprivileged
+NGINX with ~40 lines of configuration passed every protocol test, so **the
+bridge MUST NOT be custom code.**
+
 The bridge MUST:
 
 - Pass `Authorization`, `Accept`, `Content-Type`, and MCP protocol/session
   headers through unmodified.
-- Strip or rewrite `Origin` — the plugin rejects any origin that is not
-  loopback, which is the most common cause of a mysterious 403.
-- Disable response buffering so streamed responses are not held.
-- Refuse traffic until the upstream probe succeeds.
+- **Remove** `Origin` rather than rewrite it. The plugin rejects any origin
+  that is not loopback — the most common cause of a mysterious 403 — and
+  explicitly allows an absent one, which is the non-browser client case.
+- Disable buffering in **both** directions so a notification frame is not held
+  until a stream that never ends completes.
+- Force HTTP/1.1 upstream. NGINX defaulted to HTTP/1.0 before 1.29.7, and SSE
+  over HTTP/1.0 does not work.
+- Relay the plugin's own status codes and error bodies verbatim, including the
+  JSON-RPC error inside a `400`.
+- Hold no credential. The token is the caller's to present; the bridge only
+  relays the header.
+- Refuse traffic until the upstream is ready. This is an orchestration
+  concern — a healthcheck-gated `depends_on` — not something the proxy does.
+
+The sidecar stays a separate container. It survived both an ordinary restart
+and a force-recreate of the Obsidian container, so collapsing the proxy into
+the Obsidian image would buy nothing and cost the one-concern-per-image
+property.
 
 ## Health
 
@@ -141,6 +199,11 @@ Layered, cheapest first:
 The unauthenticated probe is the right container healthcheck: it proves the most
 per byte and needs no credential, so the health command never handles secrets.
 Authenticated probes belong in the startup gate, not on a recurring timer.
+
+[Spike 01](./spike-reports/01-obsidian-headless.md) exercised all four layers.
+Note that a listener inventory inside the container also shows Docker's
+embedded DNS resolver on `127.0.0.11`; a check asserting "only our listener is
+bound" MUST account for it or it reports a false failure.
 
 ## Vault as knowledge store
 
