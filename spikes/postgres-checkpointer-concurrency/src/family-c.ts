@@ -222,6 +222,67 @@ async function killedPutWrites(
  *
  * This is harness SQL. No vendor statement is altered anywhere in the family.
  */
+/**
+ * The same deliberately non-atomic writer, with the two statements swapped.
+ *
+ * c05 writes the checkpoint row first and dies before the blob, leaving a
+ * STRANDED REFERENCE. But a torn vendor `put()` would leave the opposite shape:
+ * `_dumpBlobs` runs before the checkpoint upsert, so partial vendor state is
+ * ORPHAN BLOBS with no checkpoint naming them. c05 therefore validated a
+ * detector for damage the vendor path cannot produce, and c01/c02's "nothing
+ * survived" rested on a control for the wrong failure mode.
+ *
+ * This writes blobs first, in the vendor's order, so the detector is exercised
+ * on the shape c01/c02 would actually have to catch.
+ */
+async function nonAtomicWriterBlobFirst(
+  context: PartyContext,
+): Promise<Record<string, unknown>> {
+  const probe = probePool(context);
+  const subject = subjectPool(context);
+  const threadId = threadForCase(context.caseId);
+
+  try {
+    const sink = createSink();
+    instrumentPool(
+      subject.pool,
+      sink,
+      [{ name: "between-statements", label: "ckpt.blob-upsert", ordinal: 1, position: "post" }],
+      parkForever(probe, context),
+    );
+
+    const checkpoint = checkpointFor(KILL_CHECKPOINT_ID, { [C_CHANNEL_A]: "value" });
+    const client = await subject.pool.connect();
+    try {
+      await client.query(
+        `INSERT INTO ${CHECKPOINT_SCHEMA}.checkpoint_blobs
+           (thread_id, checkpoint_ns, channel, version, type, blob)
+         VALUES ($1, '', $2, '1', 'json', $3::bytea)`,
+        [threadId, C_CHANNEL_A, Buffer.from('"value"', "utf8")],
+      );
+
+      // Never reached: the gate parks after the blob statement settles.
+      await client.query(
+        `INSERT INTO ${CHECKPOINT_SCHEMA}.checkpoints
+           (thread_id, checkpoint_ns, checkpoint_id, parent_checkpoint_id, type, checkpoint, metadata)
+         VALUES ($1, '', $2, NULL, 'json', $3::jsonb, $4::jsonb)`,
+        [
+          threadId,
+          KILL_CHECKPOINT_ID,
+          JSON.stringify(checkpoint),
+          JSON.stringify({ source: "control" }),
+        ],
+      );
+    } finally {
+      client.release();
+    }
+
+    return { party: context.party, error: null, statements: statementMultiset(sink) };
+  } finally {
+    await Promise.allSettled([subject.close(), probe.close()]);
+  }
+}
+
 async function nonAtomicWriter(context: PartyContext): Promise<Record<string, unknown>> {
   const probe = probePool(context);
   const subject = subjectPool(context);
@@ -528,6 +589,9 @@ export async function runFamilyCParty(context: PartyContext): Promise<Record<str
 
     case "c05-nonatomic-writer-control":
       return victim ? await nonAtomicWriter(context) : await observeOnly(context);
+
+    case "c10-nonatomic-writer-blob-first-control":
+      return victim ? await nonAtomicWriterBlobFirst(context) : await observeOnly(context);
 
     case "c06-pool-max1-serialization":
       return await poolSerialization(context);

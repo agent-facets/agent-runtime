@@ -1807,17 +1807,26 @@ async function vectorSearchByMetric(
       limit: 10,
     });
     const expected = fixture.expected_order[metric] ?? [];
+    // An absent fixture key would make `[].join() === [].join()` true against an
+    // empty result — the authored oracle agreeing with nothing. Length is
+    // asserted first so a missing ranking fails loudly instead of passing.
+    const authoredOrderExists = expected.length === SEARCH_CORPUS.length;
 
     return {
       party: context.party,
       error: null,
       metric,
+      authoredOrderExists,
       expectedOrder: expected,
       actualOrder: actual,
-      matchedAuthoredOrder: actual.join(",") === expected.join(","),
+      matchedAuthoredOrder:
+        authoredOrderExists && actual.length === expected.length &&
+        actual.join(",") === expected.join(","),
       // Recorded so an inverted ranking is distinguishable from an arbitrary
       // one: reversal is a sign convention, noise is a broken query.
-      isExactlyReversed: actual.join(",") === [...expected].reverse().join(","),
+      isExactlyReversed:
+        authoredOrderExists && actual.length === expected.length &&
+        actual.join(",") === [...expected].reverse().join(","),
       returnedTheWholeCorpus: actual.length === SEARCH_CORPUS.length,
     };
   } finally {
@@ -2085,13 +2094,24 @@ async function searchConvenienceVersusBatch(
     ] as never)) as unknown[];
     const batchedKeys = ((batched[0] as Array<{ key: string }>) ?? []).map((item) => item.key);
 
+    // The hand-authored cosine order, so the batch path is scored against the
+    // independent oracle rather than against the convenience path — two outputs
+    // of the same implementation agreeing proves only that it is consistent.
+    const authoredCosine = (rankingFixture() as unknown as RankingFixture)
+      .expected_order.cosine ?? [];
+
     return {
       party: context.party,
       error: null,
       convenienceCosine,
       convenienceL2,
       batched: batchedKeys,
-      // The batch path produces the cosine ordering...
+      authoredCosine,
+      authoredCosineExists: authoredCosine.length === SEARCH_CORPUS.length,
+      // The batch path produces the authored cosine ordering...
+      batchMatchedTheAuthoredCosineOrder:
+        authoredCosine.length === SEARCH_CORPUS.length &&
+        batchedKeys.join(",") === authoredCosine.join(","),
       batchMatchedTheCosineOrder: batchedKeys.join(",") === convenienceCosine.join(","),
       // ...and cannot produce the L2 one, because the option does not exist on
       // a batched search operation.

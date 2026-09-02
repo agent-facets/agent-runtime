@@ -74,6 +74,27 @@ function inspectPool(context: PartyContext): Db {
 }
 
 /**
+ * The head of a thread's root namespace: the row no sibling claims as a parent.
+ *
+ * A forked thread has more than one, so the newest is taken — which is exactly
+ * the choice a retention policy makes when it keeps "the current state of this
+ * run" and lets the abandoned branch go.
+ */
+async function liveHead(
+  inspect: Db,
+  threadId: string,
+): Promise<{ threadId: string; ns: string; checkpointId: string } | null> {
+  const projection = await project(inspect, threadId);
+  const rows = projection.checkpoints.filter((row) => row.checkpoint_ns === "");
+  const claimed = new Set(
+    rows.map((row) => row.parent_checkpoint_id).filter((id): id is string => id !== null),
+  );
+  const leaves = rows.filter((row) => !claimed.has(row.checkpoint_id));
+  const chosen = leaves.at(-1) ?? rows.at(-1);
+  return chosen ? { threadId, ns: "", checkpointId: chosen.checkpoint_id } : null;
+}
+
+/**
  * The state of the whole database, reduced to counts and to the four kinds of
  * damage a bad sweep produces.
  *
@@ -86,19 +107,41 @@ async function surveyState(
   inspect: Db,
   caseId: string,
 ): Promise<Record<string, unknown>> {
-  const threads = [retainedThread(caseId), staleThread(caseId)];
+  const retained = retainedThread(caseId);
+  const stale = staleThread(caseId);
+  const threads = [retained, stale];
   const witness = await reachabilityAcross(inspect, threads);
   const counts = await threadCounts(inspect, threads);
+
+  // Damage is counted PER THREAD, not as one scalar over both.
+  //
+  // A single total let f10 claim that an unsafe delete order "corrupts the
+  // database" when every stranded reference it produced belonged to the stale
+  // thread the sweep was halfway through deleting — rows already condemned. The
+  // question that matters is whether the thread the policy promised to KEEP was
+  // damaged, and that is only visible once the two are separated.
+  const onThread = (thread: string) => ({
+    strandedReferences: witness.strandedReferences.filter((row) => row.thread_id === thread).length,
+    orphanBlobs: witness.orphanBlobs.filter((row) => row.thread_id === thread).length,
+    brokenLineage: witness.brokenLineage.filter((row) => row.thread_id === thread).length,
+    deadWrites: witness.deadWrites.filter((row) => row.thread_id === thread).length,
+  });
+
   return {
     counts,
     strandedReferences: witness.strandedReferences.length,
     orphanBlobs: witness.orphanBlobs.length,
     brokenLineage: witness.brokenLineage.length,
     deadWrites: witness.deadWrites.length,
-    // > 1 means one blob row is referenced by several live checkpoints, which is
-    // exactly the sharing that makes version-based blob deletion unsafe.
+    retainedDamage: onThread(retained),
+    staleDamage: onThread(stale),
+    // Per THREAD. Grouping across threads summed two independent runs of the
+    // same graph and inflated this from 2 to 6.
     sharingMax: witness.sharing.reduce((max, row) => Math.max(max, row.referencedBy), 0),
     sharedVersions: witness.sharing.filter((row) => row.referencedBy > 1).length,
+    retainedSharingMax: witness.sharing
+      .filter((row) => row.thread_id === retained)
+      .reduce((max, row) => Math.max(max, row.referencedBy), 0),
   };
 }
 
@@ -171,7 +214,7 @@ async function pruneCase(
  */
 async function killedPruner(
   context: PartyContext,
-  options: { order: "safe" | "unsafe"; gate: GateSpec },
+  options: { order: "safe" | "unsafe"; gate: GateSpec; omit?: SweepOmission },
 ): Promise<Record<string, unknown>> {
   if (context.party !== 0) {
     return await pruneCase(context, async () => ({ role: "observer" }));
@@ -191,6 +234,7 @@ async function killedPruner(
     await reachabilitySweep(subject, {
       retainThreads: [retainedThread(context.caseId)],
       order: options.order,
+      ...(options.omit ? { omit: options.omit } : {}),
     });
     // Unreachable: the driver kills this container at the park.
     return { party: context.party, error: null, role: "pruner", parked: false };
@@ -224,6 +268,39 @@ export async function runFamilyFParty(context: PartyContext): Promise<Record<str
         policy: "delete every blob version superseded by a newer one",
         ...(await naiveDeleteSupersededBlobs(db, retainedThread(caseId))),
       }));
+
+    // Head-scoped retention: the live set is walked from an explicit head, so a
+    // branch the head does not descend from is prunable even though its thread
+    // is retained. This is the rule the architecture proposes; whole-thread
+    // retention can never exercise it.
+    case "f11-head-scoped-sweep-prunes-an-abandoned-branch":
+      return await pruneCase(context, async (db, inspect) => {
+        const head = await liveHead(inspect, retainedThread(caseId));
+        return {
+          policy: "retain the live head and its ancestors",
+          head: head !== null,
+          ...(await reachabilitySweep(db, {
+            retainThreads: retain,
+            retainHeads: head ? [head] : [],
+          })),
+        };
+      });
+
+    case "f12-incomplete-sweep-omits-pending-writes":
+      return await pruneCase(context, async (db) =>
+        await reachabilitySweep(db, {
+          retainThreads: retain,
+          omit: "pending-writes" satisfies SweepOmission,
+        }),
+      );
+
+    case "f13-incomplete-sweep-omits-interrupts":
+      return await pruneCase(context, async (db) =>
+        await reachabilitySweep(db, {
+          retainThreads: retain,
+          omit: "interrupts" satisfies SweepOmission,
+        }),
+      );
 
     case "f04-reachability-sweep-retains-a-paused-thread":
       return await pruneCase(context, async (db) =>
@@ -264,9 +341,14 @@ export async function runFamilyFParty(context: PartyContext): Promise<Record<str
         gate: { name: "before-blob-delete", label: "ckpt.delete-blobs", ordinal: 1, position: "pre" },
       });
 
+    // Unsafe order AND an incomplete rule. The omission is what puts the damage
+    // in the RETAINED thread: without it the unsafe order only ever strands rows
+    // the sweep was already halfway through deleting, which is inconsistent
+    // garbage rather than corruption of anything the policy promised to keep.
     case "f10-kill-pruner-unsafe-order-control":
       return await killedPruner(context, {
         order: "unsafe",
+        omit: "channel-versions",
         gate: {
           name: "before-checkpoint-delete",
           label: "ckpt.delete-checkpoints",
@@ -302,6 +384,24 @@ export async function prepareFamilyF(caseId: string): Promise<Record<string, unk
 
     const paused = await runToInterrupt(graph, retainedThread(caseId));
 
+    // An ABANDONED BRANCH on the retained thread.
+    //
+    // Head-scoped retention is only testable if some row of a kept thread is not
+    // an ancestor of its head — otherwise "retained heads ∪ parent lineage"
+    // retains everything and the rule is vacuous. Resuming from an explicit
+    // `checkpoint_id` forks: the engine writes a new `source: "fork"` checkpoint
+    // whose parent is the named one and runs the tasks against it (measured in
+    // h03), leaving two leaves where one is stale.
+    let forked = false;
+    const beforeFork = await project(inspect, retainedThread(caseId));
+    const forkFrom = beforeFork.checkpoints
+      .filter((row) => row.checkpoint_ns === "" && row.parent_checkpoint_id !== null)
+      .at(0);
+    if (forkFrom) {
+      const branch = await resume(graph, retainedThread(caseId), forkFrom.checkpoint_id);
+      forked = branch.error === null;
+    }
+
     const stale = await runToInterrupt(graph, staleThread(caseId));
     const staleDone = await resume(graph, staleThread(caseId));
 
@@ -312,6 +412,7 @@ export async function prepareFamilyF(caseId: string): Promise<Record<string, unk
       caseId,
       prepared: true,
       retainedReachedInterrupt: paused.interrupted,
+      retainedHasAbandonedBranch: forked,
       retainedCheckpoints: retainedProjection.checkpoints.length,
       retainedInterruptRows: retainedProjection.interrupts.length,
       staleReachedInterrupt: stale.interrupted,

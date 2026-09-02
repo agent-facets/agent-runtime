@@ -122,10 +122,20 @@ export async function runToInterrupt(
 export async function resume(
   graph: ReturnType<typeof buildGraph>,
   threadId: string,
+  /**
+   * Supplying one makes this an explicit FORK rather than a resume, which is a
+   * different experiment — family H measures the difference. Family F uses it
+   * only to manufacture an abandoned branch, so that head-scoped retention has
+   * something to prune inside a thread it is keeping.
+   */
+  checkpointId?: string,
 ): Promise<GraphRun> {
   try {
     const value = await graph.invoke(new Command({ resume: RESUME_DECISION }), {
-      configurable: { thread_id: threadId },
+      configurable: {
+        thread_id: threadId,
+        ...(checkpointId ? { checkpoint_id: checkpointId } : {}),
+      },
       durability: "sync",
     });
     return { error: null, ...summarise(value) };

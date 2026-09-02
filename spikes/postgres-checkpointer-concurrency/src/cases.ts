@@ -88,8 +88,24 @@ export type KillSpec = {
  * that wrote it being taken away and rebuilt.
  */
 export type RestartSpec = {
-  /** The action fires once this party has exited. */
-  afterParty: number;
+  /**
+   * The action fires once this party has exited.
+   *
+   * Mutually exclusive with `atGate`. "After the party exits" is the right
+   * trigger for asking whether persisted state survives the stack that wrote it;
+   * it is the WRONG trigger for asking what a caller sees when the server dies
+   * underneath it, because by then there is no caller.
+   */
+  afterParty?: number;
+  /**
+   * The action fires while a party is still running, once it has parked on a
+   * durable `gate_park` row with this name.
+   *
+   * This is what makes "the database died under a live worker" measurable at
+   * all: the party is blocked inside a real checkpointer call when the server
+   * goes away, and it survives to report the error it saw.
+   */
+  atGate?: { party: number; gate: string };
   action:
     /** `docker restart`: a clean shutdown and a clean start. */
     | "graceful-restart"
@@ -263,6 +279,26 @@ export const CASES: CaseDef[] = [
     requires: [],
     purpose:
       "The authored rankings agree with independently computed arithmetic over the frozen vectors, the three metric orderings are pairwise distinct, and unknown text is refused rather than hashed.",
+  },
+  {
+    id: "s07-shutdown-witness-positive-control",
+    family: "S",
+    lane: "selftest",
+    pairedWith: null,
+    kind: "control",
+    parties: 1,
+    launch: "sequential",
+    stages: [],
+    // The ONLY case in the matrix that delivers SIGTERM rather than SIGKILL.
+    kill: { party: 0, gate: "await-sigterm", signal: "TERM" },
+    prepare: false,
+    oracles: ["projection", "drain"],
+    classification: "deterministic",
+    trials: null,
+    budgetMs: 90_000,
+    requires: [],
+    purpose:
+      "The positive control for the shutdown witness. Eleven kill cases prove their SIGKILL was uncatchable by asserting NO process/sigterm row exists - but every one of them sends SIGKILL, so the handler that writes that row had never fired anywhere in the matrix and the witness was empty in all 131 cases. This case delivers a SIGTERM and requires exactly one witness row, which is what makes those eleven absences load-bearing rather than vacuous.",
   },
 ];
 
@@ -691,7 +727,12 @@ const FAMILY_B: CaseDef[] = [
     kind: "candidate",
     parties: 2,
     launch: "parallel",
-    stages: [{ name: "ready", parties: 2 }],
+    stages: [
+      { name: "ready", parties: 2, captureActivity: true },
+      // The reader arrives here after its first sample; the writer only waits.
+      // This is what makes the sampling window structural rather than lucky.
+      { name: "reader-sampled", parties: 1 },
+    ],
     kill: null,
     prepare: false,
     oracles: ["barrier", "lineage", "reachability", "sqlstate", "projection"],
@@ -766,6 +807,13 @@ const FAMILY_C: CaseDef[] = [
     "between-statements",
     ["c01-kill-inside-put-before-checkpoint-row"],
     "The load-bearing control, and the only harness-written SQL in the family: a checkpoint row and its blob written in SEPARATE autocommit statements, killed between them. It MUST leave a stranded reference. A clean result here would mean the atomicity findings in c01/c02 are unfalsifiable.",
+    ["projection", "reachability", "drain", "survivors"],
+  ),
+  killCase(
+    "c10-nonatomic-writer-blob-first-control",
+    "between-statements",
+    ["c05-nonatomic-writer-control"],
+    "The same non-atomic writer with the statements in the VENDOR's order - blobs first, then the checkpoint row - killed between them. c05 leaves a stranded reference, but a torn put() cannot: _dumpBlobs runs before the checkpoint upsert, so partial vendor state is ORPHAN BLOBS that no checkpoint names. c05 therefore validated a detector for damage the vendor path does not produce; this exercises the shape c01 and c02 would actually have to catch.",
     ["projection", "reachability", "drain", "survivors"],
   ),
   {
@@ -2453,6 +2501,66 @@ const FAMILY_I: CaseDef[] = [
   },
 ];
 
+const FAMILY_F_EXTRA: CaseDef[] = [
+  {
+    id: "f11-head-scoped-sweep-prunes-an-abandoned-branch",
+    family: "F",
+    lane: "stock",
+    pairedWith: null,
+    kind: "candidate",
+    parties: 1,
+    launch: "parallel",
+    stages: [],
+    kill: null,
+    prepare: true,
+    oracles: ["projection", "reachability", "lineage", "sqlstate"],
+    classification: "deterministic",
+    trials: null,
+    budgetMs: 210000,
+    requires: ["f04-reachability-sweep-retains-a-paused-thread"],
+    purpose:
+      "The live-set rule the architecture actually proposes, walked from an explicit head with a recursive ancestor query. The retained thread carries an abandoned fork branch, so a row of a KEPT thread is prunable - which whole-thread retention can never produce, making 'retained heads union parent lineage' vacuous in f04. The branch must go, the head's lineage must survive intact, and the paused run must still resume.",
+  },
+  {
+    id: "f12-incomplete-sweep-omits-pending-writes",
+    family: "F",
+    lane: "stock",
+    pairedWith: null,
+    kind: "mutation",
+    parties: 1,
+    launch: "parallel",
+    stages: [],
+    kill: null,
+    prepare: true,
+    oracles: ["projection", "reachability", "lineage", "sqlstate"],
+    classification: "deterministic",
+    trials: null,
+    budgetMs: 210000,
+    requires: ["f04-reachability-sweep-retains-a-paused-thread"],
+    purpose:
+      "The live set names pending writes, and nothing had ever tested that term. A sweep that keeps every checkpoint but forgets its pending writes must leave detectable damage - the paused run loses the writes its resume depends on.",
+  },
+  {
+    id: "f13-incomplete-sweep-omits-interrupts",
+    family: "F",
+    lane: "stock",
+    pairedWith: null,
+    kind: "mutation",
+    parties: 1,
+    launch: "parallel",
+    stages: [],
+    kill: null,
+    prepare: true,
+    oracles: ["projection", "reachability", "lineage", "sqlstate"],
+    classification: "deterministic",
+    trials: null,
+    budgetMs: 210000,
+    requires: ["f12-incomplete-sweep-omits-pending-writes"],
+    purpose:
+      "The narrower half of the same term: keep ordinary pending writes, drop only the __interrupt__ rows. An interrupt write IS the outstanding approval, so this is the mutation that turns a run awaiting a human decision into one with no decision point, and it must be detectable.",
+  },
+];
+
 const FAMILY_G: CaseDef[] = [
   {
     id: "g01-graceful-database-restart",
@@ -2504,7 +2612,10 @@ const FAMILY_G: CaseDef[] = [
     launch: "sequential",
     stages: [],
     kill: null,
-    restart: { afterParty: 0, action: "unclean-kill" },
+    restart: {
+      action: "unclean-kill",
+      atGate: { party: 0, gate: "checkpointer-blocked" },
+    },
     prepare: false,
     oracles: ["clusterIdentity", "lineage", "projection", "sqlstate"],
     classification: "deterministic",
@@ -2512,7 +2623,7 @@ const FAMILY_G: CaseDef[] = [
     budgetMs: 300000,
     requires: ["g02-unclean-database-kill-and-recovery"],
     purpose:
-      "The server is destroyed after a worker has demonstrably held a live backend inside a transaction. Measures that the failure a client sees is loud and bounded rather than an indefinite hang, and that the committed state from before the kill is still there afterwards.",
+      "The server is SIGKILLed while a real PostgresSaver.put() is blocked inside it, proven from pg_stat_activity rather than assumed: a dedicated session holds the checkpoint table, the vendor call blocks on that lock, and only once the server reports a waiting subject backend is the park recorded and the database destroyed. Measures what the caller actually sees - a loud, bounded rejection rather than an indefinite hang - and that state committed before the kill survives and still resumes. The earlier version acted only after the party had exited, so no caller existed at the moment of the kill.",
   },
   {
     id: "g04-container-stack-replacement-on-the-preserved-volume",
@@ -2760,6 +2871,7 @@ CASES.push(
   ...FAMILY_E,
   ...FAMILY_H_EFFECT_KEY,
   ...FAMILY_F,
+  ...FAMILY_F_EXTRA,
   ...FAMILY_G,
   ...FAMILY_H_COMPAT,
   ...FAMILY_I,
@@ -2784,8 +2896,14 @@ export function validateRegistry(): string[] {
     if (entry.pairedWith !== null && !CASES.some((other) => other.id === entry.pairedWith)) {
       problems.push(`${entry.id}: pairedWith names an unknown case ${entry.pairedWith}`);
     }
-    if (entry.classification === "bounded-trials" && (entry.trials ?? 0) < 1) {
-      problems.push(`${entry.id}: bounded-trials without a declared trial count`);
+    // A trial IS a repeat. Nothing loops the participant body, so a bounded case
+    // is sampled once per isolated repeat and three times in the citable set.
+    // Declaring any other number would promise sampling the harness does not do,
+    // and "observed outcome set over N trials" in the report must mean N = 3.
+    if (entry.classification === "bounded-trials" && entry.trials !== 1) {
+      problems.push(
+        `${entry.id}: bounded-trials must declare trials: 1 — a trial is one repeat`,
+      );
     }
     if (entry.classification === "deterministic" && entry.trials !== null) {
       problems.push(`${entry.id}: deterministic case declares trials`);

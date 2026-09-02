@@ -27,7 +27,8 @@
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 
 import { CHECKPOINT_SCHEMA, databaseForCase, threadForCase } from "./contract.ts";
-import { appNameFor, describeSqlError, openDb, type Db } from "./db.ts";
+import { appNameFor, describeSqlError, openDb, type Db, type SqlError } from "./db.ts";
+import { recordNodePark } from "./gate.ts";
 import { createProbe } from "./probe.ts";
 import { buildGraph, resume, runToInterrupt } from "./graph.ts";
 import { project } from "./inspect/checkpoints.ts";
@@ -156,6 +157,18 @@ async function afterRestart(context: PartyContext): Promise<Record<string, unkno
 }
 
 /**
+ * OLD g03. Retained only so the diff is legible; no case dispatches to it.
+ *
+ * It could not measure what it claimed: the driver acts between parties, so this
+ * party had already rolled back, released its client and exited before the
+ * server was killed. `heldBackend` meant "a pid was once read", not "a backend
+ * was live at the kill". Replaced by `databaseDeathUnderLiveWorker`.
+ */
+async function _retiredUnderLiveWorker(context: PartyContext): Promise<Record<string, unknown>> {
+  return await beforeRestart(context);
+}
+
+/**
  * The one case where the server dies UNDER a live caller.
  *
  * Party 0 opens a transaction and parks inside it holding a lock, so the
@@ -163,43 +176,126 @@ async function afterRestart(context: PartyContext): Promise<Record<string, unkno
  * measured is the shape of the failure the client sees: a loud, classifiable
  * error rather than an indefinite hang.
  */
-async function underLiveWorker(context: PartyContext): Promise<Record<string, unknown>> {
+async function databaseDeathUnderLiveWorker(
+  context: PartyContext,
+): Promise<Record<string, unknown>> {
+  if (context.party === 1) return await afterRestart(context);
+
   const probe = probePool(context);
-  const subject = subjectPool(context);
+  // No statement timeout on the subject. The default 15s cap would abort the
+  // blocked call on its own, and the case would then be measuring the harness's
+  // timeout rather than what the server's death does to an in-flight caller.
+  const subject = openDb(appNameFor(context.caseId, context.member, "subject"), "subject", {
+    database: databaseForCase(context.caseId),
+    max: 4,
+    statementTimeoutMs: null,
+  });
+  const lease = openDb(appNameFor(context.caseId, context.member, "lease"), "lease", {
+    database: databaseForCase(context.caseId),
+    max: 1,
+    statementTimeoutMs: null,
+  });
+  const observe = openDb(appNameFor(context.caseId, context.member, "observe"), "observe", {
+    database: databaseForCase(context.caseId),
+  });
   const inspect = inspectPool(context);
   const threadId = threadForCase(context.caseId);
 
   try {
     const witness = createProbe(probe, context.caseId, context.party, context.member);
     const saver = new PostgresSaver(subject.pool, undefined, { schema: CHECKPOINT_SCHEMA });
+
+    // Committed state FIRST, so party 1 has something whose survival is worth
+    // checking. Everything after this point is about the in-flight call.
     const graph = buildGraph(saver, witness);
     const first = await runToInterrupt(graph, threadId);
     const shape = await shapeOf(inspect, threadId);
     const cluster = await clusterIdentity(inspect);
 
-    // Held open across the kill. The driver's action fires once this party has
-    // exited, so the observable is what the NEXT operation on a pool whose
-    // server has been destroyed does — which is the client-visible half of the
-    // question. The transaction here guarantees a live backend exists at the
-    // moment of the kill.
-    const client = await subject.pool.connect();
-    let heldBackend: number | null = null;
-    try {
-      await client.query("BEGIN");
-      const { rows } = await client.query<{ pid: number }>("SELECT pg_backend_pid() AS pid");
-      heldBackend = rows[0]?.pid ?? null;
-      await witness.record("worker", "holding-transaction", { backend: heldBackend });
-    } finally {
-      // Released rather than left open: the worker has to EXIT for the driver to
-      // act, and a checked-out client would keep the process alive past its
-      // budget. The backend id is what the evidence needs, not the socket.
-      try {
-        await client.query("ROLLBACK");
-      } catch {
-        /* the server may already be gone */
-      }
-      client.release();
+    // A dedicated session holds the checkpoint table so the next write cannot
+    // proceed. This is the only way to hold a real vendor call open long enough
+    // for the server to be destroyed underneath it — a sleep would prove nothing
+    // about where the call was.
+    const blocker = await lease.pool.connect();
+    // A CHECKED-OUT client emits `error` on itself, not on the pool, so
+    // `openDb`'s pool-level handler does not see it. When the server is
+    // destroyed this fires — and with no listener Node treats an unhandled
+    // `error` event as fatal, killing the worker before the awaited call can
+    // reject. The first run of this case died exactly that way and reported no
+    // JSON at all.
+    //
+    // The messages are kept: a socket torn down mid-transaction is part of what
+    // "the caller was told" means.
+    const clientErrors: Array<{ message: string; code: string | null }> = [];
+    blocker.on("error", (caught: unknown) => {
+      clientErrors.push({
+        message: caught instanceof Error ? caught.message : String(caught),
+        code: (caught as { code?: string } | null)?.code ?? null,
+      });
+    });
+    await blocker.query("BEGIN");
+    await blocker.query(
+      `LOCK TABLE ${CHECKPOINT_SCHEMA}.checkpoints IN ACCESS EXCLUSIVE MODE`,
+    );
+
+    // Deliberately NOT awaited. The promise is the thing under test.
+    const pending = saver
+      .put(
+        { configurable: { thread_id: threadId, checkpoint_ns: "" } },
+        {
+          v: 4,
+          id: "01970000-0000-6000-8000-0000000000d3",
+          ts: "2026-01-01T00:00:00.000Z",
+          channel_values: { spike_channel: "in-flight" },
+          channel_versions: { spike_channel: "9" },
+          versions_seen: {},
+        },
+        { source: "update", step: 9, parents: {} } as never,
+        { spike_channel: "9" },
+      )
+      .then(
+        () => ({ settled: "fulfilled" as const, error: null as SqlError | null }),
+        (caught: unknown) => ({ settled: "rejected" as const, error: describeSqlError(caught) }),
+      );
+
+    // Confirm from the SERVER that the call is genuinely blocked, rather than
+    // assuming it got that far. Without this the kill could land before the
+    // vendor had issued any statement at all.
+    const blockedDeadline = Date.now() + 30_000;
+    let blockedBackends = 0;
+    while (Date.now() < blockedDeadline) {
+      const { rows } = await observe.pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE application_name LIKE $1 AND wait_event_type = 'Lock' AND state = 'active'`,
+        [`${context.caseId}:${context.member}#subject%`],
+      );
+      blockedBackends = rows[0]?.n ?? 0;
+      if (blockedBackends > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
+
+    await witness.record("worker", "checkpointer-blocked", { blockedBackends });
+    // The driver SIGKILLs PostgreSQL here and restarts it.
+    await recordNodePark(probe, context.caseId, context.party, "checkpointer-blocked", "put");
+
+    // What the caller sees. Bounded on purpose: an indefinite hang is the
+    // negative outcome this case exists to rule out, and it has to be
+    // distinguishable from a slow rejection rather than becoming a timeout.
+    const started = Date.now();
+    const outcome = await Promise.race([
+      pending,
+      new Promise<{ settled: "unsettled"; error: null }>((resolve) =>
+        setTimeout(() => resolve({ settled: "unsettled", error: null }), 30_000),
+      ),
+    ]);
+    const settleMs = Date.now() - started;
+
+    try {
+      await blocker.query("ROLLBACK");
+    } catch {
+      /* the server is gone; the transaction died with it */
+    }
+    blocker.release();
 
     return {
       party: context.party,
@@ -209,19 +305,37 @@ async function underLiveWorker(context: PartyContext): Promise<Record<string, un
       reachedInterrupt: first.interrupted,
       shape,
       cluster,
-      heldBackend: heldBackend !== null,
+      // The witness that matters: a backend belonging to the SUBJECT pool was
+      // waiting on a lock, in the server, at the moment it was killed.
+      blockedBackends,
+      callWasInFlight: blockedBackends > 0,
+      // Loud and bounded, or not.
+      callSettled: outcome.settled !== "unsettled",
+      callRejected: outcome.settled === "rejected",
+      callError: outcome.error,
+      settledWithinBudget: settleMs < 30_000,
+      // Both halves of what the client observed: the awaited promise, and the
+      // socket-level errors the driver surfaced on the held connection.
+      observedClientErrors: clientErrors.length,
+      idleClientErrors: subject.idleErrors.length + lease.idleErrors.length,
     };
   } catch (caught) {
     return { party: context.party, error: describeSqlError(caught), role: "before" };
   } finally {
-    await Promise.allSettled([subject.close(), probe.close(), inspect.close()]);
+    await Promise.allSettled([
+      subject.close(),
+      lease.close(),
+      observe.close(),
+      probe.close(),
+      inspect.close(),
+    ]);
   }
 }
 
 export async function runFamilyGParty(context: PartyContext): Promise<Record<string, unknown>> {
-  if (context.party === 1) return await afterRestart(context);
   if (context.caseId === "g03-database-death-under-a-live-worker") {
-    return await underLiveWorker(context);
+    return await databaseDeathUnderLiveWorker(context);
   }
+  if (context.party === 1) return await afterRestart(context);
   return await beforeRestart(context);
 }

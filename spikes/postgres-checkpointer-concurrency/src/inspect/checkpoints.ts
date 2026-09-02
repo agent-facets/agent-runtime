@@ -347,15 +347,38 @@ export type ReachabilityWitness = {
    * join is an INNER join, so this does NOT raise: the channel silently vanishes
    * and the thread resumes on truncated state. Corruption, and must be empty.
    */
-  strandedReferences: Array<{ ns: string; checkpoint_id: string; channel: string; version: string }>;
+  strandedReferences: Array<{
+    thread_id: string;
+    ns: string;
+    checkpoint_id: string;
+    channel: string;
+    version: string;
+  }>;
   /** A blob row no live checkpoint names. Harmless garbage; may be non-empty. */
-  orphanBlobs: Array<{ ns: string; channel: string; version: string; bytes: number }>;
+  orphanBlobs: Array<{ thread_id: string; ns: string; channel: string; version: string; bytes: number }>;
   /** A checkpoint whose parent row is gone. Breaks delta replay; must be empty. */
-  brokenLineage: Array<{ ns: string; checkpoint_id: string; parent_checkpoint_id: string }>;
+  brokenLineage: Array<{
+    thread_id: string;
+    ns: string;
+    checkpoint_id: string;
+    parent_checkpoint_id: string;
+  }>;
   /** A write whose checkpoint is gone. */
-  deadWrites: Array<{ ns: string; checkpoint_id: string; task_id: string; channel: string }>;
+  deadWrites: Array<{
+    thread_id: string;
+    ns: string;
+    checkpoint_id: string;
+    task_id: string;
+    channel: string;
+  }>;
   /** How many live checkpoints reference each blob version. max > 1 proves sharing. */
-  sharing: Array<{ ns: string; channel: string; version: string; referencedBy: number }>;
+  sharing: Array<{
+    thread_id: string;
+    ns: string;
+    channel: string;
+    version: string;
+    referencedBy: number;
+  }>;
 };
 
 /**
@@ -384,12 +407,13 @@ async function reachabilityFor(db: Db, threadIds: string[]): Promise<Reachabilit
   // Any divergence here would make "referenced" mean something different from
   // "readable", which is the whole bug class this witness exists to detect.
   const stranded = await db.pool.query<{
+    thread_id: string;
     ns: string;
     checkpoint_id: string;
     channel: string;
     version: string;
   }>(
-    `SELECT c.checkpoint_ns AS ns, c.checkpoint_id, v.key AS channel, v.value AS version
+    `SELECT c.thread_id, c.checkpoint_ns AS ns, c.checkpoint_id, v.key AS channel, v.value AS version
        FROM ${CHECKPOINT_SCHEMA}.checkpoints c
        CROSS JOIN LATERAL jsonb_each_text(c.checkpoint -> 'channel_versions') v
        LEFT JOIN ${CHECKPOINT_SCHEMA}.checkpoint_blobs b
@@ -398,17 +422,18 @@ async function reachabilityFor(db: Db, threadIds: string[]): Promise<Reachabilit
              AND b.channel       = v.key
              AND b.version       = v.value
       WHERE c.thread_id = ANY($1::text[]) AND b.channel IS NULL
-      ORDER BY 1, 2, 3, 4`,
+      ORDER BY 1, 2, 3, 4, 5`,
     [threadIds],
   );
 
   const orphans = await db.pool.query<{
+    thread_id: string;
     ns: string;
     channel: string;
     version: string;
     bytes: number;
   }>(
-    `SELECT b.checkpoint_ns AS ns, b.channel, b.version,
+    `SELECT b.thread_id, b.checkpoint_ns AS ns, b.channel, b.version,
             COALESCE(octet_length(b.blob), 0) AS bytes
        FROM ${CHECKPOINT_SCHEMA}.checkpoint_blobs b
       WHERE b.thread_id = ANY($1::text[])
@@ -420,16 +445,17 @@ async function reachabilityFor(db: Db, threadIds: string[]): Promise<Reachabilit
                  AND c.checkpoint_ns = b.checkpoint_ns
                  AND v.key           = b.channel
                  AND v.value         = b.version)
-      ORDER BY 1, 2, 3`,
+      ORDER BY 1, 2, 3, 4`,
     [threadIds],
   );
 
   const broken = await db.pool.query<{
+    thread_id: string;
     ns: string;
     checkpoint_id: string;
     parent_checkpoint_id: string;
   }>(
-    `SELECT c.checkpoint_ns AS ns, c.checkpoint_id, c.parent_checkpoint_id
+    `SELECT c.thread_id, c.checkpoint_ns AS ns, c.checkpoint_id, c.parent_checkpoint_id
        FROM ${CHECKPOINT_SCHEMA}.checkpoints c
        LEFT JOIN ${CHECKPOINT_SCHEMA}.checkpoints p
               ON p.thread_id     = c.thread_id
@@ -438,40 +464,48 @@ async function reachabilityFor(db: Db, threadIds: string[]): Promise<Reachabilit
       WHERE c.thread_id = ANY($1::text[])
         AND c.parent_checkpoint_id IS NOT NULL
         AND p.checkpoint_id IS NULL
-      ORDER BY 1, 2`,
+      ORDER BY 1, 2, 3`,
     [threadIds],
   );
 
   const dead = await db.pool.query<{
+    thread_id: string;
     ns: string;
     checkpoint_id: string;
     task_id: string;
     channel: string;
   }>(
-    `SELECT w.checkpoint_ns AS ns, w.checkpoint_id, w.task_id, w.channel
+    `SELECT w.thread_id, w.checkpoint_ns AS ns, w.checkpoint_id, w.task_id, w.channel
        FROM ${CHECKPOINT_SCHEMA}.checkpoint_writes w
        LEFT JOIN ${CHECKPOINT_SCHEMA}.checkpoints c
               ON c.thread_id     = w.thread_id
              AND c.checkpoint_ns = w.checkpoint_ns
              AND c.checkpoint_id = w.checkpoint_id
       WHERE w.thread_id = ANY($1::text[]) AND c.checkpoint_id IS NULL
-      ORDER BY 1, 2, 3, 4`,
+      ORDER BY 1, 2, 3, 4, 5`,
     [threadIds],
   );
 
   const sharing = await db.pool.query<{
+    thread_id: string;
     ns: string;
     channel: string;
     version: string;
     referencedBy: number;
   }>(
-    `SELECT c.checkpoint_ns AS ns, v.key AS channel, v.value AS version,
+    // `thread_id` MUST be in the grouping. Without it the counts of two threads
+    // running the same graph — same channel names, same version numbers — were
+    // summed, and f01 reported a blob "referenced by six live checkpoints" that
+    // was really two independent threads referencing it three times each.
+    // `checkpoint_blobs` is keyed by thread, so a row in one thread can never be
+    // referenced from another.
+    `SELECT c.thread_id, c.checkpoint_ns AS ns, v.key AS channel, v.value AS version,
             count(DISTINCT c.checkpoint_id)::int AS "referencedBy"
        FROM ${CHECKPOINT_SCHEMA}.checkpoints c
        CROSS JOIN LATERAL jsonb_each_text(c.checkpoint -> 'channel_versions') v
       WHERE c.thread_id = ANY($1::text[])
-      GROUP BY 1, 2, 3
-      ORDER BY 1, 2,
+      GROUP BY 1, 2, 3, 4
+      ORDER BY 1, 2, 3,
                CASE WHEN v.value ~ '^[0-9]+$' THEN v.value::numeric END NULLS LAST,
                v.value`,
     [threadIds],

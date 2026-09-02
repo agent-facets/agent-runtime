@@ -31,6 +31,7 @@ import type { Checkpoint, CheckpointMetadata } from "@langchain/langgraph-checkp
 import {
   CHECKPOINT_SCHEMA,
   CONFLICT_FIXTURE,
+  PROBE_SCHEMA,
   TIMEOUTS,
   databaseForCase,
   threadForCase,
@@ -291,14 +292,41 @@ async function putWritesConflict(
 
 const B09_CHECKPOINTS = ["b09-cp-0", "b09-cp-1", "b09-cp-2", "b09-cp-3", "b09-cp-4"];
 
+/** Has the writer recorded that it finished? Read from the independent probe. */
+async function writerHasFinished(db: Db, caseId: string): Promise<boolean> {
+  const { rows } = await db.pool.query<{ n: number }>(
+    `SELECT count(*)::int AS n FROM ${PROBE_SCHEMA}.event
+      WHERE case_id = $1 AND node = 'writer' AND phase = 'done'`,
+    [caseId],
+  );
+  return (rows[0]?.n ?? 0) > 0;
+}
+
 /**
  * A reader sampling raw rows while a writer commits a chain of checkpoints.
  *
  * The claim under test is that a reader never observes a checkpoint row whose
- * referenced blobs are absent. That is only meaningful if the reader actually
- * sampled DURING the writes, so the case also records how many distinct
- * checkpoint counts it saw: one distinct count means it sampled a settled
- * database and the criterion would be vacuous.
+ * referenced blobs are absent — meaningful only if the reader actually sampled
+ * DURING the writes.
+ *
+ * The first version left that to chance: both parties were released from one
+ * barrier and simply ran. In `verify-v1` repeat 1 the writer committed all five
+ * checkpoints before the reader issued its first query, so the reader sampled a
+ * settled database, the anti-vacuity witness failed, and the main criteria were
+ * vacuous for that repeat. That is the defect class this harness has already
+ * recorded twice: a criterion decided by the interleaving rather than by the
+ * behaviour — except here it was the guard AGAINST vacuity that was racy.
+ *
+ * The sampling window is now structural at both ends:
+ *
+ *   * the reader takes one sample and only THEN releases the writer, so an
+ *     empty-chain observation is guaranteed rather than lucky;
+ *   * the reader stops on the writer's durable `writer/done` probe row rather
+ *     than on "I have seen five checkpoints", so it keeps sampling across the
+ *     whole commit sequence and takes a final sample afterwards.
+ *
+ * `sawEmptyChain` and `sawCompleteChain` are therefore deterministic and are
+ * digested; the intermediate counts remain scheduling and stay volatile.
  */
 async function readUnderCommits(context: PartyContext): Promise<Record<string, unknown>> {
   const probe = probePool(context);
@@ -310,6 +338,9 @@ async function readUnderCommits(context: PartyContext): Promise<Record<string, u
     try {
       const saver = new PostgresSaver(subject.pool, undefined, { schema: CHECKPOINT_SCHEMA });
       await atBarrier(probe, context, witness, "ready");
+      // Held until the reader has taken its first sample. Without this the
+      // writer can finish the whole chain before the reader looks once.
+      await waitForRelease(probe, context.caseId, "reader-sampled");
 
       let error: SqlError | null = null;
       let committed = 0;
@@ -350,9 +381,26 @@ async function readUnderCommits(context: PartyContext): Promise<Record<string, u
     let error: SqlError | null = null;
 
     try {
+      // One sample BEFORE the writer is allowed to start. This is the half of
+      // the window that used to be left to chance.
+      samples.push(await sampleConsistency(inspect, threadId));
+      await arrive(
+        probe,
+        context.caseId,
+        "reader-sampled",
+        context.party,
+        context.member,
+        witness.nonce,
+      );
+      await waitForRelease(probe, context.caseId, "reader-sampled");
+
+      let writerDone = false;
       for (;;) {
         samples.push(await sampleConsistency(inspect, threadId));
-        if ((samples.at(-1)?.checkpoints ?? 0) >= B09_CHECKPOINTS.length) break;
+        // One further sample after the writer's own row appears, so the settled
+        // end of the chain is always observed too.
+        if (writerDone) break;
+        writerDone = await writerHasFinished(probe, context.caseId);
         if (Date.now() > deadline) break;
       }
     } catch (caught) {
@@ -365,6 +413,10 @@ async function readUnderCommits(context: PartyContext): Promise<Record<string, u
       error,
       role: "reader",
       samples: samples.length,
+      // Structural now, and digested: the rendezvous guarantees the empty
+      // observation and the `writer/done` stop guarantees the complete one.
+      sawEmptyChain: counts.includes(0),
+      sawCompleteChain: counts.includes(B09_CHECKPOINTS.length),
       // The anti-vacuity witness: more than one distinct count proves the reader
       // was looking while the writer was still committing.
       distinctCheckpointCounts: counts.length,

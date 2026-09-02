@@ -112,12 +112,28 @@ export function openDb(appName: string, role: Role, options: DbOptions = {}): Db
   });
 
   const idleErrors: Array<{ message: string; code: string | null }> = [];
+  const record = (error: unknown): void => {
+    idleErrors.push({
+      message: error instanceof Error ? error.message : String(error),
+      code: (error as { code?: string } | null)?.code ?? null,
+    });
+  };
   if (captureIdleErrors) {
-    pool.on("error", (error: unknown) => {
-      idleErrors.push({
-        message: error instanceof Error ? error.message : String(error),
-        code: (error as { code?: string } | null)?.code ?? null,
-      });
+    // Idle clients, which pg-pool forwards to the pool.
+    pool.on("error", record);
+    // And every client the pool creates, including ones currently CHECKED OUT
+    // by vendor code. pg emits `error` on the client itself in that case, and an
+    // `error` event with no listener is fatal in Node — so a server that dies
+    // under an in-flight call killed the whole worker before the awaited promise
+    // could reject. Family G's g03 died exactly that way twice, reporting no
+    // JSON at all, which reads as a harness fault rather than as the measurement
+    // it was trying to make.
+    //
+    // Attaching a listener does not swallow anything: the in-flight query still
+    // rejects through its own promise. It only stops the process from being
+    // torn down before it can say so.
+    pool.on("connect", (client) => {
+      client.on("error", record);
     });
   }
 

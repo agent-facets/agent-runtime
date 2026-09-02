@@ -284,7 +284,7 @@ run_case() {
   mkdir -p "${cd}"
 
   local def parties launch stages budget secs needs_prepare kill_party kill_gate kill_signal
-  local restart_after restart_action
+  local restart_after restart_action restart_gate restart_gate_party
   def="$(jq -c --arg id "${case_id}" '.[] | select(.id == $id)' "${RUN_DIR}/cases.json")"
   parties="$(jq -r '.parties' <<< "${def}")"
   launch="$(jq -r '.launch' <<< "${def}")"
@@ -296,6 +296,8 @@ run_case() {
   kill_signal="$(jq -r '.kill.signal // ""' <<< "${def}")"
   restart_after="$(jq -r '.restart.afterParty // ""' <<< "${def}")"
   restart_action="$(jq -r '.restart.action // ""' <<< "${def}")"
+  restart_gate="$(jq -r '.restart.atGate.gate // ""' <<< "${def}")"
+  restart_gate_party="$(jq -r '.restart.atGate.party // ""' <<< "${def}")"
   secs=$(( (budget + 999) / 1000 ))
 
   CASE_DB="$(jq -r --arg id "${case_id}" '.databases[$id]' "${REPDIR}/${FAM}/provision.json")"
@@ -328,6 +330,21 @@ run_case() {
     [ "$(docker inspect --format '{{.Image}}' "${wid}")" = "${IMAGE_ID}" ] \
       || finish_fault "case ${case_id}: party ${party} ran a different image"
     names+=("${wname}")
+
+    # The database stack is acted on while this party is STILL RUNNING, once it
+    # has parked on a durable row. Anchored on the park, never on a sleep — same
+    # contract as a worker kill, and the reason "the server died under a live
+    # caller" is measurable rather than asserted.
+    if [ -n "${restart_gate}" ] && [ "${restart_gate_party}" = "${party}" ]; then
+      code="$(run_tool "${cd}/awaitpark.json" "${cd}/awaitpark.err" 120 \
+                awaitpark --case "${case_id}" --party "${party}" --gate "${restart_gate}")"
+      if [ "${code}" != "0" ]; then
+        docker logs "${wname}" > "${cd}/p${party}.err" 2>&1 || true
+        finish_fault "case ${case_id}: party ${party} never parked at ${restart_gate} (exit ${code})"
+      fi
+      apply_stack_action "${cd}" "${case_id}" "${restart_action}"
+      restart_json="$(cat "${cd}/restart.json")"
+    fi
 
     if [ "${kill_party}" = "${party}" ]; then
       # Anchored to an observed durable park row, never to a sleep.
@@ -369,7 +386,7 @@ run_case() {
     # replaced) server. Doing it inside a party would leave the worker holding
     # pooled connections to a server that no longer exists, which measures pg's
     # reconnect behaviour rather than the architecture's restart question.
-    if [ -n "${restart_action}" ] && [ "${restart_after}" = "${party}" ]; then
+    if [ -n "${restart_action}" ] && [ -n "${restart_after}" ] && [ "${restart_after}" = "${party}" ]; then
       apply_stack_action "${cd}" "${case_id}" "${restart_action}"
       restart_json="$(cat "${cd}/restart.json")"
     fi
@@ -687,6 +704,17 @@ done
 # ---------------------------------------------------------------------------
 log "Comparing managed state across repeats"
 
+# Every case the run SELECTED produced a bundle in every repeat. The summarizer
+# can only check the converse (each bundle maps to a known case); coverage is a
+# property of the run, so the driver owns it.
+ALL_SELECTED_PRESENT=true
+for repeat in $(seq 1 "${REPEATS}"); do
+  for case_id in ${CASE_IDS}; do
+    [ -s "${RUN_DIR}/repeat-${repeat}/"*"/${case_id}/case.json" ] 2>/dev/null \
+      || ALL_SELECTED_PRESENT=false
+  done
+done
+
 DIGEST_FILES=(); ACCEPT_FILES=()
 for repeat in $(seq 1 "${REPEATS}"); do
   DIGEST_FILES+=("${RUN_DIR}/digest-${repeat}-overall.txt")
@@ -702,6 +730,21 @@ jq -s 'reduce .[] as $repeat ({};
          reduce ($repeat | to_entries[]) as $entry (.;
            .[$entry.key] = (((.[$entry.key] // true) and $entry.value))))' \
   "${ACCEPT_FILES[@]}" > "${RUN_DIR}/acceptance-all.json"
+
+# The per-LANE maps get the same treatment. Only `.flat` was ANDed before, so a
+# reader citing `acceptance.lanes` could read a repeat-1 `true` for a criterion
+# that failed in another repeat — laundering by a narrower door.
+LANE_FILES=()
+for repeat in $(seq 1 "${REPEATS}"); do
+  LANE_FILES+=("${RUN_DIR}/repeat-${repeat}/lanes.json")
+  jq -c '.acceptance.lanes' "${RUN_DIR}/repeat-${repeat}/run.json" \
+    > "${RUN_DIR}/repeat-${repeat}/lanes.json"
+done
+jq -s 'reduce .[] as $repeat ({};
+         reduce ($repeat | to_entries[]) as $lane (.;
+           .[$lane.key] = (reduce ($lane.value | to_entries[]) as $entry ((.[$lane.key] // {});
+             .[$entry.key] = (((.[$entry.key] // true) and $entry.value))))))' \
+  "${LANE_FILES[@]}" > "${RUN_DIR}/acceptance-lanes-all.json"
 REPEATS_FAILED="$(jq -rs '[.[] | to_entries[] | select(.value == false)] | length' "${ACCEPT_FILES[@]}")"
 [ "${REPEATS_FAILED}" -eq 0 ] || warn "${REPEATS_FAILED} criterion failure(s) across individual repeats"
 
@@ -765,6 +808,8 @@ jq -n \
   --slurpfile reasonsFile "${RUN_DIR}/subset-reasons.json" \
   --slurpfile preservedFile "${RUN_DIR}/preserved.json" \
   --slurpfile acceptAllFile "${RUN_DIR}/acceptance-all.json" \
+  --slurpfile acceptLanesFile "${RUN_DIR}/acceptance-lanes-all.json" \
+  --argjson allSelectedPresent "${ALL_SELECTED_PRESENT}" \
   '($fixturesFile[0]) as $fixtures
    | ($firstFile[0])   as $first
    | ($posturesFile[0]) as $postures
@@ -772,6 +817,7 @@ jq -n \
    | ($reasonsFile[0])  as $reasons
    | ($preservedFile[0]) as $preserved
    | ($acceptAllFile[0]) as $acceptAll
+   | ($acceptLanesFile[0]) as $acceptLanes
    | {
      schema: "agent-runtime/spike-evidence/2",
      spike: $spike,
@@ -794,6 +840,8 @@ jq -n \
      cases: $first.cases,
      acceptance: ($first.acceptance
                   | .flat = $acceptAll
+                  | .lanes = $acceptLanes
+                  | .global += { all_selected_cases_present: $allSelectedPresent }
                   | if $cross
                     then .global += { reproducible_across_runs: $reproducible,
                                       acceptance_stable_across_runs: $acceptance_stable }

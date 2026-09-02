@@ -25,6 +25,7 @@ import { createProbe } from "./probe.ts";
 import {
   createSink,
   instrumentPool,
+  recordNodePark,
   recordPark,
   statementMultiset,
   statementShape,
@@ -76,8 +77,37 @@ export async function runSelftestParty(context: PartyContext): Promise<Record<st
       return await s05(context);
     case "s06-embedding-oracle":
       return await s06();
+    case "s07-shutdown-witness-positive-control":
+      return await s07(context);
     default:
       throw new Error(`family S has no participant for case ${context.caseId}`);
+  }
+}
+
+/**
+ * The positive control for the shutdown witness.
+ *
+ * Eleven kill cases across families A, C, E, F and H assert the ABSENCE of a
+ * `process/sigterm` row to prove their SIGKILL was uncatchable. Every one of
+ * them used `SIGKILL`, so the handler that writes that row had never fired
+ * anywhere in the matrix — the witness was empty in all 131 cases, and an oracle
+ * that was never attached reads exactly like an oracle that found nothing. This
+ * case is the one place a `SIGTERM` is delivered, so those eleven absences mean
+ * something.
+ *
+ * It parks on a durable `gate_park` row like any other kill case; the registry
+ * gives it `signal: "TERM"` instead of `SIGKILL`.
+ */
+async function s07(context: PartyContext): Promise<Record<string, unknown>> {
+  const probe = openDb(appNameFor(context.caseId, context.member, "witness"), "probe");
+  try {
+    await recordNodePark(probe, context.caseId, context.party, "await-sigterm", "selftest");
+    // The driver kills this container here. `main.ts` installs the SIGTERM
+    // handler, which records the row and exits 143.
+    await new Promise<never>(() => {});
+    return { party: context.party, error: null, parked: true };
+  } finally {
+    await probe.close().catch(() => {});
   }
 }
 

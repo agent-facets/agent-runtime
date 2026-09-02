@@ -16,6 +16,7 @@ import {
   canonicaliseLockGraph,
   canonicaliseProjection,
   createRanker,
+  nsSkeleton,
   digest,
   stable,
 } from "./canonical.ts";
@@ -149,6 +150,7 @@ const ORACLE_PRESENT: Record<OracleId, (bundle: CaseBundle) => boolean> = {
   sqlstate: (bundle) =>
     liveResults(bundle).length > 0 && liveResults(bundle).every((result) => "error" in result),
   advisoryLock: (bundle) =>
+    liveResults(bundle).length > 0 &&
     liveResults(bundle).every((result) => typeof result.unlockReturnedTrue === "boolean"),
   // Non-empty, not merely present: a thread with no checkpoint rows means the
   // fixture never committed, and every lineage criterion below it would then be
@@ -579,6 +581,14 @@ const VOLATILE_RESULT_KEYS = new Set([
   // start time or not — and every one of those is computed as a boolean in the
   // criteria from the raw results.
   "cluster",
+  // How many POOLED sockets happened to be open when the server was destroyed.
+  // A property of connection scheduling, not of the failure: g03 saw 4 in one
+  // repeat and 2 in the next while every deterministic fact was identical.
+  // What the case actually asserts — a subject backend blocked in the server,
+  // the call settling rather than hanging, and the rejection being loud — is
+  // captured in `blockedBackends`, `callSettled`, `callRejected` and
+  // `observedClientErrors`, all of which stay digested.
+  "idleClientErrors",
 ]);
 
 /**
@@ -635,6 +645,29 @@ function managedProjection(bundle: CaseBundle, definition: CaseDef): Record<stri
   // sorted the array is identical across repeats however the labels landed.
   // Nothing is hidden — the number of tasks, their writes, and which checkpoint
   // they attach to all survive; only "which one finished first" does not.
+  // How many DISTINCT raw namespaces each skeleton stands for.
+  //
+  // `nsSkeleton` blanks embedded ids to a constant, so two instances of the SAME
+  // call site — a `Send` fan-out to one node — would produce byte-identical
+  // namespace strings and collapse into each other with nothing to show for it.
+  // The current matrix never does that (e03 is `left:`/`right:`, e06 is
+  // `mid:`/`leaf:`), so every cardinality here is 1; emitting it means a future
+  // collision changes the digest instead of hiding inside it.
+  const rawThread = bundle.projection?.thread as { checkpoints?: Array<{ ns?: string }> } | undefined;
+  const rawNamespaces = [
+    ...new Set((rawThread?.checkpoints ?? []).map((row) => String(row.ns ?? ""))),
+  ];
+  if (rawNamespaces.length > 0) {
+    const cardinality: Record<string, number> = {};
+    for (const ns of rawNamespaces) {
+      const key = nsSkeleton(ns);
+      cardinality[key] = (cardinality[key] ?? 0) + 1;
+    }
+    managed.namespaceSkeletons = Object.fromEntries(
+      Object.entries(cardinality).sort(([left], [right]) => (left < right ? -1 : 1)),
+    );
+  }
+
   const thread = managed.thread as { writes?: unknown[] } | undefined;
   if (thread && Array.isArray(thread.writes)) {
     thread.writes = [...thread.writes].sort((left, right) =>
@@ -795,6 +828,27 @@ function selftestCriteria(bundles: Map<string, CaseBundle>): Record<string, bool
     criteria.metric_orderings_are_pairwise_distinct = s06.ordersPairwiseDistinct === true;
     criteria.embedder_refuses_text_absent_from_the_fixture = s06.refusedUnknownText === true;
     criteria.embedding_dimensions_are_consistent = s06.dimsConsistent === true;
+  }
+
+  const s07 = bundles.get("s07-shutdown-witness-positive-control");
+  if (s07) {
+    const witnesses =
+      (s07.projection?.shutdownWitnesses as Array<{ node: string; phase: string }> | undefined) ??
+      [];
+    criteria.s07_worker_parked_before_the_signal =
+      ((s07.projection?.gateParks as Array<{ gate: string }> | undefined) ?? []).some(
+        (park) => park.gate === "await-sigterm",
+      );
+    // EXACTLY one, and it is a sigterm row. This is the whole point of the case:
+    // the eleven SIGKILL cases assert this collection is EMPTY, and that
+    // assertion is only meaningful because a signal the handler can catch
+    // demonstrably fills it.
+    criteria.s07_a_catchable_signal_produces_exactly_one_shutdown_witness =
+      witnesses.length === 1 && witnesses[0]?.phase === "sigterm";
+    // 143 = 128 + SIGTERM. A handler that exited some other way would still have
+    // written the row, so the exit code is checked separately.
+    criteria.s07_worker_exited_through_the_signal_handler = s07.kill?.waitExit === 143;
+    criteria.s07_backend_drained_before_projection = s07.drain?.drained === true;
   }
 
   return criteria;
@@ -1260,17 +1314,36 @@ function familyBCriteria(bundles: Map<string, CaseBundle>): Record<string, boole
   if (b09) {
     const reader = liveResults(b09).find((result) => result.role === "reader");
     const writer = liveResults(b09).find((result) => result.role === "writer");
+    const barrier = b09.coordination?.barriers?.[0];
     criteria.b09_writer_committed_every_checkpoint =
       Number(writer?.committed ?? -1) > 0 && writer?.error === null;
-    // Anti-vacuity: a reader that only ever saw the settled end state proves
-    // nothing about reads DURING commits.
-    criteria.b09_reader_sampled_while_the_writer_was_committing =
+    criteria.b09_both_parties_were_released_together =
+      barrier?.allArrivedBeforeRelease === true &&
+      Number(barrier?.peakConcurrentParties ?? 0) >= Number(barrier?.partiesExpected ?? 99) &&
+      Number(barrier?.distinctNonces ?? 0) === Number(barrier?.partiesExpected ?? 99);
+    // The sampling window, asserted at BOTH ends and structural at both.
+    // The reader takes a sample before releasing the writer, and stops on the
+    // writer's durable `writer/done` row rather than on a checkpoint count — so
+    // neither observation depends on the interleaving.
+    criteria.b09_reader_sampled_before_the_writer_started = reader?.sawEmptyChain === true;
+    criteria.b09_reader_sampled_the_completed_chain = reader?.sawCompleteChain === true;
+    // Named for what it actually proves. The reader is polling continuously
+    // from before the writer's first commit until after its last, and the
+    // checkpoint count demonstrably CHANGED underneath it — so every sample it
+    // took spans the commit sequence. It does not prove a mid-chain state was
+    // caught: with the writer released and running at full speed the reader may
+    // go straight from 0 to 5, and the earlier phrasing ("while the writer was
+    // committing") claimed more than that.
+    criteria.b09_reader_sampled_across_the_commit_sequence =
       Number(reader?.distinctCheckpointCounts ?? 0) > 1;
+    // The negative claims are gated on the window being real, so they can never
+    // pass on a reader that sampled a settled database.
     criteria.b09_no_sample_saw_a_checkpoint_missing_its_blobs =
-      Number(reader?.samples ?? 0) > 0 &&
+      Number(reader?.distinctCheckpointCounts ?? 0) > 1 &&
       Number(reader?.samplesWithStrandedReferences ?? -1) === 0;
     criteria.b09_no_sample_saw_a_broken_parent_link =
-      Number(reader?.samples ?? 0) > 0 && Number(reader?.samplesWithBrokenLineage ?? -1) === 0;
+      Number(reader?.distinctCheckpointCounts ?? 0) > 1 &&
+      Number(reader?.samplesWithBrokenLineage ?? -1) === 0;
   }
 
   return criteria;
@@ -1363,6 +1436,29 @@ function familyCCriteria(bundles: Map<string, CaseBundle>): Record<string, boole
     criteria.c05_partial_state_was_detectable = stranded > 0;
   }
 
+  const c10 = get("c10-nonatomic-writer-blob-first-control");
+  if (c10) {
+    const rows = survivingRows(c10);
+    const reach = c10.projection?.reachability as { orphanBlobs?: unknown[] } | undefined;
+    // The VENDOR's statement order: blobs land, the checkpoint row does not.
+    // This is the partial state a torn `put()` would actually leave, and it is
+    // the shape c01/c02 need a detector for — c05 proves the opposite shape.
+    criteria.c10_blob_first_control_left_its_blob = (rows?.blobs ?? 0) === 1;
+    criteria.c10_blob_first_control_left_no_checkpoint_row = (rows?.checkpoints ?? -1) === 0;
+    criteria.c10_orphan_blobs_were_detectable =
+      Array.isArray(reach?.orphanBlobs) && reach.orphanBlobs.length === 1;
+    // And no stranded reference, because no checkpoint survives to strand one.
+    criteria.c10_blob_first_partial_state_is_a_different_shape_from_c05 =
+      strandedCount(c10) === 0;
+  }
+  if (c05 && c10) {
+    // The pair is the point: the detector sees BOTH partial shapes, so c01/c02
+    // finding nothing is a result about the vendor rather than about the
+    // projection's blind spots.
+    criteria.c10_the_detector_sees_both_partial_write_shapes =
+      strandedCount(c05) > 0 && (survivingRows(c10)?.blobs ?? 0) === 1;
+  }
+
   const c06 = get("c06-pool-max1-serialization");
   if (c06) {
     const result = liveResults(c06)[0];
@@ -1419,7 +1515,12 @@ function familyCCriteria(bundles: Map<string, CaseBundle>): Record<string, boole
       (thread?.checkpoints?.length ?? 0) === 1 && strandedCount(c09) === 0;
     // Reported, not asserted in a direction: whether the survivor points at a
     // parent the delete removed IS the finding.
-    criteria.c09_parent_link_state_was_determined = Array.isArray(reach?.brokenLineage);
+    // Was `Array.isArray(...)` — true whether the projection found one broken
+    // link or none, so §8.4's headline (`deleteThread` can strand a surviving
+    // checkpoint's parent) rested on no criterion at all. The ordering is
+    // barrier-enforced, so the count is deterministic and can be asserted.
+    criteria.c09_delete_stranded_exactly_one_parent_link =
+      Array.isArray(reach?.brokenLineage) && reach.brokenLineage.length === 1;
   }
 
   return criteria;
@@ -1727,9 +1828,12 @@ function familyDBatchCriteria(bundles: Map<string, CaseBundle>): Record<string, 
     // to do with it. That is the architecture-relevant behaviour.
     criteria.d17_unrelated_callers_were_rejected =
       Number(d17.validCallersRejected ?? 0) > 0;
-    criteria.d17_rejection_and_commit_disagreement_was_determined = Array.isArray(
-      d17.callersToldItFailedButCommitted,
-    );
+    // Was a presence check. The finding — two callers received a rejection for a
+    // write that is durable — is deterministic (`processBatchQueue` rejects the
+    // whole coalesced batch) and must be asserted, not merely collected.
+    criteria.d17_two_callers_were_told_a_committed_write_had_failed =
+      Array.isArray(d17.callersToldItFailedButCommitted) &&
+      d17.callersToldItFailedButCommitted.length === 2;
   }
 
   const d18 = only("d18-batch-search-nested-acquisition");
@@ -2027,8 +2131,14 @@ function familyDSearchCriteria(bundles: Map<string, CaseBundle>): Record<string,
       Array.isArray(d39.actualOrder) && (d39.actualOrder as unknown[]).length > 0;
     criteria.d39_inner_product_returned_the_whole_corpus = d39.returnedTheWholeCorpus === true;
     // Reported as a fact either way; the review carries the interpretation.
-    criteria.d39_inner_product_agreement_with_the_authored_order_was_classified =
-      typeof d39.matchedAuthoredOrder === "boolean" && typeof d39.isExactlyReversed === "boolean";
+    // Was a `typeof === "boolean"` presence check, which would have passed had
+    // the ordering silently started matching. The reversal is deterministic —
+    // pgvector's `<#>` returns the NEGATIVE inner product and the implementation
+    // orders `MIN(<#>)` descending — so it is asserted.
+    criteria.d39_inner_product_order_is_exactly_reversed =
+      d39.authoredOrderExists === true &&
+      d39.matchedAuthoredOrder === false &&
+      d39.isExactlyReversed === true;
   }
 
   const d40 = only("d40-vector-search-thresholds");
@@ -2090,8 +2200,11 @@ function familyDSearchCriteria(bundles: Map<string, CaseBundle>): Record<string,
 
   const d45 = only("d45-search-convenience-versus-batch");
   if (d45) {
-    criteria.d45_batched_search_produced_the_cosine_order =
-      d45.batchMatchedTheCosineOrder === true;
+    // Scored against the hand-authored fixture, not against the convenience
+    // path: two outputs of the same implementation agreeing shows consistency,
+    // not correctness.
+    criteria.d45_batched_search_produced_the_authored_cosine_order =
+      d45.authoredCosineExists === true && d45.batchMatchedTheAuthoredCosineOrder === true;
     criteria.d45_batched_search_cannot_express_the_l2_ordering =
       d45.batchCannotExpressTheL2Ordering === true;
     // Anti-vacuity: the claim above is empty unless the two metrics really do
@@ -2486,8 +2599,13 @@ function familyHCriteria(bundles: Map<string, CaseBundle>): Record<string, boole
     criteria.h04_both_executions_recorded_a_key =
       victim?.key !== undefined && victim.key !== null &&
       resumer?.key !== undefined && resumer.key !== null;
-    criteria.h04_effect_ran_on_two_distinct_processes =
-      executionOf(h04, "act", "effect").processes === 2;
+    // Classification, not assertion. The victim dying before its effect row
+    // lands is a source-possible interleaving, and requiring `processes === 2`
+    // would fail the case for the schedule rather than record a second
+    // signature — the exact contradiction of calling h04 a bounded-trials case.
+    criteria.h04_every_recorded_execution_is_attributed_to_a_process =
+      executionOf(h04, "act", "effect").executions === 0 ||
+      executionOf(h04, "act", "effect").processes >= 1;
   }
 
   const h05 = get("h05-effect-key-fanout-siblings");
@@ -2562,8 +2680,18 @@ function familyHCriteria(bundles: Map<string, CaseBundle>): Record<string, boole
  * live in `mit-compat`, so a green mitigation can never raise the stock lane's
  * status, while the comparison against the stock pair stays visible.
  */
+type ThreadDamage = {
+  strandedReferences?: number;
+  orphanBlobs?: number;
+  brokenLineage?: number;
+  deadWrites?: number;
+};
+
 type Survey = {
   counts?: Array<{ thread_id: string; checkpoints: number; blobs: number; writes: number }>;
+  retainedDamage?: ThreadDamage;
+  staleDamage?: ThreadDamage;
+  retainedSharingMax?: number;
   strandedReferences?: number;
   orphanBlobs?: number;
   brokenLineage?: number;
@@ -2634,9 +2762,10 @@ function familyFCriteria(bundles: Map<string, CaseBundle>): Record<string, boole
     // The fact the rest of the family turns on: one blob row is referenced by
     // more than one live checkpoint, because a channel that stopped changing
     // keeps its old version number.
-    criteria.f01_a_blob_version_is_shared_by_several_checkpoints =
-      Number(result?.before?.sharingMax ?? 0) >= 2 &&
-      Number(result?.before?.sharedVersions ?? 0) > 0;
+    // Per THREAD. The previous grouping summed two independent runs of the same
+    // graph and reported a maximum of 6 where the real per-thread figure is 2.
+    criteria.f01_a_blob_version_is_shared_by_several_checkpoints_in_one_thread =
+      Number(result?.before?.retainedSharingMax ?? 0) >= 2;
     criteria.f01_the_starting_database_is_undamaged =
       result?.before?.strandedReferences === 0 &&
       result?.before?.brokenLineage === 0 &&
@@ -2753,6 +2882,57 @@ function familyFCriteria(bundles: Map<string, CaseBundle>): Record<string, boole
       Number(result?.after?.brokenLineage ?? 0) > 0;
   }
 
+
+  const f11 = get("f11-head-scoped-sweep-prunes-an-abandoned-branch");
+  if (f11) {
+    const result = pruneOf(f11);
+    const action = result?.action as
+      | { headScoped?: boolean; head?: boolean; deleted?: Record<string, number> }
+      | undefined;
+    const prepare = f11.prepare as { retainedHasAbandonedBranch?: boolean } | null;
+    // The fixture must actually contain a branch to prune, or the case is a
+    // no-op dressed as a result.
+    criteria.f11_the_retained_thread_had_an_abandoned_branch =
+      prepare?.retainedHasAbandonedBranch === true;
+    criteria.f11_the_live_set_was_walked_from_a_head =
+      action?.headScoped === true && action?.head === true;
+    // Rows of a KEPT thread were deleted — impossible under whole-thread
+    // retention, which is why f04 could not exercise this rule.
+    criteria.f11_head_scoped_retention_pruned_inside_a_retained_thread =
+      Number(action?.deleted?.checkpoints ?? 0) > 0;
+    criteria.f11_the_retained_lineage_is_undamaged =
+      result?.after?.retainedDamage?.strandedReferences === 0 &&
+      result?.after?.retainedDamage?.brokenLineage === 0;
+    criteria.f11_the_paused_run_still_resumes = result?.resumed?.completed === true;
+  }
+
+  const f12 = get("f12-incomplete-sweep-omits-pending-writes");
+  if (f12) {
+    const result = pruneOf(f12);
+    // The pending-writes term of the live set had never been mutated. Dropping
+    // it must be detectable, or "the live set is complete" is unfalsifiable for
+    // that term.
+    criteria.f12_omitting_pending_writes_deleted_live_writes =
+      Number(
+        (result?.action as { deleted?: Record<string, number> } | undefined)?.deleted?.writes ?? 0,
+      ) > 0;
+    criteria.f12_the_retained_thread_lost_its_pending_writes =
+      threadRows(result?.before, "").writes > threadRows(result?.after, "").writes;
+  }
+
+  const f13 = get("f13-incomplete-sweep-omits-interrupts");
+  if (f13) {
+    const result = pruneOf(f13);
+    // The narrowest term, and the one with the sharpest consequence: an
+    // interrupt write IS the outstanding approval.
+    criteria.f13_omitting_interrupts_deleted_write_rows =
+      Number(
+        (result?.action as { deleted?: Record<string, number> } | undefined)?.deleted?.writes ?? 0,
+      ) > 0;
+    criteria.f13_the_paused_run_lost_its_decision_point =
+      threadRows(result?.before, "").writes > threadRows(result?.after, "").writes;
+  }
+
   const f09 = get("f09-kill-pruner-safe-order");
   if (f09) {
     // Party 1 is the survivor; party 0 was killed and reports nothing.
@@ -2769,6 +2949,10 @@ function familyFCriteria(bundles: Map<string, CaseBundle>): Record<string, boole
       Number(observer?.before?.orphanBlobs ?? 0) > 0;
     criteria.f09_safe_order_left_no_stranded_references =
       observer?.before?.strandedReferences === 0;
+    // The half that actually matters: the thread the policy promised to keep.
+    criteria.f09_safe_order_left_the_retained_thread_undamaged =
+      observer?.before?.retainedDamage?.strandedReferences === 0 &&
+      observer?.before?.retainedDamage?.brokenLineage === 0;
     criteria.f09_retained_run_still_resumes_after_the_crash =
       observer?.resumed?.completed === true;
   }
@@ -2780,19 +2964,26 @@ function familyFCriteria(bundles: Map<string, CaseBundle>): Record<string, boole
     criteria.f10_pruner_parked_before_the_checkpoint_delete = parks.some(
       (park) => park.gate === "before-checkpoint-delete",
     );
-    criteria.f10_unsafe_order_left_stranded_references =
-      Number(observer?.before?.strandedReferences ?? 0) > 0;
-    criteria.f10_the_corrupted_database_still_resumed_without_error =
+    // CORRECTED. The original claim — "an unsafe delete order corrupts the
+    // database" — was true of rows the sweep was already deleting, which is
+    // inconsistent garbage, not corruption of anything retained. Pairing the
+    // unsafe order with an incomplete live-set rule is what puts the damage in
+    // the thread the policy promised to keep.
+    criteria.f10_unsafe_order_stranded_the_retained_thread =
+      Number(observer?.before?.retainedDamage?.strandedReferences ?? 0) > 0;
+    // And nothing said so: the loader's INNER join drops the missing channel
+    // rather than raising, so a corrupted run still reports success.
+    criteria.f10_the_corrupted_retained_run_still_reported_success =
       observer?.resumed?.completed === true &&
-      Number(observer?.before?.strandedReferences ?? 0) > 0;
+      Number(observer?.before?.retainedDamage?.strandedReferences ?? 0) > 0;
   }
 
   if (f09 && f10) {
     // The differential. Both crashed at the same point in the same sweep; only
     // the delete ORDER differed, and only one of them corrupted the database.
-    criteria.f09_delete_order_decides_whether_a_crashed_sweep_corrupts =
-      pruneOf(f09, 1)?.before?.strandedReferences === 0 &&
-      Number(pruneOf(f10, 1)?.before?.strandedReferences ?? 0) > 0;
+    criteria.f09_a_crashed_sweep_damages_retained_state_only_when_the_rule_is_wrong =
+      pruneOf(f09, 1)?.before?.retainedDamage?.strandedReferences === 0 &&
+      Number(pruneOf(f10, 1)?.before?.retainedDamage?.strandedReferences ?? 0) > 0;
   }
 
   return criteria;
@@ -2806,6 +2997,12 @@ type RestartResult = {
   role?: string;
   reachedInterrupt?: boolean;
   heldBackend?: boolean;
+  blockedBackends?: number;
+  callWasInFlight?: boolean;
+  callSettled?: boolean;
+  callRejected?: boolean;
+  callError?: { message?: string } | null;
+  settledWithinBudget?: boolean;
   shape?: RestartShape;
   survived?: RestartShape;
   cluster?: ClusterIdentity;
@@ -2908,7 +3105,17 @@ function familyGCriteria(bundles: Map<string, CaseBundle>): Record<string, boole
   if (g03) {
     const before = restartSide(g03, 0);
     const after = restartSide(g03, 1);
-    criteria.g03_a_live_backend_existed_when_the_server_died = before?.heldBackend === true;
+    // Proven from the SERVER, not from a pid the party once read: a backend
+    // belonging to the subject pool was waiting on a lock, inside PostgreSQL, at
+    // the moment it was SIGKILLed.
+    criteria.g03_a_checkpointer_call_was_in_flight_when_the_server_died =
+      before?.callWasInFlight === true && Number(before?.blockedBackends ?? 0) > 0;
+    // The architecture question: loud and bounded, or an indefinite hang.
+    criteria.g03_the_in_flight_call_settled_rather_than_hanging =
+      before?.callSettled === true && before?.settledWithinBudget === true;
+    criteria.g03_the_in_flight_call_failed_loudly =
+      before?.callRejected === true &&
+      (before?.callError as { message?: string } | null)?.message !== undefined;
     criteria.g03_crash_recovery_ran =
       Number(g03.restart?.log?.automaticRecovery ?? 0) >= 1 ||
       Number(g03.restart?.log?.redoStarts ?? 0) >= 1;
@@ -3368,7 +3575,14 @@ export function summarize(rawBundles: unknown[]): Record<string, unknown> {
   );
 
   const global: Record<string, boolean> = {
-    all_expected_cases_present: bundles.every((bundle) => caseById(bundle.case) !== undefined),
+    // Renamed to what it actually checks. The old name promised registry
+    // coverage and delivered the converse — every PRESENT bundle maps to a known
+    // case — so a run missing cases entirely would still have reported it true.
+    // Coverage of the selected set is enforced by the driver, which faults on any
+    // missing bundle, and is asserted separately below for a full run.
+    every_present_case_is_registered: bundles.every(
+      (bundle) => caseById(bundle.case) !== undefined,
+    ),
     every_worker_reported_json: bundles.every((bundle) =>
       bundle.workers
         .filter((worker) => worker.party !== bundle.kill?.party)
@@ -3405,15 +3619,18 @@ export function summarize(rawBundles: unknown[]): Record<string, unknown> {
   // each variant stays visible beside it.
   // Family I spans three lanes: the guarded cases belong to their mitigation
   // lane, the in-family control to `stock`.
+  // Routed from the REGISTRY, not by parsing the criterion key. The previous
+  // form read a positional digit, so a future `i10_` criterion would have parsed
+  // as `0` and landed in the wrong lane — and a mitigation criterion in the stock
+  // lane is precisely the separation the plan forbids breaking.
   const familyI = familyICriteria(byId);
+  const laneOfPrefix = (key: string): LaneId => {
+    const id = key.slice(0, 3);
+    const entry = CASES.find((candidate) => candidate.id.startsWith(`${id}-`));
+    return entry?.lane ?? "mit-storeguard";
+  };
   for (const [key, value] of Object.entries(familyI)) {
-    const lane = key.startsWith("i02_")
-      ? "stock"
-      : key.startsWith("i0") && Number(key.slice(2, 3)) >= 4
-        ? "mit-storeguard"
-        : key.startsWith("storeguard_")
-          ? "mit-storeguard"
-          : "mit-lease";
+    const lane = key.startsWith("storeguard_") ? "mit-storeguard" : laneOfPrefix(key);
     if (!lanes.includes(lane)) continue;
     laneCriteria[lane] ??= {};
     laneCriteria[lane]![key] = value;

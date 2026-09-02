@@ -23,6 +23,22 @@ import type { BlobRow, CheckpointRow, Projection, WriteRow } from "./inspect/che
 import type { BarrierRecord } from "./barrier.ts";
 import type { LockGraph } from "./inspect/pgstat.ts";
 
+/** Anchored, so a 36-character hex/dash string that is NOT a uuid is left alone. */
+export const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+const UUID_GLOBAL = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+/**
+ * A string with every embedded uuid blanked to a constant.
+ *
+ * Shared by the checkpoint-label signature and the projection rewriter, which
+ * previously disagreed: the signature keyed on the RAW namespace, so a subgraph
+ * sibling's ordering — and therefore every `<cp:N>` label — was decided by a
+ * per-run uuid whenever two siblings shared a namespace prefix.
+ */
+export function nsSkeleton(value: unknown): string {
+  return typeof value === "string" ? value.replace(UUID_GLOBAL, "<id>") : "";
+}
+
 export function stableValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stableValue);
   if (value && typeof value === "object") {
@@ -98,7 +114,7 @@ export function canonicalCheckpointLabels(rows: ProjectedCheckpoint[]): Map<stri
 
   const signature = (row: ProjectedCheckpoint): string =>
     stable({
-      ns: row.ns ?? "",
+      ns: nsSkeleton(row.ns ?? ""),
       source: row.source ?? null,
       step: row.step ?? null,
       // A parent that is not in the row set is a real, load-bearing difference
@@ -165,10 +181,6 @@ export function canonicaliseProjection(projection: Record<string, unknown>): Rec
   // tie leaks into `checkpoints[].ns`, `blobs[].ns` and every reachability row —
   // which is how e03 produced a different digest on one repeat in three while
   // measuring identical behaviour.
-  const UUID_ANYWHERE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
-  const skeleton = (value: unknown): string =>
-    typeof value === "string" ? value.replace(UUID_ANYWHERE, "<id>") : "";
-
   // A task's ROLE, recovered from any namespace that embeds its id.
   //
   // Two parallel instances of one compiled subgraph are indistinguishable by
@@ -180,14 +192,15 @@ export function canonicaliseProjection(projection: Record<string, unknown>): Rec
   // ranking needs. Without it the two instances are labelled by whichever
   // finished first, and that label is embedded in every namespace string
   // downstream of them.
+  const UUID_GLOBAL_FOR_ROLES = new RegExp(UUID_PATTERN.source, "gi");
   const roleOfTask = new Map<string, string>();
   const collectRoles = (value: unknown): void => {
     if (typeof value === "string") {
       if (value.length > 36) {
-        for (const match of value.matchAll(UUID_ANYWHERE)) {
+        for (const match of value.matchAll(UUID_GLOBAL_FOR_ROLES)) {
           const id = match[0];
           const upto = value.slice(0, (match.index ?? 0) + id.length);
-          const role = skeleton(upto);
+          const role = nsSkeleton(upto);
           const previous = roleOfTask.get(id);
           if (previous === undefined || role < previous) roleOfTask.set(id, role);
         }
@@ -207,7 +220,7 @@ export function canonicaliseProjection(projection: Record<string, unknown>): Rec
   const writes = ((projection.thread as { writes?: Array<Record<string, unknown>> }).writes ?? [])
     .map((row) => ({
       key: stable([
-        skeleton(row.ns),
+        nsSkeleton(row.ns),
         roleOfTask.get(String(row.task_id ?? "")) ?? "",
         labels.get(String(row.checkpoint_id)) ?? "",
         row.idx ?? 0,
@@ -219,8 +232,20 @@ export function canonicaliseProjection(projection: Record<string, unknown>): Rec
     .sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0));
   for (const write of writes) taskRank(write.taskId);
 
-  const rewriteToken = (token: string): string =>
-    labels.get(token) ?? (/^[0-9a-f-]{36}$/i.test(token) ? (taskRank(token) ?? token) : token);
+  // Anchored to the uuid shape, not to "36 characters of hex and dashes": the
+  // looser test would rank away a Store key or a channel version that happened
+  // to be that long.
+  const rewriteToken = (token: string): string => {
+    const label = labels.get(token);
+    if (label !== undefined) return label;
+    if (new RegExp(`^${UUID_PATTERN.source}$`, "i").test(token)) return taskRank(token) ?? token;
+    // A composite segment can itself embed an id (a namespace inside a slash-
+    // joined key). Without this branch such a segment fell through untouched and
+    // carried a raw uuid into the digest — unreached today only because the
+    // vendor's namespace separator is `|` rather than `/`.
+    if (UUID_PATTERN.test(token)) return nsSkeleton(token);
+    return token;
+  };
 
   // A subgraph namespace EMBEDS the task id of the node that spawned it — the
   // pinned release builds it as `<node>:<task id>`, nested with a separator —
@@ -234,16 +259,13 @@ export function canonicaliseProjection(projection: Record<string, unknown>): Rec
   // the vendor's separators, so a release that changed them would still
   // canonicalise — and would still show up as a changed digest, which is
   // correct.
-  const EMBEDS_UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
-  const EVERY_UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
-
   const rewrite = (value: unknown): unknown => {
     if (typeof value === "string") {
       if (labels.has(value)) return labels.get(value);
       if (value.includes("/")) return value.split("/").map(rewriteToken).join("/");
       // Bare-token handling first, unchanged: a projection with no subgraphs
       // canonicalises byte-identically to how it did before namespaces existed.
-      if (/^[0-9a-f-]{36}$/i.test(value)) return rewriteToken(value);
+      if (new RegExp(`^${UUID_PATTERN.source}$`, "i").test(value)) return rewriteToken(value);
       // A string that CONTAINS an id — a subgraph namespace — has its ids blanked
       // to a constant rather than replaced with task labels.
       //
@@ -258,7 +280,7 @@ export function canonicaliseProjection(projection: Record<string, unknown>): Rec
       // namespace belongs to (`left:` vs `right:`), how deeply it nests, and
       // whether two namespaces share an ancestor. The task each one belongs to is
       // not lost either — the effect records carry `task` as its own field.
-      if (EMBEDS_UUID.test(value)) return value.replace(EVERY_UUID, "<id>");
+      if (UUID_PATTERN.test(value)) return nsSkeleton(value);
       return rewriteToken(value);
     }
     if (Array.isArray(value)) return value.map(rewrite);
@@ -490,7 +512,10 @@ export function canonicaliseCheckpoints(projection: Projection): CanonicalCheckp
   };
 }
 
-export type CanonicalBarrier = Omit<BarrierRecord, "arrivals" | "releasedAt"> & {
+export type CanonicalBarrier = Omit<
+  BarrierRecord,
+  "arrivals" | "releasedAt" | "arrivalOrderParties"
+> & {
   arrivals: Array<{ party: number; role: string; backend: string | null; nonce: string | null }>;
 };
 
@@ -512,7 +537,12 @@ export function canonicaliseBarrier(record: BarrierRecord): CanonicalBarrier {
     distinctBackends: record.distinctBackends,
     distinctNonces: record.distinctNonces,
     peakConcurrentParties: record.peakConcurrentParties,
-    arrivalOrderParties: record.arrivalOrderParties,
+    // NOT digested. Both this function's own comment and `barrier.ts` said so
+    // already, and it was in the bytes anyway. It has been stable only because
+    // the driver launches parties sequentially, so every one of the 22
+    // multi-party barriers arrived in exact party order across six repeats — a
+    // guaranteed flap the first time a container start reorders. It is retained
+    // verbatim in `findings`.
     arrivals: byParty.map((arrival) => ({
       party: arrival.party,
       role: arrival.role,
