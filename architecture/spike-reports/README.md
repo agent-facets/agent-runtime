@@ -17,8 +17,8 @@ to kill assumptions early, not to confirm them.
 | [01](./01-obsidian-headless.md) | Obsidian headless | Does it boot, open a vault, and leave restricted mode without a GUI? | **Pass** |
 | [02](./02-obsidian-loopback-bridge.md) | Loopback bridge | Can a separately networked runtime reach the loopback-only plugin, and what is the minimum mediation? | **Pass** |
 | [03](./03-anthropic-parity.md) | Anthropic parity | Does a decorated fetch from a LangChain client match the reference profile? | **Pass** |
-| — | OpenAI device auth | Does device-code login complete in a container and refresh? | Not started |
-| — | LangGraph durability | Does a run resume correctly after a kill mid-run and mid-interrupt? | Not started |
+| [04](./04-openai-device-auth.md) | OpenAI device auth | Does device-code login complete in a container and refresh? | **Pass** |
+| [05](./05-langgraph-durability.md) | LangGraph durability | Does a run resume correctly after a kill mid-run and mid-interrupt? | **Pass**, scoped |
 | — | Postgres checkpointer | Do the official checkpointer and store behave as documented under concurrency? | Not started |
 
 ## Report structure

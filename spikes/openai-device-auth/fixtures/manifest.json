@@ -1,0 +1,41 @@
+{
+  "schema": "agent-runtime/spike-fixtures/1",
+  "spike": "openai-device-auth",
+  "base_image": "node:24.6.0-bookworm-slim@sha256:9b741b28148b0195d62fa456ed84dd6c953c1f17a3761f3e6e6797a754d9edff",
+  "oracle": {
+    "wrapper_package": "@openai/codex@0.151.0",
+    "wrapper_integrity": "sha512-mhtWmOZRdmWD1jPbLDnQb59BsaVP/V+lXe/OFNR9ZcLZU0UCiBwn98Fcav1ss7sDIlHkuqj6nWd44IPeXoOhJA==",
+    "platform_package": "@openai/codex@0.151.0-linux-x64",
+    "platform_integrity": "sha512-xcVyY1FtwvVYhh2JBmz8fX8CQqFAxO/lxJ2IXsh8x5uwxZVHVl5fZHFHf8JdRaOGG0vpkYmu/DKKVoLd56/DDQ==",
+    "license": "Apache-2.0",
+    "source_tag": "rust-v0.151.0",
+    "source_commit": "78c290807ce710180111df227df3b7a4fe845452",
+    "provenance": "npm SLSA v1, GitHub Actions OIDC trusted publisher, github.com/openai/codex",
+    "divergent_main_commit": "a9519cbcdd2d664530edb2469224ee03c1056799"
+  },
+  "candidate": {
+    "@langchain/openai": {
+      "version": "1.5.10",
+      "integrity": "sha512-4cxdgolkkXwnAiGEkNrue+ba7jUKjfBwleLCX5DrRVcRGrCc4w5EceblYZOIaHMY6+nhwMqIOtSzBWgcBCLfmw==",
+      "license": "MIT"
+    },
+    "@langchain/core": {
+      "version": "1.2.9",
+      "integrity": "sha512-conzSEj9Zu1AyXJLXsSbgrtxtxinmI1yGqQ5CIJZSoV5rvv+yvQE/vgBnoySpBQ/bl3YPgj2FL/gbDjWykLSfg==",
+      "license": "MIT"
+    },
+    "openai": {
+      "version": "7.8.0",
+      "integrity": "sha512-/2g9JzdnXNcjX1W/UlSNu+OdSFDAaAVt0n9Onom0kPenH54o59G2WrX/xjTnr26UHNSh6hxcAf58doGYRme2rw==",
+      "license": "Apache-2.0"
+    }
+  },
+  "toolchain": {
+    "typescript": "6.0.3",
+    "@types/node": "24.12.2"
+  },
+  "notes": [
+    "apt packages are not pinned; only the base image digest and the npm lockfile are.",
+    "The linux-x64 oracle tarball is ~347 MB and is fetched at image build, not vendored."
+  ]
+}

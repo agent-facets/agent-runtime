@@ -1,0 +1,19 @@
+{
+  "schema": "agent-runtime/spike-embeddings/1",
+  "dims": 8,
+  "notes": [
+    "A frozen lookup table, not an algorithm. Text absent from `vectors` is a hard error rather than a hashed fallback: a fallback would be an algorithm, and an algorithm shared with the code under test would destroy oracle independence.",
+    "Vectors are chosen so cosine, L2 and inner-product rank the same corpus in three DIFFERENT orders. If any two metrics agreed, a Store that silently ignored distanceMetric would pass all three.",
+    "alpha and beta share a direction but differ in magnitude. Cosine nearly ties them while L2 and inner product separate them strongly: that pair is the normalisation control.",
+    "wrongdim is deliberately 9-dimensional, for the dimension-mismatch cases."
+  ],
+  "vectors": {
+    "query-a": [1, 0, 0, 0, 0, 0, 0, 0],
+    "alpha": [1, 0, 0, 0, 0, 0, 0, 0],
+    "beta": [3, 0.1, 0, 0, 0, 0, 0, 0],
+    "gamma": [0.6, 0.8, 0, 0, 0, 0, 0, 0],
+    "delta": [2, 2, 0, 0, 0, 0, 0, 0],
+    "query-b": [0, 1, 0, 0, 0, 0, 0, 0],
+    "wrongdim": [1, 0, 0, 0, 0, 0, 0, 0, 0]
+  }
+}

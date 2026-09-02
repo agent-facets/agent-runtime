@@ -1,0 +1,20 @@
+{
+  "name": "openai-device-auth-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Throwaway P0 spike: OpenAI device-code login, credential-store durability, and transport-semantic parity between the released Codex client and a decorated fetch under stock ChatOpenAI.",
+  "scripts": {
+    "offline": "node --no-warnings src/offline.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@langchain/core": "1.2.9",
+    "@langchain/openai": "1.5.10",
+    "openai": "7.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.2",
+    "typescript": "6.0.3"
+  }
+}

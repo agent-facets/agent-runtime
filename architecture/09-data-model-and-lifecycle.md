@@ -161,11 +161,30 @@ against current code. Interrupt matching is positional, so a code change that
 adds, removes, or reorders an interrupt makes the stored position wrong. A
 mismatch quarantines the run rather than resuming into the wrong branch.
 
+**Verified.** [Spike 05](./spike-reports/05-langgraph-durability.md) killed a
+process paused on a committed interrupt; the interrupt remained at the head of
+the chain, and a fresh process resumed it with a decision and reached the
+uninterrupted terminal state. `decision_payload` MUST be a truthy structured
+object — a bare `false` produces no resume write on the pinned release and fails
+the invocation.
+
+The quarantine path is **not** verified: no spike has yet resumed a thread
+against a changed graph.
+
 ## Idempotency
 
 Re-execution is the default, not the exception. It happens on crash resume, on
 interrupt resume, on replay, and on fork. A node re-runs from its top every
 time.
+
+**Verified.** [Spike 05](./spike-reports/05-langgraph-durability.md) measured a
+killed node re-running from its top with its external effect observed twice, and
+the code before an `interrupt()` re-running on resume. A node that had already
+completed its superstep was **not** re-run, and a fan-out sibling whose pending
+write had landed was reused — deleting that write, or resuming with an explicit
+`checkpoint_id`, made it re-run. The orchestrator's guarantee is therefore
+**at-least-once**, bounded by superstep granularity, and this ledger is the only
+thing that turns it into an at-most-once effect.
 
 ```text
 before an effect
@@ -184,6 +203,14 @@ surface as a human-resolvable task.
 
 The key deliberately includes the parent checkpoint so a genuine fork re-runs
 the effect, while a crash resume does not.
+
+That property is **assumed, not measured.** Spike 05 established that
+re-execution happens; it asserted nothing about whether `parent_checkpoint` and
+`task` stay stable across a crash resume — and a superstep lost under a
+non-`sync` durability mode produces a *different* parent checkpoint, which would
+change the key and defeat deduplication entirely. P4 MUST test that `effect_key`
+is stable across a crash replay and changes across a genuine fork before this
+ledger is relied on.
 
 ## Retention
 
@@ -243,6 +270,9 @@ On restore or after a refactor, comparing the hashes answers "can this paused
 run still be resumed?" before failing mid-node. LangGraph does not persist
 topology and applies current code to every thread, so this is the only thing
 standing between a refactor and an unrecoverable interrupted run.
+
+No spike has resumed a thread against a changed graph, so the refusal this
+manifest exists to trigger is designed rather than proven.
 
 ## Classification
 

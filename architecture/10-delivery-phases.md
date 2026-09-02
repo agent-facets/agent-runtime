@@ -32,8 +32,8 @@ Answer the questions that could change the architecture. Throwaway code.
 | [Obsidian headless](./spike-reports/01-obsidian-headless.md) | Does it boot, open a vault, and leave restricted mode without a GUI? | **Pass** |
 | [Loopback bridge](./spike-reports/02-obsidian-loopback-bridge.md) | Can a sidecar in a shared netns reach the plugin and preserve streaming? | **Pass** |
 | [Anthropic parity](./spike-reports/03-anthropic-parity.md) | Does a decorated fetch from a LangChain client produce a request matching the reference profile? | **Pass** |
-| OpenAI device auth | Does device-code login complete inside a container and refresh? | Not started |
-| LangGraph durability | Kill the process mid-run and mid-interrupt; does it resume correctly? | Not started |
+| [OpenAI device auth](./spike-reports/04-openai-device-auth.md) | Does device-code login complete inside a container and refresh? | **Pass** |
+| [LangGraph durability](./spike-reports/05-langgraph-durability.md) | Kill the process mid-run and mid-interrupt; does it resume correctly? | **Pass**, scoped |
 | Postgres checkpointer | Do the official checkpointer and store behave as documented under concurrency? | Not started |
 
 Findings live in [spike-reports/](./spike-reports/). Harnesses live in
@@ -105,9 +105,16 @@ Orchestration and durability. Protocol-free.
 
 - Domain model: Run, Task, Event, Approval, Artifact
 - Append-only event log with per-run sequence
-- LangGraph manager graph with Postgres checkpointing
-- Interrupt-backed approvals with ordinal and node fingerprint
-- Idempotency ledger
+- LangGraph manager graph with Postgres checkpointing, every invocation pinned to
+  `durability: "sync"` and asserted at startup — the pinned release's default
+  loses the in-flight superstep on a crash
+  (see [spike 05](./spike-reports/05-langgraph-durability.md))
+- Crash resume on the same `thread_id` with **no** `checkpoint_id`; supplying one
+  is fork semantics and re-executes completed branches
+- Interrupt-backed approvals with ordinal and node fingerprint, and truthy
+  structured decision payloads — a bare `false` does not resume
+- Idempotency ledger, with a test that `effect_key` is stable across a crash
+  resume and changes across a genuine fork
 - Compatibility manifest per run
 - Failure taxonomy and retry policy
 - Agent definition registry with versioning
@@ -117,6 +124,11 @@ Orchestration and durability. Protocol-free.
 **Exit:** a run pauses on approval, survives a full stack restart, resumes with
 the decision, and produces a complete replayable transcript. A deliberately
 duplicated effect is caught by the ledger.
+
+[Spike 05](./spike-reports/05-langgraph-durability.md) proves the runtime half of
+that sentence — a `SIGKILL` of the runtime process, resumed in a fresh
+container — but **not** the full stack restart: Postgres never died in the spike.
+Killing the database and the host remains this phase's obligation.
 
 ---
 

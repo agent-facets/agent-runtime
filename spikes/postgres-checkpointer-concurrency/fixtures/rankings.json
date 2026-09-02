@@ -1,0 +1,35 @@
+{
+  "schema": "agent-runtime/spike-rankings/1",
+  "notes": [
+    "Authored by hand from fixtures/embeddings.json, not produced by any code in this harness and never by the Store under test. These are the independent oracle for every ordering claim in family D.",
+    "Distances below are stated so a reader can check the arithmetic without running anything. pgvector's <#> returns the NEGATIVE inner product; the ordering here is by true inner product, highest first."
+  ],
+  "query": "query-a",
+  "corpus": ["alpha", "beta", "gamma", "delta"],
+  "distances": {
+    "cosine_distance": {
+      "alpha": 0,
+      "beta": 0.000555,
+      "gamma": 0.4,
+      "delta": 0.2928932
+    },
+    "l2_distance": {
+      "alpha": 0,
+      "beta": 2.002498,
+      "gamma": 0.894427,
+      "delta": 2.236068
+    },
+    "inner_product": {
+      "alpha": 1,
+      "beta": 3,
+      "gamma": 0.6,
+      "delta": 2
+    }
+  },
+  "expected_order": {
+    "cosine": ["alpha", "beta", "delta", "gamma"],
+    "l2": ["alpha", "gamma", "beta", "delta"],
+    "inner_product": ["beta", "delta", "alpha", "gamma"]
+  },
+  "orders_are_pairwise_distinct": true
+}

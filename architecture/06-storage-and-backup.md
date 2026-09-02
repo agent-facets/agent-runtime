@@ -20,6 +20,20 @@ integrity at once.
 The official LangGraph Postgres packages provide both a checkpointer and a
 store with pgvector-backed search, so the persistence layer is not bespoke.
 
+**Verified, for the checkpointer only.**
+[Spike 05](./spike-reports/05-langgraph-durability.md) ran the official
+checkpointer unmodified in a non-default schema. Its `setup()` creates exactly
+four relations — `checkpoints`, `checkpoint_blobs`, `checkpoint_writes`,
+`checkpoint_migrations` — which is the whole vendor-owned footprint to back up
+and prune. Under `durability: "sync"`, checkpoint lineage and a completed
+branch's pending writes both survived the runtime process being killed, and
+channel versions were monotonic per channel across the crash.
+
+The **Store** was never instantiated, and concurrent `setup()`, subgraph
+namespaces, pool behaviour, retention, pruning, blob reachability, and database
+restart were all out of that spike's scope. They belong to the Postgres
+checkpointer spike, which is still open.
+
 Schemas are separated so vendor migrations never collide with ours:
 
 ```text

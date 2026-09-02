@@ -225,21 +225,77 @@ architecture MUST never depend on it exclusively.
 
 ## OpenAI transport
 
-Same shape, different flow. ChatGPT/Codex authentication uses OAuth with two
-paths — a browser callback and a device code — and the device path is the one
-that works in a container.
+Different shape and a different flow. Measured end to end in
+[Spike 04](./spike-reports/04-openai-device-auth.md), including a live device
+login, refresh, restart, and streaming tool call.
+
+### The device flow is proprietary, not RFC 8628
+
+Do not implement this from the RFC; every one of these differs:
+
+```text
+  POST /api/accounts/deviceauth/usercode    not /device_authorization
+    → device_auth_id                        not device_code
+    → interval is a STRING                  not a number
+
+  POST /api/accounts/deviceauth/token       JSON body, polled
+    → HTTP 403/404 mean KEEP POLLING        not authorization_pending
+    → returns an authorization code + PKCE verifier, NOT tokens
+
+  POST /oauth/token                          redeems that code for tokens
+  POST /oauth/revoke                         revocation
+```
+
+Three legs, not two. Treating a 403 as fatal breaks the login entirely. The
+`client_id` is a public constant. There is no browser callback and no loopback
+listener, which is what makes it container-friendly.
+
+### Transport construction
+
+The Anthropic approach — decorate `fetch` and rewrite the endpoint — does
+**not** transfer. OpenAI needs native API selection:
+
+- `useResponsesApi: true` selects both the Responses encoder and decoder. The
+  decorator MUST NOT rewrite a Chat Completions body onto `/responses`.
+- `configuration.baseURL` points at the subscription endpoint directly.
+- `configuration.apiKey` accepts an **async resolver**, called per request. This
+  is the OAuth seam; no `BaseChatModel` subclass is needed.
+- Constructor `maxRetries: 0`, and `configuration.maxRetries` MUST be absent —
+  LangChain's per-request path re-spreads `configuration` without the override,
+  silently re-enabling SDK retries.
+- The async key setter assigns to a shared client field before headers are
+  built, so one client MUST NOT serve concurrent requests with different
+  credentials.
 
 Responsibilities:
 
 ```text
-  ├── resolve credential            refresh if expiring
+  ├── resolve credential            async, per request, refresh if expiring
   ├── set Authorization: Bearer
-  ├── set account id header         decoded from the id token
-  ├── set residency header          when the claim is present
-  ├── rewrite endpoint              subscription responses endpoint
+  ├── set chatgpt-account-id        decoded from the id token
+  ├── set residency header          config-driven in the reference release
+  ├── set originator + version
+  ├── strip SDK fingerprint headers x-stainless-*, openai-organization, ...
   ├── restrict to allowed models
   └── omit max output tokens        matches the reference client
 ```
+
+### Byte parity requires `node:http`
+
+Node's global `fetch` (undici) adds `accept-language` and `sec-fetch-mode` and
+neither can be removed through the Fetch API — they are added below any caller
+by the Fetch specification's own request algorithm. A transport that needs
+byte-level header parity MUST use `node:http`. The SDK seam is unaffected; it
+only requires a function returning a `Response`.
+
+### Two operational cautions
+
+- **Do not rely on `x-request-id`.** It is an OpenAI SDK convention that holds
+  for `api.openai.com` and does **not** hold for the subscription endpoint,
+  which returned no such header. Correlation must not depend on it.
+- **Revoke the token the store currently holds**, not one read earlier in the
+  request. A resolver can refresh and rotate mid-request; revoking the
+  superseded token can succeed while leaving the live session valid.
 
 The subscription endpoint is less documented than Anthropic's, so the OpenAI
 transport SHOULD be marked experimental for longer, and the API transport
@@ -268,10 +324,28 @@ Requirements:
   control plane.
 - Never in Git, the vault, agent context, sandboxes, logs, event payloads, or
   backups in plaintext.
-- Refresh MUST be single-flight per provider. Concurrent refresh against a
-  rotating refresh token causes a cascade of 401s.
-- Rotation MUST be atomic: temp file, fsync, rename.
+- Refresh MUST be single-flight **per provider**, not globally, and MUST hold a
+  cross-process lock. Concurrent refresh against a rotating refresh token causes
+  a cascade of 401s.
+- The lock holder MUST reread under the lock before refreshing, and adopt a
+  peer's newer generation instead of refreshing again.
+- Refresh MUST be proactive on a 5-minute expiry margin.
+- Rotation MUST be **partial-safe**: the issuer routinely returns a new access
+  token and omits the refresh token. Merge each field individually; overwriting
+  a stored refresh token with `undefined` strands the credential.
+- Rotation MUST be atomic, and the full sequence is load-bearing: temp file in
+  the **same directory**, exclusive create at `0600`, `fsync` the file,
+  `rename`, then `fsync` the **directory**. No `chmod`, no `truncate` of the
+  target.
 - Reads MUST tolerate rotation mid-flight and retry once with the new value.
+- `retry-after` MUST be clamped; an unclamped value turns a rate limit into an
+  outage. Terminal errors (`invalid_grant`, reuse, expiry) MUST NOT be retried.
+
+Verified under `strace` in [Spike 04](./spike-reports/04-openai-device-auth.md)
+with 64 concurrent callers producing exactly one upstream refresh, ≥200 crash
+iterations at every write boundary, and a negative control proving the checker
+rejects unsafe writers. The reference client's own credential file is **not** an
+atomicity oracle.
 - A separate encrypted export exists for disaster recovery, with the key held
   outside the node.
 

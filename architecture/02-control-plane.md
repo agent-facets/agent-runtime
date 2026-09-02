@@ -111,6 +111,39 @@ Task
 LangGraph gives us checkpoints and pending writes. It does not give us runs,
 approvals, schedules, leases, usage, or idempotency. Those are ours.
 
+**Verified.** [Spike 05](./spike-reports/05-langgraph-durability.md) measured
+both halves. After a `SIGKILL` mid-node, a fresh container resumed from persisted
+state alone and reproduced the uninterrupted final state exactly; a node that had
+already completed was not replayed, and in a fan-out a branch whose write had
+landed as a pending write was reused rather than re-executed.
+
+## Durability contract
+
+The orchestrator's crash behaviour is a **setting**, not a property. It MUST be
+set explicitly on every call.
+
+- Every `invoke` / `stream` the runtime makes MUST pass `durability: "sync"`.
+  Startup MUST fail if any entry point can be invoked without it.
+- Ordinary crash resume MUST use the same `thread_id` with **no**
+  `checkpoint_id`. Supplying one is fork/replay semantics: it disables
+  completed-task skipping, and a branch that had already finished re-executes.
+- An in-memory checkpointer MUST NOT be used outside unit tests. With
+  `MemorySaver`, no state survived process replacement at all.
+
+The three modes, measured under a mid-run `SIGKILL`:
+
+| Mode | Measured behaviour |
+|---|---|
+| `exit` | Nothing written mid-run; zero checkpoints existed at the kill and the run was unrecoverable |
+| `async` | The next node was dispatched while persistence was still pending; the superstep was lost and replayed on resume |
+| `sync` | The next node was not dispatched until the superstep was durable |
+
+`async` is the pinned release's **default**, which is why this is a MUST rather
+than a recommendation. Two honest limits: the async window was held open by a
+test wrapper rather than sampled from a real disk race, so nothing here bounds
+how often it is hit; and `sync` was shown to order dispatch after persistence,
+not to have no crash-loss window at all.
+
 ## State machine
 
 ```text
@@ -178,11 +211,28 @@ Approval
 **Interrupt matching is index-based.** A conditionally skipped `interrupt()`
 shifts every later index. The runtime MUST record the ordinal and the node
 fingerprint, and MUST refuse to auto-resume when the fingerprint no longer
-matches current code.
+matches current code. The refusal path itself is untested — no spike has yet
+resumed a thread against a changed graph.
 
-Side effects MUST be idempotent across resume. On resume a node re-executes from
-its top, so anything before an `interrupt()` runs twice. Spawning a container
-before an interrupt spawns two.
+**A committed interrupt survives the death of the process holding it.**
+[Spike 05](./spike-reports/05-langgraph-durability.md) killed a paused process
+with `SIGKILL`; a fresh container rediscovered the same interrupt from Postgres
+before being told anything, resumed it with a decision, and left no interrupt
+pending at the head of the chain.
+
+The decision payload MUST be a truthy structured object. On the pinned release a
+bare `false` never becomes a resume write: the invocation fails with
+`EmptyInputError` and the thread stays paused. A rejection is
+`{ approved: false }`, never `false`.
+
+Side effects MUST be idempotent across resume, and this is measured rather than
+cautionary. On resume a node re-executes from its top: the killed node's external
+effect was observed **twice** on a connection the graph did not own, and the code
+before an `interrupt()` ran again and re-raised before the stored decision was
+applied. Spawning a container before an interrupt spawns two.
+
+The orchestrator therefore provides **at-least-once** node execution, bounded by
+superstep granularity. Exactly-once is the idempotency ledger's job.
 
 ## Scheduling
 

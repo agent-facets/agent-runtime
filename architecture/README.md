@@ -49,8 +49,11 @@ of them invalidates multiple documents.
 
 1. **One node, no data sync.** Laptops and phones are clients. There is exactly
    one authoritative copy of state. Backup is not sync.
-2. **LangGraph is the orchestrator.** Agent loops belong to us, not to a vendor
-   harness. Other agent SDKs may be specialist executors, never the substrate.
+2. **LangGraph is the orchestrator, with explicit `durability: "sync"`.** Agent
+   loops belong to us, not to a vendor harness. Other agent SDKs may be
+   specialist executors, never the substrate. Every graph invocation MUST set
+   `durability: "sync"`; the pinned release defaults to a mode that was measured
+   to lose the in-flight superstep on a crash.
 3. **The runtime core is protocol-free.** REST, MCP, and A2A are adapters over
    one internal domain model and one event log.
 4. **Obsidian is canonical for knowledge; Postgres is canonical for execution.**
@@ -68,7 +71,7 @@ OpenSpec governance, facet tooling, these documents, and the throwaway P0 spike
 harnesses under `spikes/`.
 
 P0 progress is tracked in the
-[spike report index](./spike-reports/README.md). Three spikes pass. Both
+[spike report index](./spike-reports/README.md). Five spikes pass. Both
 Obsidian spikes — headless bootstrap and the loopback bridge — are reconciled
 into [03-obsidian-brain.md](./03-obsidian-brain.md); the bridge is stock NGINX
 in a shared network namespace, not custom code.
@@ -77,3 +80,16 @@ The [Anthropic parity spike](./spike-reports/03-anthropic-parity.md) confirms
 the load-bearing authentication decision: a decorated `fetch` under a stock
 `ChatAnthropic` reproduces the reference client's request exactly, and Anthropic
 accepted it on a real subscription. No `BaseChatModel` subclass is required.
+
+The [OpenAI device-auth spike](./spike-reports/04-openai-device-auth.md) does the
+same for the second provider on a stock `ChatOpenAI`, and corrects two
+assumptions: OpenAI's device flow is proprietary rather than RFC 8628, and the
+subscription endpoint returns no `x-request-id`.
+
+The [LangGraph durability spike](./spike-reports/05-langgraph-durability.md)
+confirms that a run resumes correctly in a fresh container after the runtime
+process is killed mid-node and while paused on an interrupt — **provided** every
+invocation sets `durability: "sync"`. It also measures the resume contract as
+at-least-once, which is what makes the idempotency ledger in
+[09-data-model-and-lifecycle.md](./09-data-model-and-lifecycle.md) load-bearing
+rather than defensive. Database failure and full-stack restart remain untested.
