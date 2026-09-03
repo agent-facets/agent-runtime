@@ -203,8 +203,10 @@ a broken harness is not.
 
 ## Known limitations
 
-- **No live request.** Only the outbound request shape is proven here. Whether
-  the provider accepts the profile is a separate, gated stage.
+- **The offline lanes prove request shape only.** Whether the provider accepts
+  the profile is a separate, gated stage — `run-live.sh --yes`, which was run
+  and passed. Live results are in the
+  [spike report](../../architecture/spike-reports/03-anthropic-parity.md).
 - **The oracle is in-house.** The plugin is a prior hypothesis about the real
   client, not an independent observation of it. Passing parity proves
   bug-compatibility with that hypothesis. The repository's own captures cover

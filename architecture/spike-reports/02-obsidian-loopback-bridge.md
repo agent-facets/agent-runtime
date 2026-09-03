@@ -6,7 +6,7 @@ detectable protocol distortion. **No custom bridge code is needed.**
 
 ## Questions
 
-The architecture treats "the bridge" as one decision. It is four, and they have
+The architecture treats "the bridge" as one decision. It is five, and they have
 different answers.
 
 | # | Question | Answer |

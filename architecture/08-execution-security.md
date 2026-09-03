@@ -186,7 +186,7 @@ filesystem.
 | Test | Asserts |
 |---|---|
 | Socket unreachable | No container runtime access from any agent process |
-| Loopback binding | Startup fails if any listener binds a routable address |
+| Loopback binding | Startup fails if any listener binds a host-routable address |
 | Funnel off | Periodic check that no public exposure exists |
 | Broker allowlist | A denied tool fails closed and is logged |
 | Schema pinning | A changed upstream schema blocks the call |
@@ -205,5 +205,7 @@ the test suite, not an occasional exercise.
 - Whether T3 workspaces get any vault access at all, or only through artifacts
   the broker copies in.
 - How approval fatigue is managed without quietly widening defaults.
-- Whether the executor broker ships in phase one or code execution is simply
-  disabled until it exists.
+
+The broker's phasing is **settled**, not open: it ships in P9 and code execution
+stays disabled until it exists — see
+[10-delivery-phases.md](10-delivery-phases.md).

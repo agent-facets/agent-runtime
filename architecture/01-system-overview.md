@@ -14,8 +14,10 @@ there is nothing to reconcile between them.
 1. **Portable.** The whole system MUST run from Docker Compose on any host with
    an OCI runtime — Linux, macOS, or Windows via WSL2.
 2. **Single authoritative node.** One copy of state. No multi-device merge.
-3. **Durable.** Runs survive process crashes, container restarts, and host
-   reboots. Paused work resumes.
+3. **Durable.** Runs survive process crashes and container restarts, and paused
+   work resumes. Host, kernel, and container-daemon reboot are in scope as a
+   goal but are **not yet verified** — see the P4 exit criteria in
+   [10-delivery-phases.md](./10-delivery-phases.md).
 4. **Subscription-first.** Model access SHOULD use existing Claude and ChatGPT
    subscriptions rather than metered API billing.
 5. **Human-readable memory.** Long-term knowledge lives as Markdown a human can
@@ -143,12 +145,16 @@ Volumes:
 
 ## Open questions
 
-- Whether the runtime and web UI ship as one container or two.
+- Whether to split the web UI out of the `runtime` container. The deployment
+  table above ships them together; splitting is a live option, not a decision
+  already taken.
 - Whether the node's own agents should be reachable by other people's nodes, or
   only by the owner's clients.
 
-Resolved by [spike 02](./spike-reports/02-obsidian-loopback-bridge.md):
-`mcp-bridge` **stays a separate container**, running stock NGINX rather than
-custom code. It survived both an ordinary restart and a force-recreate of the
-Obsidian container, so the lifecycle fragility that would have justified
-collapsing it into the Obsidian image does not exist.
+## Resolved
+
+[Spike 02](./spike-reports/02-obsidian-loopback-bridge.md): `mcp-bridge`
+**stays a separate container**, running stock NGINX rather than custom code. It
+survived both an ordinary restart and a force-recreate of the Obsidian
+container, so the lifecycle fragility that would have justified collapsing it
+into the Obsidian image does not exist.

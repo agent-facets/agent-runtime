@@ -1858,12 +1858,11 @@ side, `effectSites` for the row side). Four mechanisms went with them:
 - **Version-control state, at the point the spike was sealed:**
   - The harness is tracked. The Step 31 hardening was committed in
     `f4486a0 "More work"`.
-  - The audit-2 corrections, the `parkUntilKilled()` fix, this appendix and the
-    report were all still **uncommitted** when the spike closed. Until they are
-    committed, what is in history is the pre-audit-2 harness — which still
-    carries f11's criterion that the stale deletions satisfy, f12/f13's
-    overstated purposes, root-only head enumeration, and no `observed` block —
-    and **a checkout of that commit will not reproduce the citable digest.**
+  - The audit-2 corrections and the `parkUntilKilled()` fix are committed. Any
+    commit before them carries the pre-audit-2 harness — f11's criterion that
+    the stale deletions satisfy, f12/f13's overstated purposes, root-only head
+    enumeration, and no `observed` block — and **a checkout of that commit will
+    not reproduce the citable digest.**
   - `tmp/` is gitignored by design, so no evidence set is in version control.
     Evidence is reproduced by re-running the harness, not by checking it out.
 

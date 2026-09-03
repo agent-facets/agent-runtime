@@ -10,6 +10,7 @@ recorded as an open question rather than resolved silently.
 
 | Document                                                           | Covers                                                      |
 |--------------------------------------------------------------------|-------------------------------------------------------------|
+| [00-executive-overview.md](./00-executive-overview.md)             | Start here. Orientation, learnings, direction — no detail   |
 | [01-system-overview.md](./01-system-overview.md)                   | Goals, non-goals, constraints, the whole-system picture     |
 | [02-control-plane.md](./02-control-plane.md)                       | LangGraph orchestration, agents, runs, approvals, web UI    |
 | [03-obsidian-brain.md](./03-obsidian-brain.md)                     | Obsidian container, MCP bootstrap, vault as knowledge store |
@@ -41,6 +42,9 @@ recorded as an open question rather than resolved silently.
 - Every document states its own open questions rather than deferring to a
   central list, so a document can be read standalone.
 - Diagrams are ASCII so they diff cleanly and survive in the vault.
+- [00-executive-overview.md](./00-executive-overview.md) is an orientation layer,
+  not a source of truth. It carries no requirements and records no decisions;
+  where it and a detailed document differ, the detailed document wins.
 
 ## Load-bearing decisions
 

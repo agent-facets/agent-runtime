@@ -21,8 +21,13 @@ Laptop · Phone · Coding agent
 
 Rules:
 
-- Every backend listener MUST bind loopback. Identity headers from Serve are
-  trustworthy only when nothing else can reach the port to forge them.
+- Every listener reachable from outside the Compose network MUST bind loopback.
+  Identity headers from Serve are trustworthy only when nothing else can reach
+  the port to forge them. Services that speak only to each other — the Obsidian
+  bridge and the MCP broker — bind a container address on the internal network
+  instead; Serve never routes there and no host process can reach it. The
+  startup assertion is therefore "no listener on a *host-routable* address",
+  not "every listener is on `127.0.0.1`".
 - Funnel MUST stay off. It is public internet, and it strips identity.
 - On WSL2, loopback is reachable from Windows host processes. That is a wider
   trust boundary than on bare Linux, and it is why application authentication
@@ -178,7 +183,8 @@ The phone is a supervisory client. Glance, approve, cancel, read a result.
   start or a simple bearer token initially.
 - Whether the remote MCP surface and the A2A surface share one authorization
   model.
-- Whether push notifications go through A2A webhooks or Web Push, given only
-  one of those needs a public endpoint.
+- How push notifications reach a phone without a public endpoint on the node.
+  Web Push needs one and Funnel is ruled out, so the shape is likely an off-node
+  relay the node calls outbound — unresolved either way.
 - Whether other people's nodes are ever peers, which would make A2A load-bearing
   rather than optional.

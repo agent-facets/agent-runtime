@@ -232,9 +232,10 @@ Adapters MUST NOT hold subscription state the core cannot reconstruct.
 
 ## Approvals
 
-Approvals are a projection of LangGraph interrupts, not a parallel mechanism.
-The interrupt is the source of truth; the approvals table is the index that
-makes it queryable and renderable.
+Approvals are raised by LangGraph interrupts, but **the runtime's approval row is
+the source of truth.** The orchestrator's interrupt tables are corroborating
+evidence — reconciled against, never derived from. The measured reasons are
+below, and they are the same reasons run status derives from our own event log.
 
 ```text
 Approval
@@ -367,5 +368,6 @@ phone first.
   purpose-built graphs selected by a classifier.
 - How a run's token budget is enforced mid-run without corrupting a checkpoint.
 - Whether subagent transcripts stream to the UI by default or on demand.
-- Whether cost estimates are surfaced at all, given subscription usage has no
-  meaningful per-request dollar figure.
+- What the `cost` field on `/runs/:id` should report, given subscription usage
+  has no meaningful per-request dollar figure. Token and request counts are
+  available; a currency figure may not be.

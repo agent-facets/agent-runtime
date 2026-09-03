@@ -141,7 +141,9 @@ MUST NOT rewrite response bytes.
 
 Decision 2 remains unimplemented: the spike consumed an existing token
 read-only and refused anything inside a 15-minute margin rather than refreshing.
-The refresh path itself is P3 work.
+That margin is the spike's deliberately conservative read-only guard, not the
+production setting — the requirement is a 5-minute proactive refresh margin, and
+the refresh path itself is P3 work.
 
 Additions the plugin does not need but a long-running server does:
 

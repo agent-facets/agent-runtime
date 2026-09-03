@@ -283,8 +283,9 @@ state is evidence.
 
 ## Reproducing from a clean checkout
 
-**Check the working tree first.** `tmp/` is git-ignored by design, and at the
-time of writing the harness corrections behind the citable evidence are still
-uncommitted. A clean checkout of an older commit will not reproduce the current
-digest. Confirm `git status` is clean for `spikes/postgres-checkpointer-concurrency/`
+**Check the working tree first.** `tmp/` is git-ignored by design, so no
+evidence set is in version control — evidence is reproduced by re-running the
+harness, not by checking it out. The harness corrections behind the citable
+digest are committed; a checkout of an older commit will not reproduce it.
+Confirm `git status` is clean for `spikes/postgres-checkpointer-concurrency/`
 before treating a re-run as a reproduction.

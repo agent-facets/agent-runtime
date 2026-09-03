@@ -101,6 +101,20 @@ source_run_ids[]
 embedding_model, embedding_version
 ```
 
+### MemorySource
+
+The provenance link. Every memory MUST be traceable to the events that produced
+it, because provenance is one of the layers that contains prompt injection — a
+claim whose origin cannot be shown cannot be trusted or selectively retracted.
+
+```text
+memory_id
+event_id              the event this claim was extracted from
+run_id
+extracted_by          extraction pass or subagent
+excerpt_hash          what exactly was read
+```
+
 ### Idempotency ledger
 
 ```text
@@ -139,6 +153,8 @@ Invariants:
 - Terminal states are terminal.
 - Every transition writes an event before it takes effect.
 - `awaiting_*` states have no default timeout; they end on an external signal.
+  An expiring approval is one such signal, raised by a sweeper against that
+  approval's own policy — never an implicit timer on the run itself.
 - A cancel request is durable and survives a restart mid-transition.
 
 ## Approval lifecycle
@@ -260,7 +276,7 @@ the race, so it is reported as an outcome set rather than as behaviour.
 |---|---|---|---|
 | Checkpoints, active runs | Indefinite | — | — |
 | Checkpoints, completed runs | 30 days | Reachable live set only, 180 days | Archive only |
-| Events | 7–30 days in Postgres | Partition detach to archive | Object storage |
+| Events | Until run completion + grace | Partition detach to archive | Object storage |
 | Artifacts | Indefinite locally | Cold tier | Never expire without a tombstone |
 | Archives | — | Object storage | Policy horizon |
 | Memory | Indefinite | Superseded, not deleted | — |
@@ -320,18 +336,18 @@ run still be resumed?" before failing mid-node. LangGraph does not persist
 topology and applies current code to every thread, so this is the only thing
 standing between a refactor and an unrecoverable interrupted run.
 
-**Measured.** The refusal is proven, and the manifest shape above is
-insufficient as written: `node_name_set_hash` and `state_key_set_hash` do not see
-a `interrupt()` that moved *within* a node body, which is the change positional
-interrupt matching cares about most. Add `node_body_fingerprints` — a normalised
-per-node source hash, comments stripped and whitespace collapsed, so a reformat is
-compatible and a moved call is not.
+**Measured.** The refusal is proven. `node_name_set_hash` and
+`state_key_set_hash` alone were insufficient: neither sees an `interrupt()` that
+moved *within* a node body, which is the change positional interrupt matching
+cares about most. `node_body_fingerprints` appears in the manifest above for
+that reason — a normalised per-node source hash, comments stripped and
+whitespace collapsed, so a reformat is compatible and a moved call is not.
 
 ## Classification
 
 | Class | Meaning | Examples |
 |---|---|---|
-| Canonical | Irreplaceable | Checkpoints, vault, events, memories, idempotency ledger |
+| Canonical | Irreplaceable | Checkpoints, vault, events, run archives, memories, idempotency ledger |
 | Operational | Reconstructible with effort | Leases, retries, schedules, run index |
 | Artifact | Large immutable | Tool outputs, files, prompt snapshots |
 | Derived | Rebuildable | Vector index, full-text index, branch index |

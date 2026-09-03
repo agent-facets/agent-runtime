@@ -274,10 +274,16 @@ resolve: there is no safe automatic merge of two versions of a prose note.
 
 ## Open questions
 
-- Whether the vault is one Docker volume or a bind mount to a host path the
-  human also opens in the desktop app.
-- Whether the plugin's on-device semantic search is used at all, or whether
-  retrieval goes entirely through our own pgvector index.
-- Whether run summaries are committed to the vault or kept only in the archive.
+- Whether to move the vault from a Docker volume to a bind mount on a host path
+  the human also opens in the desktop app. The volume is the current design.
 - Whether an SSH/X11 path into the container is worth the attack surface for
   occasional manual vault work.
+
+## Resolved
+
+- **Retrieval goes entirely through our own pgvector index.** The plugin's
+  on-device semantic search is not one of the retrieval channels in
+  [04-memory-system.md](04-memory-system.md), and its index is excluded from Git
+  above.
+- **Run summaries are committed to the vault.** They are the `runs/` directory
+  in the vault layout above, and are exported to the archive as well.

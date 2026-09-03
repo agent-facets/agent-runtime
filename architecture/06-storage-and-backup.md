@@ -1,7 +1,7 @@
 # Storage and Backup
 
-Five stores, each with one job. The failure mode to avoid is a single store
-doing three jobs badly.
+Four stores and one derived index, each with one job. The failure mode to avoid
+is a single store doing three jobs badly.
 
 | Store | Holds | Canonical? | Backup |
 |---|---|---|---|
@@ -9,7 +9,7 @@ doing three jobs badly.
 | Obsidian vault | Markdown knowledge | Yes, for knowledge | Git + archive |
 | Artifact CAS | Large immutable blobs | Yes | Incremental sync |
 | Run archives | Completed run logs | Yes, for audit | Immutable upload |
-| Vector index | Embeddings, HNSW | No, derived | Rebuild |
+| Vector index (inside Postgres) | Embeddings, HNSW | No, derived | Rebuild |
 
 ## PostgreSQL
 

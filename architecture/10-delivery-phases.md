@@ -65,7 +65,9 @@ Repository skeleton, Postgres, internal network, configuration, migrations.
   (see [spike 06](./spike-reports/06-postgres-checkpointer-concurrency.md))
 - Configuration loading with **fail-loud** validation — no silent degradation
 - Structured logging, health endpoints
-- Startup assertion that every listener is loopback-bound
+- Startup assertion that no listener binds a host-routable address; internal
+  Compose-network listeners are exempt (see
+  [07-network-and-protocols.md](./07-network-and-protocols.md))
 
 **Exit:** `docker compose up` produces a healthy stack; a smoke test writes and
 reads a row through migrations, and a deliberate N-process cold start converges
@@ -182,7 +184,9 @@ The reason for the system.
 **Exit:** an agent learns a fact in one run, retrieves it with correct
 provenance in a later run, has it superseded by a correction, and the vault
 shows the full history. Deleting the index and rebuilding from the vault
-restores retrieval.
+restores retrieval — judged on the documents returned and their order, not on
+vector equality, since re-embedding is not guaranteed to reproduce identical
+vectors.
 
 ---
 

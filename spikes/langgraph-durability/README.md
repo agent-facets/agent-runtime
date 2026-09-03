@@ -101,8 +101,10 @@ producing exactly that row.
 
 ## Durability mode is the load-bearing setting
 
-The pinned release defaults to `async`, and its own documentation admits the
-crash window. `sync` is the only mode with a bounded, testable one:
+The pinned release defaults to `async`. Its documentation omits durability
+semantics entirely — the contract was traced from source and from the release's
+own durability tests, not from docs. `sync` is the only mode with a bounded,
+testable crash window:
 
 | Mode | Behaviour under a mid-run SIGKILL |
 |---|---|
