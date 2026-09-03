@@ -19,21 +19,38 @@ to kill assumptions early, not to confirm them.
 | [03](./03-anthropic-parity.md) | Anthropic parity | Does a decorated fetch from a LangChain client match the reference profile? | **Pass** |
 | [04](./04-openai-device-auth.md) | OpenAI device auth | Does device-code login complete in a container and refresh? | **Pass** |
 | [05](./05-langgraph-durability.md) | LangGraph durability | Does a run resume correctly after a kill mid-run and mid-interrupt? | **Pass**, scoped |
-| — | Postgres checkpointer | Do the official checkpointer and store behave as documented under concurrency? | Not started |
+| [06](./06-postgres-checkpointer-concurrency.md) | Postgres checkpointer and Store | Do the official checkpointer and Store behave as documented under concurrency? | **Pass**, with required safeguards |
+
+## Working records
+
+A report is the conclusion; it is not the notebook. Where a spike's reasoning is
+worth keeping — the source reading its criteria were written against, the claims
+it had to correct, the defects found by running it — that record is kept beside
+the report as an appendix and linked from it.
+
+| Spike | Working record |
+|---|---|
+| 06 | [06-postgres-checkpointer-concurrency-appendix.md](./06-postgres-checkpointer-concurrency-appendix.md) |
+
+Appendices are laboratory notebooks: written incrementally, containing superseded
+claims that are marked in place rather than erased. They do not follow the report
+structure below, and **where an appendix and its report disagree, the report is
+current.**
 
 ## Report structure
 
 Every report carries the same sections so they can be compared and audited:
 
 ```text
-Outcome            pass | partial | fail, stated first
-Question           the single thing the spike answers
-Environment        host, versions, immutable inputs
-Method             what was run, and how to run it again
-Acceptance         the matrix, with measured results
-Findings           what was learned, including surprises
-Architecture       what changes in the design documents
-Limitations        what this spike does NOT establish
+Outcome              pass | partial | fail, stated first
+Question             the single thing the spike answers
+Environment          host, versions, immutable inputs
+Method               what was run, and how to run it again
+Acceptance           the matrix, with measured results
+Findings             what was learned, including surprises
+Architecture impact  what changes in the design documents
+Limitations          what this spike does NOT establish
+Reproducing          the exact commands, and where evidence lands
 ```
 
 ## Evidence

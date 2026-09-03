@@ -786,6 +786,91 @@ cat "${DIGEST_FILES[@]}" | jq -R -s -c 'split("\n") | map(select(length > 0))' \
 printf '%s\n' "${SUBSET_REASONS[@]:-}" | jq -R -s -c 'split("\n") | map(select(length > 0))' \
   > "${RUN_DIR}/subset-reasons.json"
 
+# The observed outcome sets for every bounded-trials case.
+#
+# `managed` replaces a raced case's results with the literal string
+# "<race outcome: see findings>" so a genuine race cannot be reported as a
+# reproducibility failure — but `findings` lived only in each repeat's run.json,
+# which is not the citable artefact, so the promoted evidence pointed readers at
+# a section it did not contain.
+#
+# The REDUCTION now happens inside the pinned image (`observationFor`), beside
+# the criteria it has to stay honest against. The first version was authored
+# here in jq, which made it the one analysis in the run whose code was not
+# version-locked to the evidence it described — and it answered three of the
+# eight elided fields while a count-and-pointer global reported it complete. Six
+# of seventeen bounded cases consequently read as "no variation" in a file whose
+# raw bundles showed them flipping.
+#
+# What is left here is grouping and counting: identical observations across
+# repeats collapse into one entry with an occurrence count.
+#
+# Excluded from every digest by construction: it is assembled here, after the
+# per-lane and overall digests have been computed from `managed`.
+jq -s '
+  [ .[].observations[] ]
+  | group_by(.case)
+  | map({
+      case: .[0].case,
+      lane: .[0].lane,
+      covers: .[0].covers,
+      samples: length,
+      outcomes: ( group_by(.observation | tojson)
+                  | map({ occurrences: length, outcome: .[0].observation })
+                  | sort_by(.outcome | tojson) )
+    })
+  | sort_by(.case)
+' "${RUN_DIR}"/repeat-*/run.json > "${RUN_DIR}/observed.json"
+info "bounded-trial cases with a persisted outcome set: $(jq -r 'length' "${RUN_DIR}/observed.json")"
+
+# Every bounded case must appear, and must contribute exactly one sample per
+# isolated repeat. `trials` is fixed at 1 in the registry because nothing loops
+# the participant body, so "observed over N trials" can only ever mean N repeats
+# — and this is what stops the report implying a trial count the harness does
+# not perform.
+#
+# A selection containing no bounded case makes this vacuously true, which is
+# correct: `--family F` has none, and requiring a non-empty set there would fail
+# a run for the shape of its selection rather than for its evidence. The full
+# matrix has seventeen by construction, and a mismatch there is caught both by
+# the count and by the dangling-pointer check below.
+BOUNDED_EXPECTED="$(jq -r '
+  [ .managed | to_entries | map(.value[])[]
+    | select(.classification == "bounded-trials") | .case ] | unique | length
+' "${RUN_DIR}/repeat-1/run.json")"
+BOUNDED_OK="$(jq -s -r --argjson repeats "${REPEATS}" --argjson expected "${BOUNDED_EXPECTED}" '
+  (.[1] // []) as $observed
+  | (($observed | length) == $expected
+     and ($observed | all(.samples == $repeats
+                          and ([.outcomes[].occurrences] | add) == $repeats)))
+  | tostring
+' "${RUN_DIR}/repeat-1/run.json" "${RUN_DIR}/observed.json")"
+
+# No dangling pointer, checked at FIELD granularity rather than by case id.
+#
+# The previous version compared case ids, which is one level too coarse to catch
+# the defect it was written for: a case could appear in `observed` while five of
+# the eight fields it elided went unanswered, and the check still passed. Now
+# every field a case replaced with the pointer must be named in that case's
+# `covers` and be present in its observation.
+FINDINGS_POINTERS_OK="$(jq -s -r '
+  ( .[0].managed | to_entries | map(.value[])
+    | map(select((tostring) | contains("<race outcome: see findings>")) | .case)
+    | unique ) as $pointers
+  | ( (.[1] // []) ) as $observed
+  | ( $observed | map(.case) ) as $present
+  | (($pointers - $present) | length) == 0
+    and ( $observed | all(
+            (.covers | length) > 0
+            and ( .outcomes | all( .outcome
+                    | ( has("failures") and has("sqlstates") and has("executions")
+                        and has("lineage") and has("reachability")
+                        and has("ownership") and has("storeTerminal")
+                        and has("work") ) ) ) ) )
+  | tostring
+' "${RUN_DIR}/repeat-1/run.json" "${RUN_DIR}/observed.json")"
+info "bounded outcome sets complete: ${BOUNDED_OK}; findings pointers resolve: ${FINDINGS_POINTERS_OK}"
+
 # Composed from files rather than `--argjson` strings: the canonical projections
 # are large enough that inlining them overflows the argument list, which fails as
 # a harness fault at the very last step of a good run.
@@ -809,7 +894,10 @@ jq -n \
   --slurpfile preservedFile "${RUN_DIR}/preserved.json" \
   --slurpfile acceptAllFile "${RUN_DIR}/acceptance-all.json" \
   --slurpfile acceptLanesFile "${RUN_DIR}/acceptance-lanes-all.json" \
+  --slurpfile observedFile "${RUN_DIR}/observed.json" \
   --argjson allSelectedPresent "${ALL_SELECTED_PRESENT}" \
+  --argjson boundedOk "${BOUNDED_OK}" \
+  --argjson findingsPointersOk "${FINDINGS_POINTERS_OK}" \
   '($fixturesFile[0]) as $fixtures
    | ($firstFile[0])   as $first
    | ($posturesFile[0]) as $postures
@@ -818,6 +906,7 @@ jq -n \
    | ($preservedFile[0]) as $preserved
    | ($acceptAllFile[0]) as $acceptAll
    | ($acceptLanesFile[0]) as $acceptLanes
+   | ($observedFile[0]) as $observed
    | {
      schema: "agent-runtime/spike-evidence/2",
      spike: $spike,
@@ -838,10 +927,16 @@ jq -n \
      managed_digests: ($first.managed_digests + { per_repeat_overall: $digests }),
      managed: $first.managed,
      cases: $first.cases,
+     # Digest-excluded by construction: assembled after every digest above was
+     # computed from `managed`. A race outcome belongs in the citable file, but
+     # digesting one would report expected variation as irreproducibility.
+     observed: $observed,
      acceptance: ($first.acceptance
                   | .flat = $acceptAll
                   | .lanes = $acceptLanes
-                  | .global += { all_selected_cases_present: $allSelectedPresent }
+                  | .global += { all_selected_cases_present: $allSelectedPresent,
+                                 every_bounded_case_has_a_persisted_outcome_set: $boundedOk,
+                                 no_managed_field_points_at_absent_findings: $findingsPointersOk }
                   | if $cross
                     then .global += { reproducible_across_runs: $reproducible,
                                       acceptance_stable_across_runs: $acceptance_stable }

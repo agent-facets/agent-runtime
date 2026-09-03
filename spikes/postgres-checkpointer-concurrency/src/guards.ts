@@ -110,14 +110,36 @@ export async function acquireThreadLease(lease: Db, threadId: string): Promise<L
 export type StoreRefusalCode =
   /** d28: `:` is a legal label character AND the delimiter, so two namespaces become one row. */
   | "namespace_contains_delimiter"
-  /** d29/d31: prefixes are matched with LIKE, so `%` and `_` cross tenant boundaries. */
+  /**
+   * d31 ONLY — corrected.
+   *
+   * This rule previously claimed to answer "d29/d31". It cannot answer d29:
+   * that case uses `["alpha"]`, `["alphabet"]` and `["alpha","one"]`, which are
+   * ordinary labels containing no metacharacter at all. Nothing about them can
+   * be refused at the input, because nothing about them is malformed — the
+   * defect is that the vendor matches the prefix with `LIKE 'alpha%'` and so
+   * returns a SIBLING. That needs an output-side rule, and it is
+   * `confineToPathBoundary` below.
+   *
+   * What this rule does answer is d31: `listNamespaces` never calls the
+   * validator that `put` and `search` do, so a `%` prefix is accepted there and
+   * returns every tenant. On the namespace arm it is largely redundant — d27
+   * measured that the vendor already refuses `%` and `_` on `put`/`search` —
+   * and it is kept there only so the two arms cannot drift apart.
+   */
   | "namespace_contains_like_metacharacter"
   /** d22: `calculateExpiresAt` treats 0 as falsy, so ttl 0 means "never expires". */
   | "ttl_zero_means_never_expires"
   /** d34: an unrecognised operator produces no SQL condition, so the filter returns everything. */
   | "filter_operator_not_recognised"
   /** d34: an empty `$in`/`$nin` is skipped by a length guard, with the same effect. */
-  | "filter_membership_list_is_empty";
+  | "filter_membership_list_is_empty"
+  /**
+   * d30: `maxDepth` is applied AFTER `LIMIT`, so a bounded page can be filtered
+   * to nothing and the caller cannot tell an empty page from an exhausted list.
+   * Refused as a combination — `maxDepth` alone is sound, which i11 shows.
+   */
+  | "list_maxdepth_applied_after_paging";
 
 export type StoreVerdict = {
   allowed: boolean;
@@ -144,7 +166,37 @@ export type GuardedOperation = {
   prefix?: string[];
   ttl?: number | null;
   filter?: Record<string, unknown>;
+  /** d30: paging options, refused only in combination with `maxDepth`. */
+  maxDepth?: number;
+  limit?: number;
+  offset?: number;
 };
+
+/**
+ * The output-side half of the guard: drop results that are not path descendants
+ * of the prefix that was asked for.
+ *
+ * d29 is not refusable at the input. `listNamespaces({prefix:["alpha"]})` is a
+ * perfectly well-formed request; the defect is that the vendor renders it as
+ * `LIKE 'alpha%'`, so `alphabet` — which is nowhere underneath `alpha` — comes
+ * back alongside `alpha` and `alpha:one`. `search()` builds the same pattern and
+ * crosses the same boundary.
+ *
+ * Comparison is ELEMENT-WISE over the label arrays. Nothing is joined, so the
+ * rule never touches the delimiter and cannot be fooled by d28's collision
+ * (`["a:b"]` and `["a","b"]` are different arrays here even though the vendor
+ * stores them as one row). A descendant has at least as many labels as the
+ * prefix and matches it position for position.
+ */
+export function confineToPathBoundary(
+  prefix: string[],
+  namespaces: string[][],
+): { kept: string[][]; droppedNonDescendants: number } {
+  const isDescendant = (candidate: string[]): boolean =>
+    candidate.length >= prefix.length && prefix.every((label, index) => candidate[index] === label);
+  const kept = namespaces.filter(isDescendant);
+  return { kept, droppedNonDescendants: namespaces.length - kept.length };
+}
 
 /**
  * Fail closed, and report every reason rather than the first.
@@ -178,6 +230,18 @@ export function checkStoreOperation(operation: GuardedOperation): StoreVerdict {
 
   if (operation.ttl === 0) {
     refusals.push({ code: "ttl_zero_means_never_expires", subject: "ttl" });
+  }
+
+  // d30. The hazard is the INTERACTION: `maxDepth` filters the page the vendor
+  // already truncated, so `{maxDepth:1, limit:2}` returned nothing while
+  // `{maxDepth:1, limit:100}` returned a result. Refusing `maxDepth` outright
+  // would be a guard changing more than its stated target, which is why i11
+  // exists to hold the rule to exactly this shape.
+  if (
+    operation.maxDepth !== undefined &&
+    (operation.limit !== undefined || operation.offset !== undefined)
+  ) {
+    refusals.push({ code: "list_maxdepth_applied_after_paging", subject: "maxDepth+limit" });
   }
 
   for (const [field, condition] of Object.entries(operation.filter ?? {})) {

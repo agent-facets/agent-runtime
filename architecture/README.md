@@ -63,6 +63,14 @@ of them invalidates multiple documents.
 6. **Git holds text only.** Databases, logs, artifacts, indexes, and credentials
    are excluded by construction.
 7. **Vector indexes are derived.** They are rebuilt, not restored.
+8. **One writer per thread.** At most one worker may invoke a given `thread_id`,
+   enforced by a per-thread advisory lease on a dedicated session. The
+   checkpointer serialises nothing per thread: two concurrent resumes of one
+   committed interrupt each executed the node and forked the lineage while both
+   reported success.
+9. **The memory index is ours.** The official Postgres checkpointer is used
+   unmodified; the official Store is not. Its search, filter and namespace
+   semantics cannot express the memory model, and the defects are silent.
 
 ## Status
 
@@ -71,7 +79,8 @@ OpenSpec governance, facet tooling, these documents, and the throwaway P0 spike
 harnesses under `spikes/`.
 
 P0 progress is tracked in the
-[spike report index](./spike-reports/README.md). Five spikes pass. Both
+[spike report index](./spike-reports/README.md). All six spikes pass; the sixth
+passes **with required safeguards**. Both
 Obsidian spikes — headless bootstrap and the loopback bridge — are reconciled
 into [03-obsidian-brain.md](./03-obsidian-brain.md); the bridge is stock NGINX
 in a shared network namespace, not custom code.
@@ -92,4 +101,13 @@ process is killed mid-node and while paused on an interrupt — **provided** eve
 invocation sets `durability: "sync"`. It also measures the resume contract as
 at-least-once, which is what makes the idempotency ledger in
 [09-data-model-and-lifecycle.md](./09-data-model-and-lifecycle.md) load-bearing
-rather than defensive. Database failure and full-stack restart remain untested.
+rather than defensive.
+
+The [Postgres checkpointer spike](./spike-reports/06-postgres-checkpointer-concurrency.md)
+closes P0. The checkpointer's writes are atomic against process death and a
+paused run survives the database being destroyed and both containers being
+replaced on a preserved volume — but only behind four runtime-owned safeguards:
+one migrator under an advisory lock, one writer per thread, a compatibility
+refusal that fingerprints node bodies, and an `error` listener on every pooled
+client. The vendor Store is replaced for the memory index. **Host, WSL, kernel
+and Docker-daemon reboot remain untested**, and carry forward to P4.

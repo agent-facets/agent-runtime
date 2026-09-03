@@ -55,6 +55,13 @@ Subagents are LangGraph subgraphs, not separate services. They inherit the run's
 `thread_id` and land in their own `checkpoint_ns`, which is the natural fan-out
 and retention key.
 
+The runtime MUST treat `checkpoint_ns` as an **opaque grouping key**. Its format
+is `<node>:<taskId>`, nested by appending — but that is a vendor detail, not a
+contract, and nothing in the runtime may parse it. Retention in particular MUST
+enumerate one head per live namespace rather than assume a single chain: a
+subgraph's lineage is separately rooted, so a root-only sweep deletes it whole
+(see [06-storage-and-backup.md](06-storage-and-backup.md)).
+
 The manager MUST NOT hold provider credentials in its prompt context, and MUST
 NOT be able to widen its own tool permissions.
 
@@ -117,6 +124,17 @@ state alone and reproduced the uninterrupted final state exactly; a node that ha
 already completed was not replayed, and in a fan-out a branch whose write had
 landed as a pending write was reused rather than re-executed.
 
+**That reuse is a root-namespace property.**
+[Spike 06](./spike-reports/06-postgres-checkpointer-concurrency.md) measured the
+identical fan-out *inside a subgraph*: the completed sibling re-executed, despite
+its pending write being present and its task id unchanged. The mechanism is a
+key-presence test — `skipDoneTasks = !("checkpoint_id" in config.configurable)` —
+and the engine builds every task's config with `checkpoint_id: undefined`, present
+as a key. **Any loop initialised from a task's config, which is every subgraph,
+has reuse disabled.** A root-level control with the same topology and the same
+thrown failure reused it, so the subgraph boundary is the only variable. Inside a
+subagent the idempotency ledger is the only thing preventing a duplicate effect.
+
 ## Durability contract
 
 The orchestrator's crash behaviour is a **setting**, not a property. It MUST be
@@ -129,6 +147,27 @@ set explicitly on every call.
   completed-task skipping, and a branch that had already finished re-executes.
 - An in-memory checkpointer MUST NOT be used outside unit tests. With
   `MemorySaver`, no state survived process replacement at all.
+- **At most one worker may invoke a given `thread_id`.** Two workers resuming the
+  same committed interrupt each executed the node, forked the lineage, and
+  **both returned success**. The runtime MUST hold a per-thread PostgreSQL
+  advisory lease on a **dedicated checked-out client** — a lock taken through
+  `pool.query` lands on whichever backend was free and is then returned to the
+  pool, where an idle timeout can drop it silently. A worker refused the lease
+  MUST execute no graph node and MUST be recorded `awaiting_resource`. The
+  subgraph boundary does not contain the duplicate: a concurrent resume forked
+  the child namespace as well as the root.
+- **The runtime MUST attach an `error` listener to every client its pool
+  creates.** When PostgreSQL dies under an in-flight caller, `pg` emits `error`
+  on the *client*, not the pool, and Node treats an unhandled `error` event as
+  fatal. Without the listener the process does not receive a database failure —
+  it vanishes. With it, the call rejects promptly and loudly, which is the
+  difference between a retryable run and a run whose state is unknown.
+- **Run status MUST derive from the runtime's own event log, never from the
+  orchestrator's return value.** Six measured mechanisms return `completed: true`
+  having executed zero nodes: a duplicate concurrent resume replaying persisted
+  state, a resume against a renamed node, a resume against pruned state, a resume
+  against a fresh volume, a put racing a delete, and a sweep that removed the
+  thread it was told to keep.
 
 The three modes, measured under a mid-run `SIGKILL`:
 
@@ -163,8 +202,8 @@ Rules:
 
 - Terminal states MUST be terminal. No transition leaves `succeeded`, `failed`,
   or `cancelled`.
-- `awaiting_resource` is a first-class state, not an error. The vault is an
-  exclusive resource and contention is normal.
+- `awaiting_resource` is a first-class state, not an error. The vault **and the
+  thread** are exclusive resources and contention is normal.
 - `running` has no wall-clock cap by default, but MUST have a heartbeat.
 - Cancellation is cooperative and MUST be durable: write `cancel_requested` to
   the event log first, then act, so a cancel that races a restart still lands.
@@ -211,8 +250,32 @@ Approval
 **Interrupt matching is index-based.** A conditionally skipped `interrupt()`
 shifts every later index. The runtime MUST record the ordinal and the node
 fingerprint, and MUST refuse to auto-resume when the fingerprint no longer
-matches current code. The refusal path itself is untested — no spike has yet
-resumed a thread against a changed graph.
+matches current code.
+
+**Verified.** [Spike 06](./spike-reports/06-postgres-checkpointer-concurrency.md)
+resumed a paused thread against five pinned graph variants with nothing stopping
+it. A **renamed node** returned no error, a result object and `completed: true`
+while executing zero nodes and leaving the head, the checkpoint count and the
+interrupt row untouched — the caller is told the run succeeded and the approval
+it was waiting on is silently abandoned. A **moved interrupt** delivered the
+decision to a position that no longer interrupts, advanced the head, and raised a
+*new* interrupt. A widened channel set was harmless. The guard then refused all
+three unsafe variants **before invoking**, leaving persisted state untouched and
+producing a stable typed refusal.
+
+Two consequences the design must carry: the moved interrupt is **structurally
+invisible** — same node names, same channels — so the manifest MUST fingerprint
+node bodies and not only their names; and the guard deliberately **over-refuses**
+a widened channel set, which is the accepted cost of a fail-closed rule that
+cannot distinguish widening from narrowing.
+
+**Raw `__interrupt__` rows are a historical record, not a pending-approval
+queue.** A nested interrupt is written at both the subgraph and the root level,
+and consuming an interrupt does not delete its row. A runtime that counts those
+rows to find outstanding approvals therefore over-counts twice over. Approval
+state MUST be the runtime's own row, keyed on
+`(thread, raising checkpoint_ns, task)` and reconciled against the tables rather
+than derived from them.
 
 **A committed interrupt survives the death of the process holding it.**
 [Spike 05](./spike-reports/05-langgraph-durability.md) killed a paused process

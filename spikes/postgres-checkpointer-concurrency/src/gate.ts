@@ -265,6 +265,33 @@ export async function recordNodePark(
   );
 }
 
+/**
+ * Blocks forever, and keeps the PROCESS alive while it does.
+ *
+ * The obvious spelling — `await new Promise<never>(() => {})` — is wrong, and
+ * wrong in a way that hid behind a race for the whole spike. A pending Promise
+ * is not a reason for Node to stay alive; only a referenced handle is. While the
+ * subject and probe pools still held idle sockets the process survived by
+ * accident, but those sockets close on their own idle timeout, and a worker that
+ * had already written its `gate_park` row would then run out of handles and exit
+ * **0** — before the driver's `docker kill` arrived.
+ *
+ * That is what stopped `frozen-v4` at `h02`: an exited-cleanly victim, a failed
+ * kill, and a fault instead of a result. The kill is still anchored on the
+ * durable park row; this only removes the process's permission to leave before
+ * it is killed. The interval is deliberately never cleared and its callback
+ * deliberately does nothing — the handle itself is the entire point.
+ *
+ * Only for parks the driver is contracted to kill. A park that must RESUME (as
+ * in family G, where the worker outlives a database restart to observe it) must
+ * not use this.
+ */
+export function parkUntilKilled(): Promise<never> {
+  return new Promise<never>(() => {
+    setInterval(() => {}, 1 << 30);
+  });
+}
+
 export async function recordPark(
   db: Db,
   caseId: string,

@@ -10,6 +10,11 @@ It measures the pinned, unmodified `PostgresSaver` and `PostgresStore` from
 turns out to be insufficient — a set of deliberately throwaway safeguards run in
 their own lanes beside the stock result they are not allowed to replace.
 
+**Result: pass with required safeguards.** 146 cases, 657 acceptance criteria,
+three isolated repeats. The findings and their architecture consequences are in
+[`architecture/spike-reports/06-postgres-checkpointer-concurrency.md`](../../architecture/spike-reports/06-postgres-checkpointer-concurrency.md);
+this file documents the apparatus.
+
 This is a **sibling** of [`spikes/langgraph-durability`](../langgraph-durability)
 (spike 05). Audited mechanisms were copied and adapted; nothing is imported from
 it, and its frozen evidence and digest are untouched.
@@ -159,6 +164,29 @@ that silently ignored `distanceMetric` would pass all three.
 * Mitigation lanes are expanded to include their stock pair. Running a
   safeguard without the stock result it is compared against is impossible.
 
+## Bounded races and the `observed` block
+
+17 cases are `bounded-trials`. **Nothing loops the participant body**, so a trial
+is one isolated repeat: `n = 3` per citable set, and the registry rejects any
+`trials` value but `1`. Their raced fields — results, SQLSTATEs, lineage,
+executions, reachability, Store projections and the conflict witness — are
+replaced in `managed` with `"<race outcome: see findings>"`, because digesting a
+genuine race would report expected variation as a reproducibility failure.
+
+They are instead summarised in `evidence.json`'s **`observed`** block: an id-free
+projection per case, computed **inside the pinned image** beside the criteria it
+has to stay honest against, then grouped across repeats by the driver. It is
+excluded from every digest by construction, and two global criteria require it to
+be complete and its pointers to resolve at *field* granularity — not merely that
+the case appears.
+
+That granularity is the point. The first version of this block was authored
+host-side in jq with one checkpointer-shaped signature for every case, and it
+answered three of the eight elided fields. Six of the seventeen cases
+consequently read as "no variation observed" in the promoted file while their raw
+bundles showed them flipping — including one whose terminal database differed
+between repeats.
+
 ## Families
 
 | Family | Subject | Provisioning |
@@ -222,3 +250,41 @@ state is evidence.
 * **A safeguard lane proves a mitigation is viable, not that it is the design.**
   Mitigations are throwaway wrappers in this harness; no production runtime
   module is built here.
+* **Bounded races are three samples, not a proof of race freedom.** An outcome
+  that did not appear is unsampled, not impossible, and outcomes that remain
+  source-possible but unsampled are recorded as such.
+* **Per-namespace retention is measured at one level of nesting.** Deeper
+  subgraph topologies were not swept.
+* **No backup, restore, replication, failover or promotion.**
+
+## Deviations
+
+* The plan named a `compose.yaml`; the harness uses raw Docker primitives, for
+  the reasons spike 05 recorded — Compose one-off containers get generated names
+  that are awkward to `docker kill`, a project can be silently adopted, and
+  `POSTGRES_PASSWORD_FILE` applies only on first init.
+* Ten cases were added after the final evidence contract was first approved, as
+  recorded corrections rather than a silent broadening of the matrix: a shutdown
+  positive control, a blob-first non-atomic control, five retention cases
+  covering completed threads, multi-namespace heads and the pending-write term,
+  and four Store-guard cases covering path-boundary confinement, pagination
+  ordering and the previously unexercised allow paths.
+* `frozen-v5` is the citable set. Earlier sets in the same tree used superseded
+  acceptance contracts, or stopped on a harness fault, and are not this result.
+* Every intentional forever-park goes through one `parkUntilKilled()` helper.
+  The obvious `await new Promise<never>(() => {})` does not keep Node alive: a
+  pending Promise is not a handle, so once the pools' idle sockets closed a
+  worker that had already written its park row could exit **0** before the
+  driver's kill arrived. It did, in one repeat of an earlier run, which stopped
+  that run with a fault rather than a result. The kill is still anchored on the
+  durable park row; the helper only removes the process's permission to leave
+  first. Family G is deliberately excluded — its park must return so the worker
+  outlives the database restart it exists to observe.
+
+## Reproducing from a clean checkout
+
+**Check the working tree first.** `tmp/` is git-ignored by design, and at the
+time of writing the harness corrections behind the citable evidence are still
+uncommitted. A clean checkout of an older commit will not reproduce the current
+digest. Confirm `git status` is clean for `spikes/postgres-checkpointer-concurrency/`
+before treating a re-run as a reproduction.

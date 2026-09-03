@@ -34,6 +34,7 @@ import { createProbe, type Probe } from "./probe.ts";
 import {
   createSink,
   instrumentPool,
+  parkUntilKilled,
   recordPark,
   statementMultiset,
   type GateHook,
@@ -74,7 +75,7 @@ function inspectPool(context: PartyContext): Db {
 function parkForever(probe: Db, context: PartyContext): GateHook {
   return async (gate, statement) => {
     await recordPark(probe, context.caseId, context.party, gate, statement);
-    await new Promise<never>(() => {});
+    await parkUntilKilled();
   };
 }
 

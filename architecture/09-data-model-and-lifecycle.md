@@ -64,6 +64,7 @@ payload_ref           artifact hash when externalized
 ```text
 approval_id
 run_id, task_id
+checkpoint_ns         the namespace that RAISED it, part of its identity
 interrupt_id
 ordinal               index within the node
 node_fingerprint      node name + definition version at raise time
@@ -168,8 +169,23 @@ uninterrupted terminal state. `decision_payload` MUST be a truthy structured
 object — a bare `false` produces no resume write on the pinned release and fails
 the invocation.
 
-The quarantine path is **not** verified: no spike has yet resumed a thread
-against a changed graph.
+**The quarantine path is now verified.**
+[Spike 06](./spike-reports/06-postgres-checkpointer-concurrency.md) resumed a
+paused thread against five pinned variants. With nothing stopping it, a renamed
+node returned `completed: true` having executed **zero** nodes and left the
+interrupt row in place; a moved interrupt delivered the decision to a
+non-interrupting position and raised a fresh one; a widened channel set was
+harmless. The guard refused the three unsafe variants **before invoking**, left
+checkpoint count, interrupt rows and head id unchanged, and produced a stable
+typed refusal.
+
+**Raw `__interrupt__` rows are history, not a queue.** A nested interrupt is
+recorded at both the subgraph and root levels, and consuming an interrupt does
+not delete its row — a correct reachability sweep keeps it, because it hangs off
+a checkpoint the live head descends from. A runtime that counts those rows to
+find outstanding approvals over-counts once per nested interrupt and once per
+answered one. The `Approval` row above is therefore **mandatory** rather than a
+convenience index, and its identity includes the raising `checkpoint_ns`.
 
 ## Idempotency
 
@@ -182,7 +198,11 @@ killed node re-running from its top with its external effect observed twice, and
 the code before an `interrupt()` re-running on resume. A node that had already
 completed its superstep was **not** re-run, and a fan-out sibling whose pending
 write had landed was reused — deleting that write, or resuming with an explicit
-`checkpoint_id`, made it re-run. The orchestrator's guarantee is therefore
+`checkpoint_id`, made it re-run. **At the root namespace only:**
+[spike 06](./spike-reports/06-postgres-checkpointer-concurrency.md) measured the
+same fan-out inside a subgraph, where the completed sibling re-executed anyway.
+Reuse is gated on a key-presence test that every task-derived config fails, so no
+subgraph gets it. The orchestrator's guarantee is therefore
 **at-least-once**, bounded by superstep granularity, and this ledger is the only
 thing that turns it into an at-most-once effect.
 
@@ -204,20 +224,42 @@ surface as a human-resolvable task.
 The key deliberately includes the parent checkpoint so a genuine fork re-runs
 the effect, while a crash resume does not.
 
-That property is **assumed, not measured.** Spike 05 established that
-re-execution happens; it asserted nothing about whether `parent_checkpoint` and
-`task` stay stable across a crash resume — and a superstep lost under a
-non-`sync` durability mode produces a *different* parent checkpoint, which would
-change the key and defeat deduplication entirely. P4 MUST test that `effect_key`
-is stable across a crash replay and changes across a genuine fork before this
-ledger is relied on.
+**Verified, in both directions.**
+[Spike 06](./spike-reports/06-postgres-checkpointer-concurrency.md) killed a
+worker after it recorded an effect and before its writes landed; the fresh
+container computed the **identical** key under `durability: "sync"`. Replaying
+from an explicit `checkpoint_id` produced a **different** key, a different parent
+checkpoint, a different task id and a second head. Both ablations are
+load-bearing: dropping `task` collapses three sibling effects to one key, and
+dropping `ordinal` collapses three effects from one node to one. P4 carries these
+as regression tests rather than as open questions.
+
+Four construction rules follow, none of them discoverable from the public
+surface:
+
+- **Only `run` and `ns` are publicly reachable.** `parent_checkpoint` requires
+  the undocumented `configurable.checkpoint_map`; `task` requires the
+  private-by-convention `__pregel_task_id`.
+- **Do not key on `configurable.checkpoint_id`.** It is present as a key and
+  `undefined` as a value inside every task, so a runtime reaching for the obvious
+  field hashes `null` for every effect in the system.
+- **`ns` MUST be the namespace the WRITES carry, not the one the node sees.** The
+  engine gives a task `<graph ns>` plus its own `<node>:<taskId>`, but stamps its
+  write rows with the graph's namespace. A key built from the node's view cannot
+  be rediscovered from `checkpoint_writes`, and because the task namespace embeds
+  the task id it would also collapse `ns` and `task` into each other.
+- **`ordinal` is not in the database.** `idx` counts a task's writes, not a
+  node's effects, so the ledger must carry the ordinal itself.
+
+The `async` lane remains a bounded negative: whether the superstep survives is
+the race, so it is reported as an outcome set rather than as behaviour.
 
 ## Retention
 
 | Data | Hot | Then | Finally |
 |---|---|---|---|
 | Checkpoints, active runs | Indefinite | — | — |
-| Checkpoints, completed runs | 30 days | First/last/interrupt only, 180 days | Archive only |
+| Checkpoints, completed runs | 30 days | Reachable live set only, 180 days | Archive only |
 | Events | 7–30 days in Postgres | Partition detach to archive | Object storage |
 | Artifacts | Indefinite locally | Cold tier | Never expire without a tombstone |
 | Archives | — | Object storage | Policy horizon |
@@ -228,7 +270,13 @@ ledger is relied on.
 Two rules that are easy to get wrong:
 
 - **Checkpoint pruning MUST be reachability-based**, because blobs are shared
-  across checkpoints by version. A date predicate strands or orphans them.
+  across checkpoints by version — and because there is **no timestamp column
+  anywhere** in the checkpointer schema, so a date predicate cannot be expressed
+  against it at all. "First/last/interrupt only" is not a safe narrowing: keeping
+  a subset of a thread's checkpoints without their live set is exactly the
+  incomplete sweep that strands references. The rule and its delete order are in
+  [06-storage-and-backup.md](06-storage-and-backup.md), and the heads MUST be
+  enumerated one per live namespace.
 - **Audit outlives execution.** If archives must survive longer than
   checkpoints, they need independent retention, and pruning must emit
   tombstones.
@@ -261,6 +309,7 @@ CompatManifest
   agent_definition_version
   node_name_set_hash        the graph's node names
   state_key_set_hash        the graph's state keys
+  node_body_fingerprints    normalised per-node source hashes
   checkpoint_format_version
   package_versions          orchestrator, checkpointer, core
   transport_profile_id
@@ -271,8 +320,12 @@ run still be resumed?" before failing mid-node. LangGraph does not persist
 topology and applies current code to every thread, so this is the only thing
 standing between a refactor and an unrecoverable interrupted run.
 
-No spike has resumed a thread against a changed graph, so the refusal this
-manifest exists to trigger is designed rather than proven.
+**Measured.** The refusal is proven, and the manifest shape above is
+insufficient as written: `node_name_set_hash` and `state_key_set_hash` do not see
+a `interrupt()` that moved *within* a node body, which is the change positional
+interrupt matching cares about most. Add `node_body_fingerprints` — a normalised
+per-node source hash, comments stripped and whitespace collapsed, so a reformat is
+compatible and a moved call is not.
 
 ## Classification
 
@@ -292,8 +345,10 @@ makes the restore matrix in
 
 ## Open questions
 
-- Whether forks are branches within a thread or new runs seeded by copy, which
-  changes what the idempotency key must include.
+- Whether the runtime models a fork as a new `Run` row. The vendor's own fork is
+  settled: an explicit `checkpoint_id` writes a `source: "fork"` checkpoint
+  **within the same thread**, derives new task ids from it, and leaves the thread
+  with two heads — and the key as specified already distinguishes it.
 - Whether events are pruned by age or by run completion plus a grace window.
 - How long `in_flight` idempotency entries wait before escalating.
 - Whether memory supersession is ever hard-deleted, and under what policy.

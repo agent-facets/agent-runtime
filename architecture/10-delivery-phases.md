@@ -34,13 +34,22 @@ Answer the questions that could change the architecture. Throwaway code.
 | [Anthropic parity](./spike-reports/03-anthropic-parity.md) | Does a decorated fetch from a LangChain client produce a request matching the reference profile? | **Pass** |
 | [OpenAI device auth](./spike-reports/04-openai-device-auth.md) | Does device-code login complete inside a container and refresh? | **Pass** |
 | [LangGraph durability](./spike-reports/05-langgraph-durability.md) | Kill the process mid-run and mid-interrupt; does it resume correctly? | **Pass**, scoped |
-| Postgres checkpointer | Do the official checkpointer and store behave as documented under concurrency? | Not started |
+| [Postgres checkpointer](./spike-reports/06-postgres-checkpointer-concurrency.md) | Do the official checkpointer and Store behave as documented under concurrency? | **Pass**, with required safeguards |
 
 Findings live in [spike-reports/](./spike-reports/). Harnesses live in
 `spikes/`.
 
 **Exit:** every spike answered yes, or the architecture is revised in writing
 before proceeding.
+
+P0 exits on the **second** branch. Spike 06 answered *no* for both packages under
+concurrency and the architecture is revised accordingly: the checkpointer is kept
+behind four mandatory safeguards, and the vendor Store is replaced by an
+app-owned memory index. Those revisions are in
+[02-control-plane.md](./02-control-plane.md),
+[04-memory-system.md](./04-memory-system.md),
+[06-storage-and-backup.md](./06-storage-and-backup.md) and
+[09-data-model-and-lifecycle.md](./09-data-model-and-lifecycle.md).
 
 ---
 
@@ -50,12 +59,17 @@ Repository skeleton, Postgres, internal network, configuration, migrations.
 
 - Compose stack with an internal network and no public port bindings
 - Postgres with pgvector, schema separation, migration tooling
+- **Exactly one migrator**, serialised by a PostgreSQL advisory lock held on a
+  dedicated connection — never through the application pool — and vendor
+  components constructed with lazy setup disabled thereafter
+  (see [spike 06](./spike-reports/06-postgres-checkpointer-concurrency.md))
 - Configuration loading with **fail-loud** validation — no silent degradation
 - Structured logging, health endpoints
 - Startup assertion that every listener is loopback-bound
 
 **Exit:** `docker compose up` produces a healthy stack; a smoke test writes and
-reads a row through migrations.
+reads a row through migrations, and a deliberate N-process cold start converges
+to one schema with no migration SQLSTATE.
 
 ---
 
@@ -113,8 +127,20 @@ Orchestration and durability. Protocol-free.
   is fork semantics and re-executes completed branches
 - Interrupt-backed approvals with ordinal and node fingerprint, and truthy
   structured decision payloads — a bare `false` does not resume
-- Idempotency ledger, with a test that `effect_key` is stable across a crash
-  resume and changes across a genuine fork
+- Idempotency ledger carrying its own `ordinal` and keyed on the namespace the
+  writes carry. Both key properties are measured in P0
+  ([spike 06](./spike-reports/06-postgres-checkpointer-concurrency.md)); P4
+  carries them as regression tests
+- **A per-thread advisory lease on a dedicated session before any resume.** Two
+  workers on one `thread_id` both execute and fork the lineage; a refused worker
+  is recorded `awaiting_resource`
+- **Compatibility refusal before invoking**, using normalised node-body
+  fingerprints — a moved `interrupt()` is structurally invisible
+- **An `error` listener on every pooled client**, without which a database
+  failure kills the process instead of rejecting the call
+- Run status derived from the runtime's own event log, never from the
+  orchestrator's return value — six measured mechanisms report success having
+  executed nothing
 - Compatibility manifest per run
 - Failure taxonomy and retry policy
 - Agent definition registry with versioning
@@ -126,9 +152,15 @@ the decision, and produces a complete replayable transcript. A deliberately
 duplicated effect is caught by the ledger.
 
 [Spike 05](./spike-reports/05-langgraph-durability.md) proves the runtime half of
-that sentence — a `SIGKILL` of the runtime process, resumed in a fresh
-container — but **not** the full stack restart: Postgres never died in the spike.
-Killing the database and the host remains this phase's obligation.
+that sentence. [Spike 06](./spike-reports/06-postgres-checkpointer-concurrency.md)
+discharges the **database** half: a graceful restart, an unclean `SIGKILL`, the
+server destroyed under a demonstrably blocked backend, and both containers
+replaced from pinned image ids on the preserved named volume — with a
+fresh-volume control that loses everything.
+
+What remains this phase's obligation is the **host** half: no host, WSL, kernel
+or Docker-daemon reboot occurred, the page cache was never dropped, and the
+volume never left the running daemon.
 
 ---
 
@@ -140,7 +172,10 @@ The reason for the system.
 - Extraction at run boundaries with redaction
 - Reconciliation: new, reinforced, superseded, conflicting
 - Vault writes with full provenance frontmatter
-- Indexer: watcher, chunker, embedder, pgvector upsert, git-sha reconciliation
+- Indexer: watcher, chunker, embedder, pgvector upsert, git-sha reconciliation,
+  against an **app-owned** schema — the vendor `PostgresStore` is measured
+  unsuitable for this role
+  (see [spike 06](./spike-reports/06-postgres-checkpointer-concurrency.md))
 - Multi-channel retrieval with fusion and context budget
 - Consolidation jobs
 

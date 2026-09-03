@@ -58,6 +58,18 @@ export type SweepOmission =
   /** Keep the pending writes but drop the `__interrupt__` rows specifically. */
   | "interrupts"
   /**
+   * Seed the live set from the ROOT namespace only, ignoring every head in a
+   * subgraph's namespace.
+   *
+   * This is not a hypothetical. It is what head enumeration did before f15
+   * existed — `liveHead` filtered `checkpoint_ns === ''` — and because
+   * `liveCheckpointsSql`'s recursion follows `parent_checkpoint_id` WITHIN a
+   * namespace, a subgraph's chain is reachable from no root head at all. The
+   * omission is declared here so the incompleteness is a named mutation with a
+   * measured consequence rather than an accident nothing can falsify.
+   */
+  | "child-namespaces"
+  /**
    * Keep only the newest version of each channel — the plausible-and-wrong rule.
    * A channel that stopped changing keeps an OLD version, and the live head
    * still references it, so this strands the head of a retained thread.
@@ -90,6 +102,17 @@ export type SweepResult = {
   /** True when the live set was walked from explicit heads rather than by thread. */
   headScoped: boolean;
   retainedHeads: number;
+  /** Heads the caller supplied, before `child-namespaces` discarded any. */
+  headsOffered: number;
+  /**
+   * Whether `retainThreads` had any effect.
+   *
+   * In head-scoped mode it has none: the live set is exactly the named heads and
+   * their ancestors, evaluated across the whole database, and no SQL references
+   * the thread array at all. Recording it stops a reader inferring a thread
+   * scope from an argument the sweep ignored.
+   */
+  retainThreadsApplied: boolean;
   live: { checkpoints: number; blobs: number; writes: number };
   deleted: { checkpoints: number; blobs: number; writes: number };
 };
@@ -146,11 +169,24 @@ function liveCheckpointsSql(
  * there. The omission keeps the newest version per channel instead, which is
  * what a sweep written from intuition rather than from the join would do.
  */
+/**
+ * A predicate that references every head parameter and can never change a result.
+ *
+ * The bind list is fixed by `headScoped`, but the SQL each branch emits is not —
+ * and PostgreSQL rejects a bind supplying more parameters than the statement
+ * declares, exactly as it rejects one the statement never references (42P18).
+ * Both arrive as "the party never parked" rather than as a SQL error, which is
+ * how defect 19 hid and how the same class reappeared the moment a head-scoped
+ * sweep was combined with an omission that drops its own subquery.
+ */
+const BINDS_EVERY_HEAD_PARAM =
+  "$1::text[] IS NOT NULL AND $2::text[] IS NOT NULL AND $3::text[] IS NOT NULL";
+
 function liveBlobsSql(omit: SweepOmission | undefined, headScoped: boolean): string {
   if (omit === "channel-versions") {
     return `SELECT b.thread_id, b.checkpoint_ns, b.channel, b.version
               FROM ${CHECKPOINT_SCHEMA}.checkpoint_blobs b
-             WHERE b.thread_id = ANY($1::text[])
+             WHERE ${headScoped ? BINDS_EVERY_HEAD_PARAM + " AND " : ""}b.thread_id = ANY($1::text[])
                AND b.version = (
                      SELECT max(CASE WHEN b2.version ~ '^[0-9]+$'
                                      THEN b2.version::numeric END)::text
@@ -179,12 +215,15 @@ function liveBlobsSql(omit: SweepOmission | undefined, headScoped: boolean): str
 function liveWritesSql(omit: SweepOmission | undefined, headScoped: boolean): string {
   // Nothing is live: the sweep forgets pending writes entirely.
   if (omit === "pending-writes") {
+    // Nothing is live, but every declared parameter must still be referenced —
+    // and which parameters are declared depends on `headScoped`, not on this
+    // branch. Getting that wrong raised 08P01 from a head-scoped f17 and
+    // surfaced as a missing rendezvous rather than as a SQL error.
     return `SELECT w.thread_id, w.checkpoint_ns, w.checkpoint_id, w.task_id, w.idx
               FROM ${CHECKPOINT_SCHEMA}.checkpoint_writes w
-             -- The thread predicate is retained purely so the parameter is
-             -- still referenced: PostgreSQL cannot infer the type of one a
-             -- statement declares and never uses (42P18).
-             WHERE false AND w.thread_id = ANY($1::text[])`;
+             WHERE false AND ${
+               headScoped ? BINDS_EVERY_HEAD_PARAM : "w.thread_id = ANY($1::text[])"
+             }`;
   }
   const interruptFilter =
     omit === "interrupts" ? "AND w.channel <> '__interrupt__'" : "";
@@ -201,7 +240,11 @@ export async function reachabilitySweep(db: Db, options: SweepOptions): Promise<
   const omit = options.omit;
   const order = options.order ?? "safe";
   const retain = options.retainThreads;
-  const heads = options.retainHeads ?? [];
+  const offered = options.retainHeads ?? [];
+  // The declared incompleteness: drop every head that is not the root's. The
+  // filter lives here rather than at the call site so the mutation is recorded
+  // in the result the evidence carries, next to the heads it discarded.
+  const heads = omit === "child-namespaces" ? offered.filter((head) => head.ns === "") : offered;
   const headScoped = heads.length > 0;
   // Bound ONLY when the SQL references them. PostgreSQL rejects a bind message
   // that supplies more parameters than the statement declares, so passing the
@@ -272,6 +315,8 @@ export async function reachabilitySweep(db: Db, options: SweepOptions): Promise<
       order,
       headScoped,
       retainedHeads: heads.length,
+      headsOffered: offered.length,
+      retainThreadsApplied: !headScoped,
       live,
       deleted,
     };

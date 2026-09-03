@@ -187,6 +187,11 @@ const ORACLE_PRESENT: Record<OracleId, (bundle: CaseBundle) => boolean> = {
   storeGuard: (bundle) =>
     typeof (firstResult(bundle)?.verdict as { allowed?: boolean } | undefined)?.allowed ===
     "boolean",
+  // Present AND non-trivial: a fixture with no ids to tokenise would make every
+  // injectivity claim below it vacuously true.
+  canonical: (bundle) =>
+    typeof firstResult(bundle)?.checkpointLabelsInjective === "boolean" &&
+    Number(firstResult(bundle)?.distinctCheckpointIds ?? 0) > 1,
 };
 
 export type CompatibilityVerdict = {
@@ -293,6 +298,9 @@ type ThreadProjection = {
   writes?: Array<Record<string, unknown>>;
   taskIds?: string[];
   interruptRows?: number;
+  /** A COUNT, never the ids — see `cmdProject`. */
+  distinctTaskIds?: number;
+  namespaces?: string[];
 };
 
 /**
@@ -716,6 +724,239 @@ function managedProjection(bundle: CaseBundle, definition: CaseDef): Record<stri
   return managed;
 }
 
+/**
+ * The elided fields, named once.
+ *
+ * `managedProjection` replaces each of these with `"<race outcome: see
+ * findings>"` for a bounded case, and `observationFor` below is required to
+ * represent every one of them. Deriving the observation from this list rather
+ * than from a per-case declaration is deliberate: a hand-maintained list of
+ * "what this case observes" drifts from what the case actually elides, and the
+ * drift is invisible — which is precisely how the first version of the
+ * `observed` block came to answer three of eight pointers while a
+ * count-and-pointer global reported it complete.
+ */
+const RACED_FIELDS = [
+  "results",
+  "sqlstateMultiset",
+  "thread",
+  "executions",
+  "reachability",
+  "store",
+  "storeConflict",
+  "conflictWitness",
+] as const;
+
+/** Every SQLSTATE in a result tree, including the ones nested inside per-operation arrays. */
+function canonicalFailures(bundle: CaseBundle): Array<Record<string, unknown>> {
+  const counts = new Map<string, { code: string; constraint: string | null; count: number }>();
+  const walk = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const entry of value) walk(entry);
+      return;
+    }
+    if (value === null || typeof value !== "object") return;
+    const record = value as Record<string, unknown>;
+    if (typeof record.code === "string") {
+      const constraint = typeof record.constraint === "string" ? record.constraint : null;
+      const key = `${record.code}\u0000${constraint ?? ""}`;
+      const seen = counts.get(key);
+      if (seen) seen.count += 1;
+      else counts.set(key, { code: record.code, constraint, count: 1 });
+    }
+    for (const entry of Object.values(record)) walk(entry);
+  };
+  walk(resultsOf(bundle));
+  return [...counts.values()].sort((left, right) =>
+    stable(left) < stable(right) ? -1 : stable(left) > stable(right) ? 1 : 0,
+  );
+}
+
+/**
+ * Per-namespace leaf counts, not their sum.
+ *
+ * e08's whole question is WHERE the fork landed — root only, or root and child.
+ * Summing the leaves to a scalar makes `(1,2)` and `(2,1)` the same number and
+ * loses exactly the distinction the case exists to draw.
+ */
+function lineageShape(bundle: CaseBundle): Record<string, unknown> | null {
+  const thread = threadOf(bundle);
+  if (!thread) return null;
+  return {
+    checkpoints: (thread.checkpoints ?? []).length,
+    interruptRows: thread.interruptRows ?? 0,
+    distinctTaskIds: thread.distinctTaskIds ?? 0,
+    namespaces: (thread.namespaces ?? []).length,
+    leavesPerNamespace: (thread.leaves ?? [])
+      .map((entry) => (entry.leaves ?? []).length)
+      .sort((left, right) => left - right),
+  };
+}
+
+/**
+ * Who owns what, reported by ROLE and literally.
+ *
+ * Roles are assigned by the driver before the race, so `p0`/`p1` are managed
+ * labels rather than volatile ids (§7.2) — "the same role did not always win" is
+ * itself an observation, and relabelling it away would hide it. What matters for
+ * the findings is the RELATION (`rowOwnerEqualsByteOwner`,
+ * `itemOwnerEqualsVectorOwner`), and that is carried explicitly beside the
+ * owners rather than left to be inferred.
+ */
+function observedOwnership(bundle: CaseBundle): Record<string, unknown> | null {
+  const witness = bundle.projection?.conflictWitness as ConflictProjection | undefined;
+  const store = storeConflictOf(bundle);
+  if (!witness && !store) return null;
+
+  const distinct = (values: Array<string | null | undefined>): string[] =>
+    [...new Set(values.filter((value): value is string => typeof value === "string"))].sort();
+
+  const checkpointOwners = distinct((witness?.checkpoints ?? []).map((row) => row.writer));
+  const blobOwners = distinct((witness?.blobs ?? []).map((row) => row.owner));
+  const writeOwners = distinct((witness?.writes ?? []).map((row) => row.owner));
+
+  return {
+    ...(witness
+      ? {
+          checkpointRows: (witness.checkpoints ?? []).length,
+          checkpointOwners,
+          blobOwners,
+          writeOwners,
+          rowOwnerEqualsByteOwner:
+            checkpointOwners.length === 1 && blobOwners.length === 1
+              ? checkpointOwners[0] === blobOwners[0]
+              : null,
+        }
+      : {}),
+    ...(store
+      ? {
+          storeItemRows: store.itemRows ?? null,
+          storeItemOwner: store.itemOwner ?? null,
+          storeVectorOwners: [...(store.vectorOwners ?? [])].sort(),
+          storeOrphanVectors: store.orphanVectors ?? null,
+          itemOwnerEqualsVectorOwner: store.itemOwnerEqualsVectorOwner ?? null,
+        }
+      : {}),
+  };
+}
+
+/** Terminal Store state: what the database actually held when the race settled. */
+function observedStoreTerminal(bundle: CaseBundle): Record<string, unknown> | null {
+  const store = storeOf(bundle);
+  if (!store) return null;
+  return {
+    items: (store.items ?? []).length,
+    vectors: (store.vectors ?? []).length,
+    ...(store.stats ? { stats: store.stats } : {}),
+  };
+}
+
+/**
+ * The per-party numeric work counters and terminal party outcomes.
+ *
+ * Kept per party rather than sorted, for the same reason owners are literal: a
+ * sweeper split of `[0,6]` versus `[6,0]` is which role did the work, and the
+ * invariant the criterion asserts is the SUM, which survives either way.
+ */
+function observedWork(bundle: CaseBundle): Array<Record<string, unknown>> {
+  const numeric = ["swept", "operations", "fulfilled", "rejectedCount", "executions"];
+  return resultsOf(bundle)
+    .map((result) => {
+      const entry: Record<string, unknown> = { party: result.party ?? null };
+      for (const key of numeric) {
+        if (typeof result[key] === "number") entry[key] = result[key];
+      }
+      if (typeof result.role === "string") entry.role = result.role;
+      if (typeof result.completed === "boolean") entry.completed = result.completed;
+      if (typeof result.executed === "boolean") entry.executed = result.executed;
+      if (typeof result.classification === "string") entry.classification = result.classification;
+      if (typeof result.leaseAcquired === "boolean") entry.leaseAcquired = result.leaseAcquired;
+      entry.errored = (result.error ?? null) !== null;
+      const runs = result.runs;
+      if (Array.isArray(runs)) {
+        entry.steps = runs.map((run) =>
+          Array.isArray((run as { steps?: unknown[] })?.steps)
+            ? ((run as { steps: unknown[] }).steps).length
+            : 0,
+        );
+      }
+      return entry;
+    })
+    .sort((left, right) => Number(left.party ?? 0) - Number(right.party ?? 0));
+}
+
+/** Effect-key equality relations, which are the whole of what h04 observes. */
+function observedEffectKeys(bundle: CaseBundle): Record<string, unknown> | null {
+  const effects = effectsOf(bundle);
+  if (effects.length === 0) return null;
+  const byNode = new Map<string, string[]>();
+  for (const effect of effects) {
+    const node = String(effect.node ?? "");
+    byNode.set(node, [...(byNode.get(node) ?? []), String(effect.key ?? "")]);
+  }
+  return {
+    recorded: effects.length,
+    // Whether the SAME node computed the SAME key on every pass. That equality
+    // is the measurement; the hash itself is volatile by construction.
+    keysAgreePerNode: [...byNode.entries()]
+      .sort(([left], [right]) => (left < right ? -1 : 1))
+      .map(([node, keys]) => ({ node, passes: keys.length, distinctKeys: new Set(keys).size })),
+  };
+}
+
+/**
+ * The id-free observation of one bounded case, covering every raced field.
+ *
+ * This is computed INSIDE the pinned image, beside the criteria it has to stay
+ * honest against. The first version lived in the driver's jq, which made it the
+ * one analysis in the run whose code was not version-locked to the evidence it
+ * described — and `verify-concurrency.sh` says in its own header that the driver
+ * owns persistence and no analysis.
+ */
+function observationFor(bundle: CaseBundle): Record<string, unknown> {
+  return {
+    failures: canonicalFailures(bundle),
+    cleanParties: liveResults(bundle).filter((result) => (result.error ?? null) === null).length,
+    sqlstates: sqlstateMultiset(bundle),
+    executions: [...executionsOf(bundle)].sort((left, right) =>
+      left.node !== right.node
+        ? left.node < right.node
+          ? -1
+          : 1
+        : left.phase < right.phase
+          ? -1
+          : left.phase > right.phase
+            ? 1
+            : 0,
+    ),
+    lineage: lineageShape(bundle),
+    reachability: reachabilityCountsOf(bundle),
+    ownership: observedOwnership(bundle),
+    storeTerminal: observedStoreTerminal(bundle),
+    work: observedWork(bundle),
+    effectKeys: observedEffectKeys(bundle),
+  };
+}
+
+/** The four damage counts, which are what b02 and e08 turn on. */
+function reachabilityCountsOf(bundle: CaseBundle): Record<string, number> | null {
+  const witness = bundle.projection?.reachability as
+    | {
+        strandedReferences?: unknown[];
+        orphanBlobs?: unknown[];
+        brokenLineage?: unknown[];
+        deadWrites?: unknown[];
+      }
+    | undefined;
+  if (!witness) return null;
+  return {
+    strandedReferences: (witness.strandedReferences ?? []).length,
+    orphanBlobs: (witness.orphanBlobs ?? []).length,
+    brokenLineage: (witness.brokenLineage ?? []).length,
+    deadWrites: (witness.deadWrites ?? []).length,
+  };
+}
+
 /** Retained verbatim, never digested. Deleting it would hide the race. */
 function findingsFor(bundle: CaseBundle): Record<string, unknown> {
   return {
@@ -849,6 +1090,28 @@ function selftestCriteria(bundles: Map<string, CaseBundle>): Record<string, bool
     // written the row, so the exit code is checked separately.
     criteria.s07_worker_exited_through_the_signal_handler = s07.kill?.waitExit === 143;
     criteria.s07_backend_drained_before_projection = s07.drain?.drained === true;
+  }
+
+  const s08 = bundles.get("s08-canonical-token-uniqueness");
+  if (s08) {
+    const result = firstResult(s08);
+    // The layer every managed digest is computed over, and the one mechanism
+    // whose failure no other oracle could see.
+    criteria.s08_every_distinct_source_id_received_a_distinct_token =
+      result?.checkpointLabelsInjective === true && Number(result?.distinctCheckpointIds ?? 0) > 1;
+    criteria.s08_a_referenced_but_absent_parent_is_labelled_separately =
+      result?.absentParentLabelled === true;
+    criteria.s08_the_ranker_is_injective_and_stable = result?.rankerInjective === true;
+    criteria.s08_no_token_namespace_collides = result?.tokenNamespacesDisjoint === true;
+    // The leak scanner checks credentials and host paths; it has never checked
+    // for volatile ids, so an escaped uuid would have shown up only as an
+    // irreproducible digest with no explanation.
+    criteria.s08_no_raw_uuid_survives_canonicalisation =
+      result?.rawUuidSurvivesCanonicalisation === false;
+    // The ONE deliberate many-to-one mapping, declared so it can never be
+    // mistaken for a collision: `nsSkeleton` collapses embedded uuids on purpose.
+    criteria.s08_the_deliberate_namespace_collapse_is_declared =
+      result?.skeletonCollapseIsDeclared === true;
   }
 
   return criteria;
@@ -2687,11 +2950,36 @@ type ThreadDamage = {
   deadWrites?: number;
 };
 
+type NamespaceTriple = {
+  checkpoints: number;
+  blobs: number;
+  writes: number;
+  interruptRows: number;
+};
+
+/**
+ * A thread's per-namespace shape, with no namespace STRING in it.
+ *
+ * A subgraph namespace embeds a per-run task uuid, so carrying one into a
+ * digested result would change the bytes every run for no behavioural reason.
+ * What the criteria need is the count, the root's triple, and the content-sorted
+ * multiset of the children's — all of which are stable.
+ */
+type NamespaceShape = {
+  namespaces?: number;
+  childNamespaces?: number;
+  root?: NamespaceTriple;
+  children?: NamespaceTriple[];
+  childTotals?: NamespaceTriple;
+};
+
 type Survey = {
   counts?: Array<{ thread_id: string; checkpoints: number; blobs: number; writes: number }>;
   retainedDamage?: ThreadDamage;
   staleDamage?: ThreadDamage;
   retainedSharingMax?: number;
+  retainedNamespaces?: NamespaceShape;
+  staleNamespaces?: NamespaceShape;
   strandedReferences?: number;
   orphanBlobs?: number;
   brokenLineage?: number;
@@ -2699,6 +2987,21 @@ type Survey = {
   sharingMax?: number;
   sharedVersions?: number;
 };
+
+function namespaceShapeOf(
+  survey: Survey | undefined,
+  thread: "retained" | "stale",
+): NamespaceShape | undefined {
+  return thread === "retained" ? survey?.retainedNamespaces : survey?.staleNamespaces;
+}
+
+/** Total executions of one node across every phase and party. */
+function nodeExecutions(bundle: CaseBundle | undefined, node: string): number {
+  if (!bundle) return 0;
+  return executionsOf(bundle)
+    .filter((entry) => entry.node === node && entry.phase === "executed")
+    .reduce((total, entry) => total + entry.executions, 0);
+}
 
 type PruneResult = {
   party?: number;
@@ -2710,6 +3013,15 @@ type PruneResult = {
     interrupted?: boolean;
     error?: unknown;
     steps?: string[];
+  } | null;
+  /** f14 only: a completed thread cannot be resumed, so it is read instead. */
+  read?: {
+    headPresent?: boolean;
+    referencedChannels?: number;
+    unresolvedChannels?: number;
+    apiSteps?: string[];
+    apiError?: string | null;
+    executionsDuringRead?: number;
   } | null;
   introducedStrandedReferences?: boolean;
   introducedBrokenLineage?: boolean;
@@ -2896,41 +3208,260 @@ function familyFCriteria(bundles: Map<string, CaseBundle>): Record<string, boole
       prepare?.retainedHasAbandonedBranch === true;
     criteria.f11_the_live_set_was_walked_from_a_head =
       action?.headScoped === true && action?.head === true;
-    // Rows of a KEPT thread were deleted — impossible under whole-thread
-    // retention, which is why f04 could not exercise this rule.
+    // CORRECTED. This previously asserted `deleted.checkpoints > 0`, which the
+    // five stale-thread deletions satisfy on their own — the case would have
+    // passed unchanged if head-scoped retention had pruned NOTHING inside the
+    // retained thread, which is the only thing it exists to show. The signal is
+    // one checkpoint, and it has to be isolated per thread to be a signal at all.
+    const retainedBefore = threadRows(result?.before, "");
+    const retainedAfter = threadRows(result?.after, "");
     criteria.f11_head_scoped_retention_pruned_inside_a_retained_thread =
-      Number(action?.deleted?.checkpoints ?? 0) > 0;
+      retainedBefore.checkpoints > retainedAfter.checkpoints && retainedAfter.checkpoints > 0;
+    // The stale deletions are accounted for separately rather than borrowed to
+    // satisfy the intra-thread claim.
+    criteria.f11_the_sweep_also_removed_the_stale_thread =
+      threadRows(result?.before, "-stale").checkpoints > 0 &&
+      threadRows(result?.after, "-stale").checkpoints === 0;
     criteria.f11_the_retained_lineage_is_undamaged =
       result?.after?.retainedDamage?.strandedReferences === 0 &&
       result?.after?.retainedDamage?.brokenLineage === 0;
-    criteria.f11_the_paused_run_still_resumes = result?.resumed?.completed === true;
+    // `completed` alone is the f06 trap: a resume against deleted state also
+    // reports success, with an empty step list.
+    criteria.f11_the_paused_run_still_resumes =
+      result?.resumed?.completed === true &&
+      Array.isArray(result?.resumed?.steps) &&
+      (result?.resumed?.steps?.length ?? 0) > 0;
+    // In head-scoped mode no SQL references `retainThreads`; the sweep is
+    // database-global. Recorded so nobody infers a thread scope from an argument
+    // the sweep ignored.
+    criteria.f11_head_scoped_mode_ignores_retain_threads =
+      (action as { retainThreadsApplied?: boolean } | undefined)?.retainThreadsApplied === false;
+  }
+
+  const f14 = get("f14-head-scoped-retention-of-a-completed-thread");
+  if (f14) {
+    const result = pruneOf(f14);
+    const action = result?.action as
+      | { headScoped?: boolean; retainedHeads?: number }
+      | undefined;
+    const prepare = f14.prepare as
+      | { retainedCompleted?: boolean; retainedInterruptRows?: number; retainedHasAbandonedBranch?: boolean }
+      | null;
+    const read = result?.read as
+      | {
+          headPresent?: boolean;
+          referencedChannels?: number;
+          unresolvedChannels?: number;
+          apiSteps?: string[];
+          executionsDuringRead?: number;
+        }
+      | undefined;
+
+    // What separates this from every other F case: the run FINISHED, so the
+    // survival claim cannot be "it resumed".
+    criteria.f14_the_retained_thread_ran_to_completion = prepare?.retainedCompleted === true;
+    criteria.f14_the_completed_thread_had_an_abandoned_branch =
+      prepare?.retainedHasAbandonedBranch === true;
+    // The abandoned branch carries an interrupt nobody will ever answer — an
+    // approval orphaned by the fork. Head-scoped retention takes it away with
+    // the branch it belongs to.
+    criteria.f14_the_orphaned_approval_went_with_the_abandoned_branch =
+      Number(namespaceShapeOf(result?.before, "retained")?.root?.interruptRows ?? 0) >
+      Number(namespaceShapeOf(result?.after, "retained")?.root?.interruptRows ?? Infinity);
+    // CORRECTED after measurement, and a finding in its own right. The first
+    // version asserted zero interrupt rows survive. One does, and must: the
+    // completed run's own `__interrupt__` write is attached to a checkpoint the
+    // live head descends from, so a correct sweep keeps it. Consuming an
+    // interrupt does not delete its row.
+    //
+    // That makes `__interrupt__` a HISTORICAL record, not a pending-approval
+    // queue. A runtime counting those rows to find outstanding approvals
+    // over-counts twice over: once for every nested interrupt (e04 records it at
+    // both levels) and once for every interrupt already answered.
+    criteria.f14_a_consumed_interrupt_row_is_retained_as_history =
+      Number(namespaceShapeOf(result?.after, "retained")?.root?.interruptRows ?? 0) >= 1;
+    criteria.f14_the_live_set_was_walked_from_a_head = action?.headScoped === true;
+    criteria.f14_head_scoped_retention_pruned_inside_the_completed_thread =
+      threadRows(result?.before, "").checkpoints > threadRows(result?.after, "").checkpoints &&
+      threadRows(result?.after, "").checkpoints > 0;
+    criteria.f14_the_head_lineage_survived_intact =
+      result?.after?.retainedDamage?.strandedReferences === 0 &&
+      result?.after?.retainedDamage?.brokenLineage === 0;
+    // The authoritative oracle: the negated INNER join the loader performs,
+    // scoped to the surviving head.
+    criteria.f14_the_completed_thread_is_still_readable =
+      read?.headPresent === true &&
+      Number(read?.referencedChannels ?? 0) > 0 &&
+      read?.unresolvedChannels === 0;
+    // Corroboration only, and deliberately named as such.
+    criteria.f14_the_re_read_returned_the_terminal_state =
+      Array.isArray(read?.apiSteps) && (read?.apiSteps?.length ?? 0) > 0;
+    criteria.f14_no_node_executed_during_the_read = read?.executionsDuringRead === 0;
+  }
+
+  const f15 = get("f15-head-scoped-retention-across-every-live-namespace");
+  if (f15) {
+    const result = pruneOf(f15);
+    const action = result?.action as
+      | { headScoped?: boolean; retainedHeads?: number; headsOffered?: number }
+      | undefined;
+    const prepare = f15.prepare as
+      | { retainedNamespaceCount?: number; retainedChildInterruptRows?: number }
+      | null;
+    const before = namespaceShapeOf(result?.before, "retained");
+    const after = namespaceShapeOf(result?.after, "retained");
+
+    criteria.f15_the_fixture_paused_inside_a_subgraph =
+      Number(prepare?.retainedNamespaceCount ?? 0) >= 2 &&
+      Number(prepare?.retainedChildInterruptRows ?? 0) >= 1;
+    // One head per namespace, and more than one namespace — otherwise the case
+    // is f11 with extra steps.
+    criteria.f15_a_head_was_named_in_every_live_namespace =
+      Number(action?.retainedHeads ?? 0) === Number(before?.namespaces ?? -1) &&
+      Number(before?.namespaces ?? 0) >= 2;
+    criteria.f15_no_namespace_of_the_retained_thread_lost_rows =
+      before !== undefined &&
+      after !== undefined &&
+      stable(before.children) === stable(after.children) &&
+      stable(before.root) === stable(after.root);
+    criteria.f15_the_child_namespace_approval_survived =
+      Number(before?.childTotals?.interruptRows ?? 0) > 0 &&
+      Number(after?.childTotals?.interruptRows ?? 0) ===
+        Number(before?.childTotals?.interruptRows ?? -1);
+    criteria.f15_the_retained_thread_is_undamaged =
+      result?.after?.retainedDamage?.strandedReferences === 0 &&
+      result?.after?.retainedDamage?.brokenLineage === 0 &&
+      result?.after?.retainedDamage?.deadWrites === 0;
+    criteria.f15_the_stale_thread_was_removed =
+      threadRows(result?.before, "-stale").checkpoints > 0 &&
+      threadRows(result?.after, "-stale").checkpoints === 0;
+    criteria.f15_the_paused_subgraph_run_resumed_and_replayed =
+      result?.resumed?.completed === true && (result?.resumed?.steps?.length ?? 0) > 0;
+  }
+
+  const f16 = get("f16-root-only-head-seed-deletes-child-namespace-state");
+  if (f16) {
+    const result = pruneOf(f16);
+    const action = result?.action as
+      | { retainedHeads?: number; headsOffered?: number; omit?: string | null }
+      | undefined;
+    const before = namespaceShapeOf(result?.before, "retained");
+    const after = namespaceShapeOf(result?.after, "retained");
+
+    criteria.f16_only_the_root_namespace_was_seeded =
+      action?.omit === "child-namespaces" &&
+      Number(action?.retainedHeads ?? 0) === 1 &&
+      Number(action?.headsOffered ?? 0) >= 2;
+    criteria.f16_the_child_namespace_was_deleted_entirely =
+      Number(before?.childTotals?.checkpoints ?? 0) > 0 &&
+      Number(after?.childTotals?.checkpoints ?? -1) === 0 &&
+      Number(after?.childTotals?.blobs ?? -1) === 0 &&
+      Number(after?.childTotals?.writes ?? -1) === 0;
+    criteria.f16_the_pending_approval_was_destroyed =
+      Number(before?.childTotals?.interruptRows ?? 0) > 0 &&
+      Number(after?.childTotals?.interruptRows ?? -1) === 0;
+    // Targeted loss, not "the sweep deleted everything".
+    criteria.f16_the_root_namespace_survived =
+      before !== undefined && after !== undefined && stable(before.root) === stable(after.root);
+    // The consequence, and it is the h12 shape: the resume re-entered the
+    // subgraph from scratch and raised a FRESH interrupt. The approval that was
+    // outstanding is consumed by nothing, and a new one now blocks the run.
+    criteria.f16_the_resume_raised_a_new_approval_instead_of_answering_the_old_one =
+      pruneOf(f16)?.resumed?.interrupted === true &&
+      pruneOf(f16)?.resumed?.completed === false;
+  }
+
+  if (f15 && f16) {
+    const kept = namespaceShapeOf(pruneOf(f15)?.after, "retained");
+    const lost = namespaceShapeOf(pruneOf(f16)?.after, "retained");
+    // Identical fixture, identical sweep; only the seeded namespace set differs.
+    criteria.f16_the_loss_is_the_seed_and_not_the_sweep =
+      Number(kept?.childTotals?.checkpoints ?? 0) > 0 &&
+      Number(lost?.childTotals?.checkpoints ?? -1) === 0;
+  }
+
+  const f17 = get("f17-omitting-pending-writes-forces-re-execution");
+  const f18 = get("f18-pending-writes-retained-control");
+  if (f17) {
+    const result = pruneOf(f17);
+    const prepare = f17.prepare as
+      | { retainedAborted?: boolean; retainedPendingWritesAtHead?: number }
+      | null;
+    criteria.f17_the_fanout_aborted_with_a_sibling_write_durable =
+      prepare?.retainedAborted === true &&
+      Number(prepare?.retainedPendingWritesAtHead ?? 0) > 0;
+    criteria.f17_the_pending_writes_were_deleted =
+      threadRows(result?.before, "").writes > threadRows(result?.after, "").writes;
+    // The consequence f12 could not show. `executionCounts` scopes to
+    // `party >= 0`, so the fixture's own execution during prepare is excluded
+    // and this counts only what the RESUME ran: a reused sibling contributes
+    // nothing, a re-executed one contributes a row.
+    criteria.f17_the_surviving_sibling_re_executed = nodeExecutions(f17, "sub_fast") >= 1;
+  }
+  if (f18) {
+    const result = pruneOf(f18);
+    criteria.f18_the_live_set_was_complete =
+      (result?.action as { omit?: string | null } | undefined)?.omit === null;
+    criteria.f18_the_retained_thread_kept_its_pending_writes =
+      threadRows(result?.after, "").writes >= threadRows(result?.before, "").writes;
+    // Reused, so it does not appear among the resume's executions at all.
+    criteria.f18_the_surviving_sibling_was_reused = nodeExecutions(f18, "sub_fast") === 0;
+    // Anti-vacuity: the resume must have DONE something, or "sub_fast did not
+    // run" is satisfied by a resume that ran nothing.
+    criteria.f18_the_resume_completed_the_remaining_work =
+      nodeExecutions(f18, "sub_join") >= 1 && result?.resumed?.completed === true;
+  }
+  if (f17 && f18) {
+    // Same fixture, same sweep, one term dropped. Without this the second
+    // execution could be a property of resuming an aborted fan-out at all.
+    criteria.f17_re_execution_is_the_deleted_write_and_not_the_resume =
+      nodeExecutions(f17, "sub_fast") > nodeExecutions(f18, "sub_fast");
   }
 
   const f12 = get("f12-incomplete-sweep-omits-pending-writes");
   if (f12) {
     const result = pruneOf(f12);
-    // The pending-writes term of the live set had never been mutated. Dropping
-    // it must be detectable, or "the live set is complete" is unfalsifiable for
-    // that term.
-    criteria.f12_omitting_pending_writes_deleted_live_writes =
-      Number(
-        (result?.action as { deleted?: Record<string, number> } | undefined)?.deleted?.writes ?? 0,
-      ) > 0;
-    criteria.f12_the_retained_thread_lost_its_pending_writes =
-      threadRows(result?.before, "").writes > threadRows(result?.after, "").writes;
+    // CORRECTED, and narrowed to what was measured. The two original criteria
+    // stated one fact twice, and the case's purpose claimed a resume
+    // consequence the same result set contradicts.
+    criteria.f12_omitting_pending_writes_deleted_every_retained_write =
+      threadRows(result?.before, "").writes > 0 && threadRows(result?.after, "").writes === 0;
+    // The finding is the SILENCE. The writes' checkpoints survive, so the
+    // reachability witness is structurally blind to this mutation.
+    criteria.f12_no_reachability_detector_fired =
+      result?.after?.retainedDamage?.strandedReferences === 0 &&
+      result?.after?.retainedDamage?.brokenLineage === 0 &&
+      result?.after?.retainedDamage?.deadWrites === 0;
+    // Recorded as a measured negative rather than hidden: this fixture's resume
+    // does not depend on a pending write, so it completes exactly as the correct
+    // sweep does. f17 is where the term's necessity is measured.
+    criteria.f12_the_resume_still_reported_success =
+      result?.resumed?.completed === true && (result?.resumed?.steps?.length ?? 0) > 0;
   }
 
   const f13 = get("f13-incomplete-sweep-omits-interrupts");
   if (f13) {
     const result = pruneOf(f13);
-    // The narrowest term, and the one with the sharpest consequence: an
-    // interrupt write IS the outstanding approval.
+    const prepare = f13.prepare as { retainedInterruptRows?: number } | null;
     criteria.f13_omitting_interrupts_deleted_write_rows =
       Number(
         (result?.action as { deleted?: Record<string, number> } | undefined)?.deleted?.writes ?? 0,
       ) > 0;
-    criteria.f13_the_paused_run_lost_its_decision_point =
-      threadRows(result?.before, "").writes > threadRows(result?.after, "").writes;
+    // CORRECTED. Exactly the interrupt rows went, and nothing else — which is
+    // what makes this the narrow half of f12 rather than a second copy of it.
+    criteria.f13_only_the_interrupt_rows_were_deleted =
+      Number(prepare?.retainedInterruptRows ?? 0) > 0 &&
+      threadRows(result?.before, "").writes - threadRows(result?.after, "").writes ===
+        Number(prepare?.retainedInterruptRows ?? -1);
+    // The honest consequence: the approval is gone from the tables. The old
+    // criterion — `f13_the_paused_run_lost_its_decision_point` — was named for a
+    // behaviour the evidence contradicts and has been deleted.
+    criteria.f13_the_pending_approval_is_no_longer_discoverable =
+      namespaceShapeOf(result?.before, "retained") !== undefined &&
+      Number(namespaceShapeOf(result?.before, "retained")?.root?.interruptRows ?? 0) > 0 &&
+      Number(namespaceShapeOf(result?.after, "retained")?.root?.interruptRows ?? -1) === 0;
+    criteria.f13_the_run_still_resumed_when_handed_a_command =
+      result?.resumed?.completed === true && (result?.resumed?.steps?.length ?? 0) > 0;
   }
 
   const f09 = get("f09-kill-pruner-safe-order");
@@ -3146,6 +3677,12 @@ function familyGCriteria(bundles: Map<string, CaseBundle>): Record<string, boole
     const before = restartSide(g05, 0);
     const after = restartSide(g05, 1);
     criteria.g05_the_volume_was_replaced = g05.restart?.sameVolume === false;
+    // Measured all along and asserted nowhere. "The identical replacement
+    // procedure onto a new volume" was prose; these make it a criterion.
+    criteria.g05_the_database_container_was_actually_replaced =
+      g05.restart?.sameContainer === false;
+    criteria.g05_replacement_used_the_pinned_image =
+      g05.restart?.pinnedImage === true && g05.restart?.sameImage === true;
     // The strongest half of the control: a different system identifier is a
     // different cluster, whatever the container looks like.
     criteria.g05_the_cluster_identity_changed =
@@ -3154,8 +3691,14 @@ function familyGCriteria(bundles: Map<string, CaseBundle>): Record<string, boole
       before.cluster.systemIdentifier !== after.cluster.systemIdentifier;
     criteria.g05_no_state_survived_the_fresh_volume =
       after?.survived?.checkpoints === 0 && after?.survived?.interruptRows === 0;
-    criteria.g05_the_run_did_not_come_back =
+    // RENAMED. The old name — `g05_the_run_did_not_come_back` — implied a
+    // failure. The measurement is that the resume SUCCEEDED against nothing:
+    // no error, `completed: true`, an empty step list, and a fresh checkpoint
+    // written. That is the f06 shape, and naming it as a failure hid it.
+    criteria.g05_the_resume_started_a_new_empty_run_rather_than_returning_the_old_one =
       Array.isArray(after?.resumed?.steps) && after.resumed.steps.length === 0;
+    criteria.g05_the_loss_was_silent = after?.resumed?.error === null;
+    criteria.g05_no_node_executed_after_the_fresh_volume = executionsOf(g05).length === 0;
   }
 
   if (g04 && g05) {
@@ -3167,6 +3710,14 @@ function familyGCriteria(bundles: Map<string, CaseBundle>): Record<string, boole
       resumedTheRun(kept) &&
       Array.isArray(lost?.resumed?.steps) &&
       lost.resumed.steps.length === 0;
+    // "Identical procedure" stated as an assertion rather than as prose: the two
+    // agree on container replacement and image, and disagree ONLY on the volume.
+    criteria.g05_only_the_volume_differed_from_g04 =
+      g04.restart?.sameContainer === g05.restart?.sameContainer &&
+      g04.restart?.sameImage === g05.restart?.sameImage &&
+      g04.restart?.pinnedImage === g05.restart?.pinnedImage &&
+      g04.restart?.sameVolume === true &&
+      g05.restart?.sameVolume === false;
   }
 
   return criteria;
@@ -3298,21 +3849,84 @@ function familyICriteria(bundles: Map<string, CaseBundle>): Record<string, boole
       (result?.outcome as { written?: boolean } | undefined)?.written === true;
   }
 
-  const guardCases = [
-    get("i04-store-guard-rejects-delimiter-in-a-label"),
-    get("i05-store-guard-rejects-wildcard-prefix"),
-    get("i06-store-guard-rejects-zero-ttl"),
-    get("i07-store-guard-rejects-fail-open-filters"),
-    get("i08-store-guard-allows-safe-operations-control"),
+  // d29's hazard is not refusable: the prefix is legal and the vendor's own
+  // pattern crosses the boundary. The guard's work happens on the way back.
+  const i09 = get("i09-store-guard-confines-a-prefix-to-the-path-boundary");
+  if (i09) {
+    const result = firstResult(i09);
+    const outcome = result?.outcome as
+      | { vendorNamespaces?: string[]; confinedNamespaces?: string[]; droppedNonDescendants?: number }
+      | undefined;
+    criteria.i09_guard_allowed_the_operation =
+      storeGuardOf(i09)?.allowed === true && result?.reached === true;
+    // d29 reproduced INSIDE the mitigation lane, so the guard is measured
+    // against a live hazard rather than against one recorded elsewhere.
+    criteria.i09_the_vendor_result_crossed_the_boundary =
+      (outcome?.vendorNamespaces ?? []).includes("alphabet");
+    criteria.i09_the_guard_dropped_only_the_non_descendant =
+      outcome?.droppedNonDescendants === 1 &&
+      !(outcome?.confinedNamespaces ?? []).includes("alphabet");
+    // Anti-vacuity: a rule that emptied the result would satisfy the line above.
+    criteria.i09_the_guard_did_not_empty_the_result =
+      (outcome?.confinedNamespaces ?? []).length >= 2;
+  }
+
+  const i10 = get("i10-store-guard-rejects-maxdepth-with-a-limit");
+  if (i10) {
+    const result = firstResult(i10);
+    criteria.i10_guard_refused_the_measured_unsafe_shape = storeGuardOf(i10)?.allowed === false;
+    criteria.i10_refusal_names_the_specific_hazard = refusedWith(
+      i10,
+      "list_maxdepth_applied_after_paging",
+    );
+    criteria.i10_the_store_was_never_reached = result?.reached === false;
+  }
+
+  const i11 = get("i11-store-guard-allows-maxdepth-without-a-limit-control");
+  if (i11) {
+    const result = firstResult(i11);
+    const outcome = result?.outcome as { confinedNamespaces?: string[] } | undefined;
+    // The narrowness control: without it the rule is indistinguishable from
+    // banning `maxDepth` outright, which would change more than its target.
+    criteria.i11_guard_allowed_maxdepth_without_paging =
+      storeGuardOf(i11)?.allowed === true && result?.reached === true;
+    criteria.i11_the_depth_limited_listing_returned_a_result =
+      (outcome?.confinedNamespaces ?? []).length > 0;
+  }
+
+  const i12 = get("i12-store-guard-allows-a-restrictive-recognized-filter-control");
+  if (i12) {
+    const result = firstResult(i12);
+    const outcome = result?.outcome as { keys?: string[]; corpus?: number } | undefined;
+    criteria.i12_guard_allowed_the_filter =
+      storeGuardOf(i12)?.allowed === true && (storeGuardOf(i12)?.refusals ?? []).length === 0;
+    criteria.i12_the_operation_reached_the_store_and_came_back = result?.reached === true;
+    // A PROPER NON-EMPTY SUBSET. "It returned something" is satisfied by the
+    // fail-open bug d34 found; only a proper subset shows the filter restricted.
+    criteria.i12_the_filter_actually_restricted =
+      (outcome?.keys ?? []).length > 0 &&
+      (outcome?.keys ?? []).length < Number(outcome?.corpus ?? 0);
+  }
+
+  const guardCases: Array<[CaseBundle | undefined, boolean]> = [
+    [get("i04-store-guard-rejects-delimiter-in-a-label"), false],
+    [get("i05-store-guard-rejects-wildcard-prefix"), false],
+    [get("i06-store-guard-rejects-zero-ttl"), false],
+    [get("i07-store-guard-rejects-fail-open-filters"), false],
+    [get("i10-store-guard-rejects-maxdepth-with-a-limit"), false],
+    [get("i08-store-guard-allows-safe-operations-control"), true],
+    [get("i09-store-guard-confines-a-prefix-to-the-path-boundary"), true],
+    [get("i11-store-guard-allows-maxdepth-without-a-limit-control"), true],
+    [get("i12-store-guard-allows-a-restrictive-recognized-filter-control"), true],
   ];
-  if (guardCases.every((bundle) => bundle !== undefined)) {
-    const reached = guardCases.map((bundle) => firstResult(bundle)?.reached === true);
-    criteria.storeguard_refuses_exactly_the_measured_unsafe_shapes =
-      reached[0] === false &&
-      reached[1] === false &&
-      reached[2] === false &&
-      reached[3] === false &&
-      reached[4] === true;
+  if (guardCases.every(([bundle]) => bundle !== undefined)) {
+    // The partition stated exhaustively, across all three operation shapes the
+    // guard screens — put, listNamespaces and search. Before i09/i11/i12 the
+    // allow side was proven for `put` alone, so "refuses only its stated target"
+    // was unmeasured for two thirds of the surface.
+    criteria.storeguard_refuses_exactly_the_measured_unsafe_shapes = guardCases.every(
+      ([bundle, shouldReach]) => (firstResult(bundle)?.reached === true) === shouldReach,
+    );
   }
 
   return criteria;
@@ -3673,12 +4287,30 @@ export function summarize(rawBundles: unknown[]): Record<string, unknown> {
       ? { status: "fault", fault: { step: "oracle-presence", message: faults.join("; ") } }
       : outcomeFor(flattened);
 
+  // One entry per bounded-trials case, computed here rather than in the driver
+  // so the reduction is version-locked to the criteria it must stay honest
+  // against. The driver's only remaining job is to group these across repeats
+  // and count occurrences.
+  const observations = bundles
+    .filter((bundle) => caseById(bundle.case)?.classification === "bounded-trials")
+    .map((bundle) => ({
+      case: bundle.case,
+      lane: bundle.lane,
+      // Named so the driver's completeness check can assert that every field
+      // `managedProjection` elided is answered here, rather than only that the
+      // case appears at all.
+      covers: [...RACED_FIELDS],
+      observation: observationFor(bundle),
+    }))
+    .sort((left, right) => (left.case < right.case ? -1 : 1));
+
   return {
     cases: bundles.map((bundle) => bundle.case),
     lanes,
     registry: CASES.map((entry) => entry.id),
     managed: managedByLane,
     findings: bundles.map(findingsFor),
+    observations,
     managed_digests: { per_lane: perLaneDigests, overall: overallDigest },
     acceptance: { global, lanes: laneCriteria, flat: flattened },
     outcome,

@@ -27,16 +27,29 @@ import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 
 import { CHECKPOINT_SCHEMA, databaseForCase, threadForCase } from "./contract.ts";
 import { appNameFor, describeSqlError, openDb, type Db, type SqlError } from "./db.ts";
+import { stable } from "./canonical.ts";
 import {
   createSink,
   instrumentPool,
+  parkUntilKilled,
   recordPark,
   type GateHook,
   type GateSpec,
 } from "./gate.ts";
 import { createProbe, type Probe } from "./probe.ts";
 import { buildGraph, resume, runToInterrupt } from "./graph.ts";
-import { project, reachabilityAcross } from "./inspect/checkpoints.ts";
+import {
+  project,
+  reachabilityAcross,
+  threadNamespaceCounts,
+  type Projection,
+} from "./inspect/checkpoints.ts";
+import {
+  buildRootFanoutGraph,
+  buildSubgraphInterruptGraph,
+  invokeNested,
+  type AnyGraph,
+} from "./subgraphs.ts";
 import {
   naiveDeleteOldCheckpoints,
   naiveDeleteSupersededBlobs,
@@ -94,6 +107,76 @@ async function liveHead(
   return chosen ? { threadId, ns: "", checkpointId: chosen.checkpoint_id } : null;
 }
 
+type Head = { threadId: string; ns: string; checkpointId: string };
+
+/**
+ * One head per live namespace, not one head for the thread.
+ *
+ * `liveHead` above answers "what is the current state of this run" for a
+ * single-namespace thread, and every family F case before f15 had only that
+ * shape. It is wrong the moment a subgraph exists: the sweep's recursion follows
+ * `parent_checkpoint_id` WITHIN a namespace — a subgraph's chain is separately
+ * rooted, as e01 measured — so a root head reaches none of it and every child
+ * row becomes a deletion candidate, including the `__interrupt__` row that IS
+ * the outstanding approval.
+ *
+ * `checkpoint_ns` is enumerated and compared for equality only. Nothing here
+ * splits it, matches it as a prefix, or counts separators; a release that
+ * changed the namespace format would still produce one head per namespace.
+ */
+function headsFromProjection(threadId: string, projection: Projection): Head[] {
+  const namespaces = [...new Set(projection.checkpoints.map((row) => row.checkpoint_ns))].sort();
+  const heads: Head[] = [];
+  for (const ns of namespaces) {
+    const rows = projection.checkpoints.filter((row) => row.checkpoint_ns === ns);
+    if (rows.length === 0) continue;
+    const claimed = new Set(
+      rows.map((row) => row.parent_checkpoint_id).filter((id): id is string => id !== null),
+    );
+    // A forked namespace has more than one leaf, and the newest is the one a
+    // retention policy keeps — which is exactly what makes the abandoned branch
+    // prunable rather than an arbitrary victim.
+    const leaves = rows.filter((row) => !claimed.has(row.checkpoint_id));
+    const chosen = leaves.at(-1) ?? rows.at(-1);
+    if (chosen) heads.push({ threadId, ns, checkpointId: chosen.checkpoint_id });
+  }
+  return heads;
+}
+
+async function liveHeadsEveryNamespace(inspect: Db, threadId: string): Promise<Head[]> {
+  return headsFromProjection(threadId, await project(inspect, threadId));
+}
+
+/**
+ * The head a retention policy keeps for a COMPLETED run: the leaf the run got
+ * furthest along, by `step`.
+ *
+ * `headsFromProjection` takes the newest leaf, which is the right answer for a
+ * paused thread — the abandoned fork is older than the live branch. It is the
+ * wrong answer here, because f14 manufactures its abandoned branch by forking
+ * AFTER the run finished, so the fork's rows are the newer ones and "newest
+ * leaf" retains the abandoned branch and prunes the terminal state. The first
+ * run of f14 did exactly that: the surviving head read back `["prepare"]`
+ * instead of the full step list.
+ *
+ * `step` is a structural property of the checkpoint, not an assumption about id
+ * encoding, which is what makes this a policy rather than a heuristic.
+ */
+function terminalHeads(threadId: string, projection: Projection): Head[] {
+  const namespaces = [...new Set(projection.checkpoints.map((row) => row.checkpoint_ns))].sort();
+  const heads: Head[] = [];
+  for (const ns of namespaces) {
+    const rows = projection.checkpoints.filter((row) => row.checkpoint_ns === ns);
+    const claimed = new Set(
+      rows.map((row) => row.parent_checkpoint_id).filter((id): id is string => id !== null),
+    );
+    const leaves = rows.filter((row) => !claimed.has(row.checkpoint_id));
+    const chosen = [...leaves].sort((left, right) => (left.step ?? -1) - (right.step ?? -1)).at(-1);
+    if (chosen) heads.push({ threadId, ns, checkpointId: chosen.checkpoint_id });
+  }
+  return heads;
+}
+
 /**
  * The state of the whole database, reduced to counts and to the four kinds of
  * damage a bad sweep produces.
@@ -112,6 +195,50 @@ async function surveyState(
   const threads = [retained, stale];
   const witness = await reachabilityAcross(inspect, threads);
   const counts = await threadCounts(inspect, threads);
+  const perNamespace = await threadNamespaceCounts(inspect, threads);
+
+  /**
+   * A thread's shape, split root-versus-children.
+   *
+   * No namespace STRING is emitted. A subgraph namespace embeds a per-run task
+   * uuid, so putting one in a result would change the digest every run for no
+   * behavioural reason — the same defect that made e03 flap. What survives is
+   * what the criteria actually ask: how many namespaces there are, what the root
+   * holds, and the content-sorted multiset of what the children hold.
+   *
+   * `''` is the only literal compared against, and it is the root rather than a
+   * format detail.
+   */
+  const namespaceShape = (thread: string) => {
+    const rows = perNamespace.filter((row) => row.thread_id === thread);
+    const triple = (row: (typeof rows)[number]) => ({
+      checkpoints: row.checkpoints,
+      blobs: row.blobs,
+      writes: row.writes,
+      interruptRows: row.interruptRows,
+    });
+    const root = rows.find((row) => row.checkpoint_ns === "");
+    const children = rows
+      .filter((row) => row.checkpoint_ns !== "")
+      .map(triple)
+      .sort((left, right) => (stable(left) < stable(right) ? -1 : 1));
+    const zero = { checkpoints: 0, blobs: 0, writes: 0, interruptRows: 0 };
+    return {
+      namespaces: rows.length,
+      childNamespaces: children.length,
+      root: root ? triple(root) : zero,
+      children,
+      childTotals: children.reduce(
+        (total, entry) => ({
+          checkpoints: total.checkpoints + entry.checkpoints,
+          blobs: total.blobs + entry.blobs,
+          writes: total.writes + entry.writes,
+          interruptRows: total.interruptRows + entry.interruptRows,
+        }),
+        { ...zero },
+      ),
+    };
+  };
 
   // Damage is counted PER THREAD, not as one scalar over both.
   //
@@ -135,6 +262,8 @@ async function surveyState(
     deadWrites: witness.deadWrites.length,
     retainedDamage: onThread(retained),
     staleDamage: onThread(stale),
+    retainedNamespaces: namespaceShape(retained),
+    staleNamespaces: namespaceShape(stale),
     // Per THREAD. Grouping across threads summed two independent runs of the
     // same graph and inflated this from 2 to 6.
     sharingMax: witness.sharing.reduce((max, row) => Math.max(max, row.referencedBy), 0),
@@ -148,6 +277,57 @@ async function surveyState(
 type Survey = Record<string, unknown>;
 
 /**
+ * Does the surviving head still resolve to bytes?
+ *
+ * The same negated INNER join the loader performs, scoped to one checkpoint.
+ * This is the readability oracle for a COMPLETED thread, where "did it resume"
+ * is not available as a question — and it is the authoritative one, because
+ * asking the library under test whether its own state is readable is circular.
+ */
+async function headReadable(
+  inspect: Db,
+  threadId: string,
+  ns: string,
+  checkpointId: string,
+): Promise<{ channels: number; missing: number }> {
+  const { rows } = await inspect.pool.query<{ channels: number; missing: number }>(
+    `SELECT count(*)::int AS channels,
+            count(*) FILTER (WHERE b.channel IS NULL)::int AS missing
+       FROM ${CHECKPOINT_SCHEMA}.checkpoints c
+       CROSS JOIN LATERAL jsonb_each_text(c.checkpoint -> 'channel_versions') v
+       LEFT JOIN ${CHECKPOINT_SCHEMA}.checkpoint_blobs b
+              ON b.thread_id     = c.thread_id
+             AND b.checkpoint_ns = c.checkpoint_ns
+             AND b.channel       = v.key
+             AND b.version       = v.value
+      WHERE c.thread_id = $1 AND c.checkpoint_ns = $2 AND c.checkpoint_id = $3`,
+    [threadId, ns, checkpointId],
+  );
+  return rows[0] ?? { channels: 0, missing: 0 };
+}
+
+/** Node executions recorded by THIS party, so a "read" can prove it ran nothing. */
+async function partyExecutions(probe: Db, caseId: string, party: number): Promise<number> {
+  const { rows } = await probe.pool.query<{ n: number }>(
+    `SELECT count(*)::int AS n FROM spike_probe.event
+      WHERE case_id = $1 AND party = $2 AND phase IN ('executed', 'entered', 'resumed')`,
+    [caseId, party],
+  );
+  return rows[0]?.n ?? 0;
+}
+
+/**
+ * What the case does once the sweep has run.
+ *
+ * A resume is not always the right question. f06 established that a resume
+ * against deleted state reports `completed: true` with an empty step list, so a
+ * COMPLETED thread — which cannot be resumed at all — needs a read instead, and
+ * a fan-out needs its own non-failing graph so the surviving sibling's reuse is
+ * what the probe counts.
+ */
+type AfterAction = "none" | "resume" | "resume-subgraph" | "resume-fanout" | "read";
+
+/**
  * The shared shape of every case: look, act, look again, then try to resume the
  * thread the policy claimed to keep.
  *
@@ -158,11 +338,12 @@ type Survey = Record<string, unknown>;
 async function pruneCase(
   context: PartyContext,
   act: (db: Db, inspect: Db) => Promise<Record<string, unknown>>,
-  options: { resumeAfter?: boolean } = {},
+  options: { after?: AfterAction } = {},
 ): Promise<Record<string, unknown>> {
   const probe = probePool(context);
   const subject = subjectPool(context);
   const inspect = inspectPool(context);
+  const after_ = options.after ?? "resume";
 
   try {
     const witness = createProbe(probe, context.caseId, context.party, context.member);
@@ -171,15 +352,69 @@ async function pruneCase(
     const after: Survey = await surveyState(inspect, context.caseId);
 
     let resumed: Record<string, unknown> | null = null;
-    if (options.resumeAfter !== false) {
+    let read: Record<string, unknown> | null = null;
+
+    if (after_ === "resume" || after_ === "resume-subgraph" || after_ === "resume-fanout") {
+      const saver = new PostgresSaver(subject.pool, undefined, { schema: CHECKPOINT_SCHEMA });
+      const thread = retainedThread(context.caseId);
+      if (after_ === "resume") {
+        const run = await resume(buildGraph(saver, witness), thread);
+        resumed = {
+          error: run.error,
+          interrupted: run.interrupted,
+          completed: run.error === null && run.interrupted === false,
+          steps: run.steps,
+        };
+      } else {
+        // The fan-out resumes with the NON-failing graph: the question is
+        // whether the surviving sibling's pending write is reused, and a graph
+        // that threw again would abort before the answer existed.
+        const graph = (after_ === "resume-subgraph"
+          ? buildSubgraphInterruptGraph(saver, witness)
+          : buildRootFanoutGraph(saver, witness, { failSibling: false })) as unknown as AnyGraph;
+        const run = await invokeNested(graph, thread, {
+          ...(after_ === "resume-subgraph" ? { resume: true } : { input: null }),
+        });
+        resumed = {
+          error: run.error,
+          interrupted: run.interrupted,
+          completed: run.error === null && run.interrupted === false,
+          steps: run.steps,
+        };
+      }
+    }
+
+    if (after_ === "read") {
+      // A COMPLETED thread cannot be resumed, so readability is the claim. The
+      // raw-table check is authoritative; the API read corroborates it, and the
+      // execution count proves the corroboration was a read and not a re-run.
+      const thread = retainedThread(context.caseId);
+      const projection = await project(inspect, thread);
+      const heads = headsFromProjection(thread, projection);
+      const rootHead = heads.find((head) => head.ns === "") ?? heads[0];
+      const rows = rootHead
+        ? await headReadable(inspect, thread, rootHead.ns, rootHead.checkpointId)
+        : { channels: 0, missing: 0 };
+
       const saver = new PostgresSaver(subject.pool, undefined, { schema: CHECKPOINT_SCHEMA });
       const graph = buildGraph(saver, witness);
-      const run = await resume(graph, retainedThread(context.caseId));
-      resumed = {
-        error: run.error,
-        interrupted: run.interrupted,
-        completed: run.error === null && run.interrupted === false,
-        steps: run.steps,
+      let apiSteps: string[] = [];
+      let apiError: string | null = null;
+      try {
+        const state = await graph.getState({ configurable: { thread_id: thread } });
+        const values = (state?.values ?? {}) as { steps?: unknown };
+        apiSteps = Array.isArray(values.steps) ? (values.steps as string[]) : [];
+      } catch (caught) {
+        apiError = (caught as { message?: string }).message ?? "read failed";
+      }
+
+      read = {
+        headPresent: rootHead !== undefined,
+        referencedChannels: rows.channels,
+        unresolvedChannels: rows.missing,
+        apiSteps,
+        apiError,
+        executionsDuringRead: await partyExecutions(probe, context.caseId, context.party),
       };
     }
 
@@ -190,6 +425,7 @@ async function pruneCase(
       action,
       after,
       resumed,
+      read,
       // The load-bearing summary. A sweep that damaged nothing has both false.
       introducedStrandedReferences:
         Number(after.strandedReferences ?? 0) > Number(before.strandedReferences ?? 0),
@@ -227,7 +463,7 @@ async function killedPruner(
     const sink = createSink();
     const park: GateHook = async (gate, statement) => {
       await recordPark(probe, context.caseId, context.party, gate, statement);
-      await new Promise<never>(() => {});
+      await parkUntilKilled();
     };
     instrumentPool(subject.pool, sink, [options.gate], park);
 
@@ -255,7 +491,7 @@ export async function runFamilyFParty(context: PartyContext): Promise<Record<str
     // Reads only. Establishes that a live checkpoint references a blob version
     // written several supersteps earlier, which is what makes f03 dangerous.
     case "f01-blob-sharing-baseline":
-      return await pruneCase(context, async () => ({ role: "observer" }), { resumeAfter: false });
+      return await pruneCase(context, async () => ({ role: "observer" }), { after: "none" });
 
     case "f02-naive-checkpoint-deletion-by-date":
       return await pruneCase(context, async (db) => ({
@@ -300,6 +536,103 @@ export async function runFamilyFParty(context: PartyContext): Promise<Record<str
           retainThreads: retain,
           omit: "interrupts" satisfies SweepOmission,
         }),
+      );
+
+    // Head-scoped retention of a thread that has already FINISHED. Every other
+    // F case retains a paused thread, so "the retained run still resumes" was
+    // the only survival claim the family could make — and a completed run
+    // cannot be resumed at all. Readability is the claim instead.
+    case "f14-head-scoped-retention-of-a-completed-thread":
+      return await pruneCase(
+        context,
+        async (db, inspect) => {
+          const heads = terminalHeads(
+            retainedThread(caseId),
+            await project(inspect, retainedThread(caseId)),
+          );
+          return {
+            policy: "retain the terminal head of every namespace, completed thread",
+            head: heads.length > 0,
+            ...(await reachabilitySweep(db, { retainThreads: retain, retainHeads: heads })),
+          };
+        },
+        { after: "read" },
+      );
+
+    // The same rule against a thread paused INSIDE a subgraph, seeded with one
+    // head per live namespace. f11 could not exercise this: its fixture has a
+    // single namespace, so "walk from the head" and "keep the thread" coincide.
+    case "f15-head-scoped-retention-across-every-live-namespace":
+      return await pruneCase(
+        context,
+        async (db, inspect) => {
+          const heads = await liveHeadsEveryNamespace(inspect, retainedThread(caseId));
+          return {
+            policy: "retain the live head of every namespace",
+            head: heads.length > 0,
+            ...(await reachabilitySweep(db, { retainThreads: retain, retainHeads: heads })),
+          };
+        },
+        { after: "resume-subgraph" },
+      );
+
+    // The mutation f15 exists to be falsifiable against: seed from the root
+    // namespace only, which is what head enumeration did before f15. The child
+    // namespace — including the interrupt row that IS the outstanding approval —
+    // must be destroyed while the root survives.
+    case "f16-root-only-head-seed-deletes-child-namespace-state":
+      return await pruneCase(
+        context,
+        async (db, inspect) => {
+          const heads = await liveHeadsEveryNamespace(inspect, retainedThread(caseId));
+          return {
+            policy: "retain the root namespace head only",
+            head: heads.length > 0,
+            ...(await reachabilitySweep(db, {
+              retainThreads: retain,
+              retainHeads: heads,
+              omit: "child-namespaces" satisfies SweepOmission,
+            })),
+          };
+        },
+        { after: "resume-subgraph" },
+      );
+
+    // The pending-writes term, measured by CONSEQUENCE rather than by row count.
+    // f12 deletes the writes and the run still resumes, because this fixture's
+    // resume does not depend on one. A fan-out does: the surviving sibling's
+    // pending write is the only thing standing between a resume and a duplicate
+    // execution, which is the property `architecture/09` rests its ledger on.
+    case "f17-omitting-pending-writes-forces-re-execution":
+      return await pruneCase(
+        context,
+        async (db, inspect) => {
+          const heads = await liveHeadsEveryNamespace(inspect, retainedThread(caseId));
+          return {
+            policy: "head-scoped retention, pending writes omitted",
+            head: heads.length > 0,
+            ...(await reachabilitySweep(db, {
+              retainThreads: retain,
+              retainHeads: heads,
+              omit: "pending-writes" satisfies SweepOmission,
+            })),
+          };
+        },
+        { after: "resume-fanout" },
+      );
+
+    case "f18-pending-writes-retained-control":
+      return await pruneCase(
+        context,
+        async (db, inspect) => {
+          const heads = await liveHeadsEveryNamespace(inspect, retainedThread(caseId));
+          return {
+            policy: "head-scoped retention, complete live set",
+            head: heads.length > 0,
+            ...(await reachabilitySweep(db, { retainThreads: retain, retainHeads: heads })),
+          };
+        },
+        { after: "resume-fanout" },
       );
 
     case "f04-reachability-sweep-retains-a-paused-thread":
@@ -371,8 +704,171 @@ export async function runFamilyFParty(context: PartyContext): Promise<Record<str
  * completion, which is what makes it a legitimate candidate for deletion rather
  * than an arbitrary victim.
  */
+/**
+ * A retained thread that has RUN TO COMPLETION, carrying an abandoned branch.
+ *
+ * Every other family F fixture leaves the retained thread paused, which makes
+ * "it still resumes" the survival claim. A completed run has no resume, so this
+ * one exists to force the other question: after head-scoped pruning, is the
+ * terminal state still READABLE? The abandoned fork is what gives the head-scoped
+ * rule something to delete inside a thread it is keeping.
+ */
+async function prepareCompletedThread(context: PartyContext): Promise<Record<string, unknown>> {
+  const caseId = context.caseId;
+  const probe = probePool(context);
+  const subject = subjectPool(context);
+  const inspect = inspectPool(context);
+
+  try {
+    const witness = createProbe(probe, caseId, -1, "prepare");
+    const saver = new PostgresSaver(subject.pool, undefined, { schema: CHECKPOINT_SCHEMA });
+    const graph = buildGraph(saver, witness);
+
+    const paused = await runToInterrupt(graph, retainedThread(caseId));
+    const finished = await resume(graph, retainedThread(caseId));
+
+    let forked = false;
+    const beforeFork = await project(inspect, retainedThread(caseId));
+    const forkFrom = beforeFork.checkpoints
+      .filter((row) => row.checkpoint_ns === "" && row.parent_checkpoint_id !== null)
+      .at(0);
+    if (forkFrom) {
+      const branch = await resume(graph, retainedThread(caseId), forkFrom.checkpoint_id);
+      forked = branch.error === null;
+    }
+
+    const stale = await runToInterrupt(graph, staleThread(caseId));
+    const staleDone = await resume(graph, staleThread(caseId));
+    const retainedProjection = await project(inspect, retainedThread(caseId));
+
+    return {
+      caseId,
+      prepared: true,
+      retainedReachedInterrupt: paused.interrupted,
+      // The distinguishing fact: no approval is outstanding, so nothing about
+      // this thread's survival can be shown by resuming it.
+      retainedCompleted: finished.error === null && finished.interrupted === false,
+      retainedInterruptRows: retainedProjection.interrupts.length,
+      retainedHasAbandonedBranch: forked,
+      retainedCheckpoints: retainedProjection.checkpoints.length,
+      staleCompleted: staleDone.error === null && staleDone.interrupted === false,
+      error: paused.error ?? finished.error ?? stale.error ?? staleDone.error,
+    };
+  } finally {
+    await Promise.allSettled([subject.close(), probe.close(), inspect.close()]);
+  }
+}
+
+/**
+ * A thread paused on an interrupt raised INSIDE a subgraph.
+ *
+ * Two namespaces, and the outstanding approval lives in the child. That is the
+ * shape every head-scoped claim before f15 was silently untested against.
+ */
+async function prepareSubgraphPaused(context: PartyContext): Promise<Record<string, unknown>> {
+  const caseId = context.caseId;
+  const probe = probePool(context);
+  const subject = subjectPool(context);
+  const inspect = inspectPool(context);
+
+  try {
+    const witness = createProbe(probe, caseId, -1, "prepare");
+    const saver = new PostgresSaver(subject.pool, undefined, { schema: CHECKPOINT_SCHEMA });
+    const graph = buildSubgraphInterruptGraph(saver, witness) as unknown as AnyGraph;
+
+    const paused = await invokeNested(graph, retainedThread(caseId), { input: { steps: [], decision: "" } });
+    const stale = await invokeNested(graph, staleThread(caseId), { input: { steps: [], decision: "" } });
+    const staleDone = await invokeNested(graph, staleThread(caseId), { resume: true });
+
+    const retained = await project(inspect, retainedThread(caseId));
+    const namespaces = [...new Set(retained.checkpoints.map((row) => row.checkpoint_ns))];
+    const childInterrupts = retained.interrupts.filter((row) => row.checkpoint_ns !== "").length;
+
+    return {
+      caseId,
+      prepared: true,
+      retainedReachedInterrupt: paused.interrupted,
+      // Namespace COUNT, never a namespace string: the child's name embeds a
+      // per-run task uuid.
+      retainedNamespaceCount: namespaces.length,
+      retainedInterruptRows: retained.interrupts.length,
+      retainedChildInterruptRows: childInterrupts,
+      retainedCheckpoints: retained.checkpoints.length,
+      staleCompleted: staleDone.error === null && staleDone.interrupted === false,
+      error: paused.error ?? stale.error ?? staleDone.error,
+    };
+  } finally {
+    await Promise.allSettled([subject.close(), probe.close(), inspect.close()]);
+  }
+}
+
+/**
+ * A root fan-out aborted mid-superstep, with one sibling's write already durable.
+ *
+ * This is the only fixture in the family where a pending write is load-bearing:
+ * on resume the engine either reuses `sub_fast`'s landed write or re-executes
+ * the node, and the probe says which. f12 could not show that — its retained
+ * thread resumes from a decision payload, not from a pending write — so deleting
+ * writes there changes rows and nothing else.
+ */
+async function prepareAbortedFanout(context: PartyContext): Promise<Record<string, unknown>> {
+  const caseId = context.caseId;
+  const probe = probePool(context);
+  const subject = subjectPool(context);
+  const inspect = inspectPool(context);
+
+  try {
+    const witness = createProbe(probe, caseId, -1, "prepare");
+    const saver = new PostgresSaver(subject.pool, undefined, { schema: CHECKPOINT_SCHEMA });
+    const failing = buildRootFanoutGraph(saver, witness, { failSibling: true }) as unknown as AnyGraph;
+
+    const aborted = await invokeNested(failing, retainedThread(caseId), {
+      input: { steps: [], decision: "" },
+    });
+
+    // The stale thread runs the same topology to completion, so it is a
+    // legitimate deletion candidate rather than an arbitrary victim.
+    const healthy = buildRootFanoutGraph(saver, witness, { failSibling: false }) as unknown as AnyGraph;
+    const staleDone = await invokeNested(healthy, staleThread(caseId), {
+      input: { steps: [], decision: "" },
+    });
+
+    const retained = await project(inspect, retainedThread(caseId));
+    const head = headsFromProjection(retainedThread(caseId), retained).find((h) => h.ns === "");
+    const pendingAtHead = head
+      ? retained.writes.filter(
+          (row) => row.checkpoint_ns === "" && row.checkpoint_id === head.checkpointId,
+        ).length
+      : 0;
+
+    return {
+      caseId,
+      prepared: true,
+      // The abort is the fixture, not a failure: the superstep must have died
+      // with one sibling's write already committed.
+      retainedAborted: aborted.error !== null,
+      retainedPendingWritesAtHead: pendingAtHead,
+      retainedCheckpoints: retained.checkpoints.length,
+      retainedInterruptRows: retained.interrupts.length,
+      staleCompleted: staleDone.error === null && staleDone.interrupted === false,
+      error: staleDone.error,
+    };
+  } finally {
+    await Promise.allSettled([subject.close(), probe.close(), inspect.close()]);
+  }
+}
+
 export async function prepareFamilyF(caseId: string): Promise<Record<string, unknown>> {
   const context: PartyContext = { caseId, party: -1, member: "prepare" };
+
+  if (caseId.startsWith("f14")) return await prepareCompletedThread(context);
+  if (caseId.startsWith("f15") || caseId.startsWith("f16")) {
+    return await prepareSubgraphPaused(context);
+  }
+  if (caseId.startsWith("f17") || caseId.startsWith("f18")) {
+    return await prepareAbortedFanout(context);
+  }
+
   const probe = probePool(context);
   const subject = subjectPool(context);
   const inspect = inspectPool(context);

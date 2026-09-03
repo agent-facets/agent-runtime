@@ -66,7 +66,13 @@ export type OracleId =
   /** A per-thread advisory lease, taken on a dedicated session. */
   | "threadLease"
   /** A typed Store refusal produced before the Store was touched. */
-  | "storeGuard";
+  | "storeGuard"
+  /**
+   * The canonicaliser's own tokens, checked for injectivity and for escaped raw
+   * ids. Every digest in the run is computed over this layer, so it is the one
+   * mechanism whose failure would be invisible to every other oracle.
+   */
+  | "canonical";
 
 /**
  * A kill is anchored to an observed durable gate-park row, never to a sleep.
@@ -299,6 +305,25 @@ export const CASES: CaseDef[] = [
     requires: [],
     purpose:
       "The positive control for the shutdown witness. Eleven kill cases prove their SIGKILL was uncatchable by asserting NO process/sigterm row exists - but every one of them sends SIGKILL, so the handler that writes that row had never fired anywhere in the matrix and the witness was empty in all 131 cases. This case delivers a SIGTERM and requires exactly one witness row, which is what makes those eleven absences load-bearing rather than vacuous.",
+  },
+  {
+    id: "s08-canonical-token-uniqueness",
+    family: "S",
+    lane: "selftest",
+    pairedWith: null,
+    kind: "candidate",
+    parties: 1,
+    launch: "parallel",
+    stages: [],
+    kill: null,
+    prepare: false,
+    oracles: ["canonical"],
+    classification: "deterministic",
+    trials: null,
+    budgetMs: 45_000,
+    requires: [],
+    purpose:
+      "Every managed digest is computed over tokenised output and nothing asserted the tokenisation was sound. A ranker mapping two distinct ids onto one token would silently merge rows a regression had made different; a raw uuid escaping the rewrite would make an honest run irreproducible. The leak scanner catches neither - it looks for credentials and host paths, never for volatile ids. Also declares the ONE deliberate many-to-one mapping, nsSkeleton's uuid collapse, so an intended collapse is never mistaken for a collision.",
   },
 ];
 
@@ -2499,6 +2524,86 @@ const FAMILY_I: CaseDef[] = [
     purpose:
       "The anti-vacuity control for the whole storeguard lane: an ordinary namespace with an ordinary positive ttl must pass the guard AND reach the Store and come back. A guard that refused everything would satisfy every refusal criterion above while being useless.",
   },
+  {
+    id: "i09-store-guard-confines-a-prefix-to-the-path-boundary",
+    family: "I",
+    lane: "mit-storeguard",
+    pairedWith: "d29-namespace-prefix-boundary",
+    kind: "candidate",
+    parties: 1,
+    launch: "parallel",
+    stages: [],
+    kill: null,
+    provision: "checkpointer+store",
+    prepare: true,
+    oracles: ["storeGuard", "storeProjection", "projection", "sqlstate"],
+    classification: "deterministic",
+    trials: null,
+    budgetMs: 180000,
+    requires: [],
+    purpose:
+      "d29 cannot be answered at the input: its prefixes are ordinary labels and nothing about the request is malformed. The defect is that the vendor renders the prefix as LIKE 'alpha%', so the sibling 'alphabet' comes back alongside the real descendants. The guard therefore confines the RESULT, comparing label arrays element-wise so it never touches the delimiter, and must drop exactly the non-descendant while leaving both true descendants. Also the first case to exercise the guard's listNamespaces allow-path at all.",
+  },
+  {
+    id: "i10-store-guard-rejects-maxdepth-with-a-limit",
+    family: "I",
+    lane: "mit-storeguard",
+    pairedWith: "d30-list-namespaces-maxdepth-after-limit",
+    kind: "candidate",
+    parties: 1,
+    launch: "parallel",
+    stages: [],
+    kill: null,
+    provision: "checkpointer+store",
+    prepare: true,
+    oracles: ["storeGuard", "projection", "sqlstate"],
+    classification: "deterministic",
+    trials: null,
+    budgetMs: 180000,
+    requires: [],
+    purpose:
+      "d30 measured maxDepth being applied AFTER limit, so a bounded page is filtered to nothing and the caller cannot distinguish an empty page from an exhausted list. The guard refuses the combination before the Store is touched.",
+  },
+  {
+    id: "i11-store-guard-allows-maxdepth-without-a-limit-control",
+    family: "I",
+    lane: "mit-storeguard",
+    pairedWith: "d30-list-namespaces-maxdepth-after-limit",
+    kind: "control",
+    parties: 1,
+    launch: "parallel",
+    stages: [],
+    kill: null,
+    provision: "checkpointer+store",
+    prepare: true,
+    oracles: ["storeGuard", "storeProjection", "projection", "sqlstate"],
+    classification: "deterministic",
+    trials: null,
+    budgetMs: 180000,
+    requires: ["i10-store-guard-rejects-maxdepth-with-a-limit"],
+    purpose:
+      "The narrowness control for i10: the same maxDepth WITHOUT paging is sound, so it must be allowed, reach the Store, and come back with a result. Without it the rule would be indistinguishable from banning maxDepth outright, which would be the guard changing more than its stated target.",
+  },
+  {
+    id: "i12-store-guard-allows-a-restrictive-recognized-filter-control",
+    family: "I",
+    lane: "mit-storeguard",
+    pairedWith: "d33-filter-matrix",
+    kind: "control",
+    parties: 1,
+    launch: "parallel",
+    stages: [],
+    kill: null,
+    provision: "checkpointer+store",
+    prepare: true,
+    oracles: ["storeGuard", "storeProjection", "projection", "sqlstate"],
+    classification: "deterministic",
+    trials: null,
+    budgetMs: 180000,
+    requires: [],
+    purpose:
+      "The allow-path for filters, which nothing exercised: every storeguard case before this either refused or performed a put, so the recognised-operator list and the non-empty $in branch were never reached and 'the guard permits safe filters' was unmeasured. The filter must be allowed, reach the Store, and return a PROPER NON-EMPTY SUBSET of a seeded corpus - the same anti-vacuity shape d34 uses, because a filter that matched everything is exactly the bug d34 found.",
+  },
 ];
 
 const FAMILY_F_EXTRA: CaseDef[] = [
@@ -2538,7 +2643,7 @@ const FAMILY_F_EXTRA: CaseDef[] = [
     budgetMs: 210000,
     requires: ["f04-reachability-sweep-retains-a-paused-thread"],
     purpose:
-      "The live set names pending writes, and nothing had ever tested that term. A sweep that keeps every checkpoint but forgets its pending writes must leave detectable damage - the paused run loses the writes its resume depends on.",
+      "CORRECTED after measurement. The live set names pending writes and nothing had ever mutated that term, so this drops it: every write row of the retained thread is deleted. What it establishes is row loss and the SILENCE around it - no reachability detector fires, because the writes' checkpoints survive, and the run still resumes and reports success with the full step list. It does NOT establish that the resume depended on those writes, which the original purpose claimed and the evidence contradicts; f17 is the case that measures a consequence.",
   },
   {
     id: "f13-incomplete-sweep-omits-interrupts",
@@ -2557,7 +2662,102 @@ const FAMILY_F_EXTRA: CaseDef[] = [
     budgetMs: 210000,
     requires: ["f12-incomplete-sweep-omits-pending-writes"],
     purpose:
-      "The narrower half of the same term: keep ordinary pending writes, drop only the __interrupt__ rows. An interrupt write IS the outstanding approval, so this is the mutation that turns a run awaiting a human decision into one with no decision point, and it must be detectable.",
+      "CORRECTED after measurement. The narrower half of the same term: keep ordinary pending writes, drop only the __interrupt__ rows. Exactly the interrupt rows disappear and the outstanding approval stops being discoverable from the tables - but a caller already holding a decision still resumes to completion, so the original claim that the run 'loses its decision point' overstated what was measured. The finding is that an approval can be deleted with no error and no detector.",
+  },
+  {
+    id: "f14-head-scoped-retention-of-a-completed-thread",
+    family: "F",
+    lane: "stock",
+    pairedWith: null,
+    kind: "candidate",
+    parties: 1,
+    launch: "parallel",
+    stages: [],
+    kill: null,
+    prepare: true,
+    oracles: ["projection", "reachability", "lineage", "sqlstate"],
+    classification: "deterministic",
+    trials: null,
+    budgetMs: 210000,
+    requires: ["f11-head-scoped-sweep-prunes-an-abandoned-branch"],
+    purpose:
+      "Every other retention case keeps a PAUSED thread, so 'the retained run still resumes' was the only survival claim the family could make - and the architecture's retention table keeps completed runs too. A completed thread cannot be resumed, so the claim here is readability: after head-scoped pruning removes an abandoned branch from inside it, the surviving head's channel versions must still all resolve to blob rows, and a state read must return the terminal step list without executing a node.",
+  },
+  {
+    id: "f15-head-scoped-retention-across-every-live-namespace",
+    family: "F",
+    lane: "stock",
+    pairedWith: null,
+    kind: "candidate",
+    parties: 1,
+    launch: "parallel",
+    stages: [],
+    kill: null,
+    prepare: true,
+    oracles: ["projection", "reachability", "lineage", "executions", "sqlstate"],
+    classification: "deterministic",
+    trials: null,
+    budgetMs: 240000,
+    requires: ["f14-head-scoped-retention-of-a-completed-thread"],
+    purpose:
+      "Head-scoped retention against a thread paused INSIDE a subgraph, seeded with one head per live namespace. Every earlier F case has a single namespace, so 'walk from the head' and 'keep the thread' coincided and the rule was never tested where they diverge: a subgraph's chain is separately rooted, so the sweep's within-namespace recursion reaches none of it from a root head. Every namespace of the retained thread must be untouched, the child namespace's interrupt row must survive, and the paused run must resume and replay.",
+  },
+  {
+    id: "f16-root-only-head-seed-deletes-child-namespace-state",
+    family: "F",
+    lane: "stock",
+    pairedWith: null,
+    kind: "mutation",
+    parties: 1,
+    launch: "parallel",
+    stages: [],
+    kill: null,
+    prepare: true,
+    oracles: ["projection", "reachability", "executions", "sqlstate"],
+    classification: "deterministic",
+    trials: null,
+    budgetMs: 240000,
+    requires: ["f15-head-scoped-retention-across-every-live-namespace"],
+    purpose:
+      "The mutation that makes f15 falsifiable, and it is not hypothetical: seeding the live set from the root namespace only is what head enumeration did before f15 existed. The child namespace must be destroyed entirely - checkpoints, blobs, writes and the __interrupt__ row that IS the outstanding approval - while the ROOT namespace survives untouched, which is what makes it targeted data loss rather than a sweep that deleted everything.",
+  },
+  {
+    id: "f17-omitting-pending-writes-forces-re-execution",
+    family: "F",
+    lane: "stock",
+    pairedWith: null,
+    kind: "mutation",
+    parties: 1,
+    launch: "parallel",
+    stages: [],
+    kill: null,
+    prepare: true,
+    oracles: ["projection", "reachability", "executions", "sqlstate"],
+    classification: "deterministic",
+    trials: null,
+    budgetMs: 240000,
+    requires: ["f12-incomplete-sweep-omits-pending-writes"],
+    purpose:
+      "The pending-writes term measured by CONSEQUENCE rather than by row count. f12 deletes every write of its retained thread and the run still resumes identically, because that fixture resumes from a decision payload and not from a pending write. A fan-out aborted mid-superstep does depend on one: the surviving sibling's durable write is the only thing standing between a resume and a duplicate execution. Deleting it must make the probe count that node twice.",
+  },
+  {
+    id: "f18-pending-writes-retained-control",
+    family: "F",
+    lane: "stock",
+    pairedWith: null,
+    kind: "control",
+    parties: 1,
+    launch: "parallel",
+    stages: [],
+    kill: null,
+    prepare: true,
+    oracles: ["projection", "reachability", "executions", "sqlstate"],
+    classification: "deterministic",
+    trials: null,
+    budgetMs: 240000,
+    requires: ["f17-omitting-pending-writes-forces-re-execution"],
+    purpose:
+      "The same aborted fan-out and the same head-scoped sweep with the live set COMPLETE. The surviving sibling must execute exactly once across both passes - reused, not replayed. Without it, f17's second execution could be a property of resuming an aborted fan-out at all rather than of the deleted write.",
   },
 ];
 

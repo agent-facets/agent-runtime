@@ -31,7 +31,12 @@ import { createProbe, type Probe } from "./probe.ts";
 import { buildGraph, resume, runToInterrupt } from "./graph.ts";
 import { project } from "./inspect/checkpoints.ts";
 import { createEmbeddings } from "./store/embeddings.ts";
-import { acquireThreadLease, checkStoreOperation, type GuardedOperation } from "./guards.ts";
+import {
+  acquireThreadLease,
+  checkStoreOperation,
+  confineToPathBoundary,
+  type GuardedOperation,
+} from "./guards.ts";
 import type { PartyContext } from "./family-a.ts";
 
 function subjectPool(context: PartyContext): Db {
@@ -216,9 +221,16 @@ async function leaseReleasedOnExit(context: PartyContext): Promise<Record<string
  * refusal criterion while being useless, so the allow-path has to reach the
  * Store and come back with a result.
  */
+type SeedItem = { namespace: string[]; key: string; value: Record<string, unknown> };
+
 async function guardedStoreOperation(
   context: PartyContext,
-  operation: GuardedOperation & { key?: string; value?: Record<string, unknown> },
+  operation: GuardedOperation & {
+    key?: string;
+    value?: Record<string, unknown>;
+    /** Written before the guarded call, so an allow-path result is non-vacuous. */
+    seed?: SeedItem[];
+  },
 ): Promise<Record<string, unknown>> {
   const probe = probePool(context);
   const store = new PostgresStore({
@@ -252,9 +264,30 @@ async function guardedStoreOperation(
 
     await store.start();
     let outcome: Record<string, unknown>;
+    if (operation.seed) {
+      for (const item of operation.seed) {
+        await store.put(item.namespace, item.key, item.value, false);
+      }
+    }
+
     if (operation.prefix) {
-      const namespaces = await store.listNamespaces({ prefix: operation.prefix, limit: 50 });
-      outcome = { namespaces: namespaces.map((parts) => parts.join(":")).sort() };
+      const listed = await store.listNamespaces({
+        prefix: operation.prefix,
+        ...(operation.maxDepth === undefined ? {} : { maxDepth: operation.maxDepth }),
+        ...(operation.limit === undefined ? { limit: 50 } : { limit: operation.limit }),
+      });
+      // The vendor's answer and the guard's answer, both recorded. Keeping the
+      // unconfined result is what lets i09 reproduce d29's boundary crossing
+      // inside the mitigation lane rather than asserting against a defect
+      // measured somewhere else.
+      const confined = confineToPathBoundary(operation.prefix, listed);
+      outcome = {
+        // Label COUNTS and joined labels are safe here: these are authored
+        // fixture namespaces with no engine-generated id in them.
+        vendorNamespaces: listed.map((parts) => parts.join("/")).sort(),
+        confinedNamespaces: confined.kept.map((parts) => parts.join("/")).sort(),
+        droppedNonDescendants: confined.droppedNonDescendants,
+      };
     } else if (operation.filter) {
       const found = await store.search(operation.namespace ?? ["spike"], {
         // Cast at the boundary: the guard's job is to decide whether this shape
@@ -264,7 +297,12 @@ async function guardedStoreOperation(
           { filter?: infer F } ? F : never,
         limit: 50,
       });
-      outcome = { keys: found.map((item) => item.key).sort() };
+      outcome = {
+        keys: found.map((item) => item.key).sort(),
+        // The corpus size the filter ran against, so "it restricted" can be a
+        // proper-subset claim rather than "it returned something".
+        corpus: operation.seed?.length ?? 0,
+      };
     } else {
       // `put(namespace, key, value, index, options)` - the index is the FOURTH
       // positional argument and the options object is the fifth. Passing an
@@ -323,6 +361,49 @@ export async function runFamilyIParty(context: PartyContext): Promise<Record<str
         namespace: ["spike", "safe"],
         key: "k",
         ttl: 60,
+      });
+
+    // d29's corpus, rebuilt inside the mitigation lane. The prefix is legal, so
+    // nothing is refused; the guard's work happens on the way back.
+    case "i09-store-guard-confines-a-prefix-to-the-path-boundary":
+      return await guardedStoreOperation(context, {
+        prefix: ["alpha"],
+        seed: [
+          { namespace: ["alpha"], key: "k", value: { title: "alpha" } },
+          { namespace: ["alpha", "one"], key: "k", value: { title: "beta" } },
+          // The sibling `LIKE 'alpha%'` wrongly matches. Not a descendant of
+          // `["alpha"]` by any path reading, which is the entire point.
+          { namespace: ["alphabet"], key: "k", value: { title: "gamma" } },
+        ],
+      });
+
+    case "i10-store-guard-rejects-maxdepth-with-a-limit":
+      return await guardedStoreOperation(context, { prefix: ["alpha"], maxDepth: 1, limit: 2 });
+
+    // The narrowness control: the same maxDepth, without paging, must be allowed
+    // AND must come back with a result.
+    case "i11-store-guard-allows-maxdepth-without-a-limit-control":
+      return await guardedStoreOperation(context, {
+        prefix: ["alpha"],
+        maxDepth: 1,
+        seed: [
+          { namespace: ["alpha"], key: "k", value: { title: "alpha" } },
+          { namespace: ["alpha", "one"], key: "k", value: { title: "beta" } },
+        ],
+      });
+
+    // The allow-path for filters, which nothing exercised: every storeguard case
+    // before this either refused or performed a `put`, so the recognised-operator
+    // list and the non-empty `$in` branch were never reached.
+    case "i12-store-guard-allows-a-restrictive-recognized-filter-control":
+      return await guardedStoreOperation(context, {
+        namespace: ["spike", "filter"],
+        filter: { tier: { $in: ["gold"] } },
+        seed: [
+          { namespace: ["spike", "filter"], key: "keep", value: { title: "alpha", tier: "gold" } },
+          { namespace: ["spike", "filter"], key: "drop-1", value: { title: "beta", tier: "silver" } },
+          { namespace: ["spike", "filter"], key: "drop-2", value: { title: "gamma", tier: "bronze" } },
+        ],
       });
 
     default:

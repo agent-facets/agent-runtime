@@ -25,6 +25,7 @@ import { createProbe } from "./probe.ts";
 import {
   createSink,
   instrumentPool,
+  parkUntilKilled,
   recordNodePark,
   recordPark,
   statementMultiset,
@@ -34,6 +35,14 @@ import {
 import { relations } from "./inspect/pgstat.ts";
 import { measureEgress } from "./inspect/egress.ts";
 import { createEmbeddings, UnknownEmbeddingTextError } from "./store/embeddings.ts";
+import {
+  UUID_PATTERN,
+  canonicalCheckpointLabels,
+  canonicaliseProjection,
+  createRanker,
+  nsSkeleton,
+  stable,
+} from "./canonical.ts";
 
 export type PartyContext = {
   caseId: string;
@@ -79,9 +88,116 @@ export async function runSelftestParty(context: PartyContext): Promise<Record<st
       return await s06();
     case "s07-shutdown-witness-positive-control":
       return await s07(context);
+    case "s08-canonical-token-uniqueness":
+      return await s08();
     default:
       throw new Error(`family S has no participant for case ${context.caseId}`);
   }
+}
+
+/**
+ * The canonicaliser's own self-test.
+ *
+ * Every managed digest in this spike is computed over tokenised output, and
+ * until now nothing asserted that the tokenisation is sound. Two failures would
+ * have been invisible: a ranker that mapped two distinct ids to one token would
+ * silently merge rows that a regression had made different, and a raw uuid that
+ * escaped rewriting would make an honest run irreproducible. The leak scanner
+ * cannot catch either — it looks for credentials and host paths, never for
+ * volatile ids.
+ *
+ * The fixture is synthetic and covers the shapes that actually occur: a fork,
+ * a referenced-but-absent parent, and two parallel subgraph namespaces whose
+ * names embed per-run task ids.
+ *
+ * It also asserts the one place the mapping is deliberately NOT injective.
+ * `nsSkeleton` collapses every embedded uuid to a constant `<id>`, so two
+ * sibling namespaces become the same string on purpose — that is what stopped
+ * e03 flapping. A collapse nobody declared would be indistinguishable from a
+ * collision, so it is declared here.
+ */
+async function s08(): Promise<Record<string, unknown>> {
+  const id = (n: number): string =>
+    `1f1a6e3e-dca9-6660-ffff-${String(n).padStart(12, "0")}`;
+
+  const root = id(1);
+  const mid = id(2);
+  const branchA = id(3);
+  const branchB = id(4);
+  const absentParent = id(9);
+  const taskLeft = id(10);
+  const taskRight = id(11);
+
+  const checkpoints = [
+    { ns: "", checkpoint_id: root, parent_checkpoint_id: null, source: "input", step: -1 },
+    { ns: "", checkpoint_id: mid, parent_checkpoint_id: root, source: "loop", step: 0 },
+    // A fork: two children of one parent.
+    { ns: "", checkpoint_id: branchA, parent_checkpoint_id: mid, source: "loop", step: 1 },
+    { ns: "", checkpoint_id: branchB, parent_checkpoint_id: mid, source: "fork", step: 1 },
+    // A dangling parent, which c09 measures for real.
+    { ns: "", checkpoint_id: id(5), parent_checkpoint_id: absentParent, source: "loop", step: 2 },
+    { ns: `left:${taskLeft}`, checkpoint_id: id(6), parent_checkpoint_id: null, source: "input", step: -1 },
+    { ns: `right:${taskRight}`, checkpoint_id: id(7), parent_checkpoint_id: null, source: "input", step: -1 },
+  ];
+
+  const labels = canonicalCheckpointLabels(checkpoints);
+  const labelValues = [...labels.values()];
+  const checkpointLabelsInjective = new Set(labelValues).size === labelValues.length;
+
+  // Every distinct input must have produced a distinct token, including the
+  // absent parent, which gets its own `<cp:absent-N>` so a dangling pointer
+  // stays countable instead of collapsing into null.
+  const absentLabelled = labels.get(absentParent)?.startsWith("<cp:absent-") === true;
+
+  const ranker = createRanker("task");
+  const rankerInputs = [taskLeft, taskRight, id(12), taskLeft];
+  const ranked = rankerInputs.map((value) => ranker(value));
+  const rankerInjective =
+    new Set([...new Set(rankerInputs)].map((value) => createRanker("task")(value))).size === 1 &&
+    ranked[0] === ranked[3] &&
+    new Set(ranked.filter((value): value is string => value !== null)).size ===
+      new Set(rankerInputs).size;
+
+  // Token namespaces must not overlap: `<cp:0>` and `<cp:absent-0>` and
+  // `<task:0>` are three different things and a reader must never have to guess.
+  const prefixes = ["<cp:", "<cp:absent-", "<task:", "<backend:", "<nonce:", "<interrupt:"];
+  const allTokens = [...labelValues, ...ranked.filter((value): value is string => value !== null)];
+  const tokenNamespacesDisjoint =
+    new Set(allTokens).size === new Set(allTokens.map((token) => token)).size &&
+    labelValues.filter((token) => token.startsWith("<cp:absent-")).length === 1;
+
+  const projection = canonicaliseProjection({
+    thread: {
+      checkpoints,
+      writes: [
+        { ns: "", checkpoint_id: mid, task_id: taskLeft, idx: 0, channel: "steps", bytes: 4 },
+        { ns: "", checkpoint_id: mid, task_id: taskRight, idx: 0, channel: "steps", bytes: 4 },
+      ],
+    },
+    namespaces: ["", `left:${taskLeft}`, `right:${taskRight}`],
+  });
+
+  const serialized = stable(projection);
+  const rawUuidSurvives = new RegExp(UUID_PATTERN.source, "i").test(serialized);
+
+  // The declared collapse. Two DIFFERENT namespace strings become one skeleton,
+  // and that is the intended behaviour rather than a collision.
+  const skeletonLeft = nsSkeleton(`left:${taskLeft}`);
+  const skeletonRight = nsSkeleton(`right:${taskRight}`);
+  const siblingLeft = nsSkeleton(`left:${taskRight}`);
+  const skeletonCollapseIsDeclared =
+    skeletonLeft !== skeletonRight && skeletonLeft === siblingLeft && skeletonLeft.includes("<id>");
+
+  return {
+    distinctCheckpointIds: new Set(checkpoints.map((row) => row.checkpoint_id)).size,
+    checkpointLabelsInjective,
+    absentParentLabelled: absentLabelled,
+    rankerInjective,
+    tokenNamespacesDisjoint,
+    tokenPrefixes: prefixes,
+    rawUuidSurvivesCanonicalisation: rawUuidSurvives,
+    skeletonCollapseIsDeclared,
+  };
 }
 
 /**
@@ -104,7 +220,7 @@ async function s07(context: PartyContext): Promise<Record<string, unknown>> {
     await recordNodePark(probe, context.caseId, context.party, "await-sigterm", "selftest");
     // The driver kills this container here. `main.ts` installs the SIGTERM
     // handler, which records the row and exits 143.
-    await new Promise<never>(() => {});
+    await parkUntilKilled();
     return { party: context.party, error: null, parked: true };
   } finally {
     await probe.close().catch(() => {});

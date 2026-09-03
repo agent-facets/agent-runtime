@@ -126,8 +126,24 @@ chunker            heading-aware, ~800 tokens, ~15% overlap
 embedder           model id + version recorded per row
       │
       ▼
-pgvector           chunk, vector, note path, git sha, scope, validity
+app.memory_chunks  chunk, vector, note path, git sha, scope, validity
 ```
+
+**The index is an app-owned schema, not the vendor `PostgresStore`.**
+[Spike 06](./spike-reports/06-postgres-checkpointer-concurrency.md) measured the
+Store's complete public surface and it cannot express this design: it offers no
+lexical full-text (its text search is `ILIKE` over serialised JSON, so a query
+for a *field name* matches every item), inner-product ranking is exactly
+reversed, one `similarityThreshold` means three different things across metrics,
+`batch()` can only ever rank by cosine, and three filter shapes emit no SQL
+condition at all and return **every row** — which on a validity predicate means
+returning superseded memories as current.
+
+Scope in particular cannot be a namespace prefix. Prefix matching is
+string-prefix rather than path-prefix, the delimiter is a legal label character
+so two differently shaped namespaces collapse to one row, and `listNamespaces`
+skips the validator every other path runs — a `%` prefix returned every tenant.
+**Scope MUST be an indexed column and an explicit SQL predicate.**
 
 A reconciliation table maps note path to indexed git sha so the indexer knows
 what changed. Data flows one way: vault to index, never back. Uncoordinated
@@ -136,6 +152,14 @@ two-way writes between a database and a file tree is a losing design.
 The embedding model id and dimensions MUST be recorded per row. A model change
 becomes a resumable partial reindex rather than a silent relevance collapse or
 a dimension-mismatch failure at query time.
+
+This is a second reason the index is ours. In the vendor Store the migration
+ledger stores a *position* while the migration list's content depends on the
+index configuration, so changing dimensions or the distance metric after first
+setup runs **nothing**: the ledger is unchanged, the old column and old index
+survive, the newly configured metric has no index at all, and writes keep
+succeeding. A dimension or metric change MUST be an explicit app migration that
+creates a new index and drives a reindex — never a configuration edit.
 
 ## What gets remembered
 
@@ -196,6 +220,8 @@ SHOULD require approval.
 | Unjustifiable claim | Agent asserts something with no source | Mandatory provenance |
 | Credential in history | Token committed to Git | Redaction plus pre-commit guard |
 | Embedding drift | Relevance degrades after model change | Per-row model version, partial reindex |
+| Silent scope leak | A scope filter returns another scope's notes | Scope is an indexed column and an SQL predicate, never a namespace prefix |
+| Readable but unindexed | A chunk is retrievable lexically and invisible to vector search | Treat a failed embedding as a failed write; reconcile chunk rows against vector rows in the weekly audit |
 
 ## Open questions
 

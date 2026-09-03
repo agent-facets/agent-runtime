@@ -22,7 +22,7 @@ import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { CHECKPOINT_SCHEMA, databaseForCase, threadForCase } from "./contract.ts";
 import { appNameFor, describeSqlError, openDb, type Db, type SqlError } from "./db.ts";
 import { arrive, waitForRelease } from "./barrier.ts";
-import { recordNodePark } from "./gate.ts";
+import { parkUntilKilled, recordNodePark } from "./gate.ts";
 import { createProbe, type Probe } from "./probe.ts";
 import { project } from "./inspect/checkpoints.ts";
 import {
@@ -259,7 +259,7 @@ async function subgraphCrashResume(context: PartyContext): Promise<Record<string
         parkAt: "sub_b",
         park: async (node) => {
           await recordNodePark(probe, context.caseId, context.party, "inside-subgraph-node", node);
-          return await new Promise<never>(() => {});
+          return await parkUntilKilled();
         },
       });
       const run = await invokeNested(graph, threadId, { input: SEED });

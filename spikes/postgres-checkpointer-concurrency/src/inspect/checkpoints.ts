@@ -231,6 +231,70 @@ export async function sampleConsistency(
   return rows[0] ?? { checkpoints: 0, stranded: 0, broken: 0 };
 }
 
+export type NamespaceCounts = {
+  thread_id: string;
+  checkpoint_ns: string;
+  checkpoints: number;
+  blobs: number;
+  writes: number;
+  interruptRows: number;
+};
+
+/**
+ * Row counts per `(thread, checkpoint_ns)`.
+ *
+ * `threadCounts` sums a thread's namespaces together, which is exactly the
+ * blindness that let head-scoped pruning look correct: a sweep seeded only from
+ * the root namespace deletes every row of a subgraph's namespace while the
+ * thread total still moves in the direction a reader expects.
+ *
+ * `checkpoint_ns` is a GROUP KEY here and nowhere else. Nothing splits it,
+ * matches it as a prefix, or counts its separators — the plan forbids depending
+ * on the vendor's namespace string format, and a per-namespace count needs only
+ * equality. The one literal any caller may compare against is `''`, the root,
+ * which is not a format detail.
+ *
+ * The `UNION` over all three tables matters: a namespace whose checkpoints are
+ * gone but whose blobs survive is precisely what a bad sweep leaves behind, and
+ * driving the enumeration from `checkpoints` alone would make that namespace
+ * disappear from the report instead of showing up as damage.
+ */
+export async function threadNamespaceCounts(
+  db: Db,
+  threadIds: string[],
+): Promise<NamespaceCounts[]> {
+  const { rows } = await db.pool.query<NamespaceCounts>(
+    `WITH present AS (
+            SELECT thread_id, checkpoint_ns FROM ${CHECKPOINT_SCHEMA}.checkpoints
+             WHERE thread_id = ANY($1::text[])
+            UNION
+            SELECT thread_id, checkpoint_ns FROM ${CHECKPOINT_SCHEMA}.checkpoint_blobs
+             WHERE thread_id = ANY($1::text[])
+            UNION
+            SELECT thread_id, checkpoint_ns FROM ${CHECKPOINT_SCHEMA}.checkpoint_writes
+             WHERE thread_id = ANY($1::text[]))
+      SELECT p.thread_id,
+             p.checkpoint_ns,
+             (SELECT count(*)::int FROM ${CHECKPOINT_SCHEMA}.checkpoints c
+               WHERE c.thread_id = p.thread_id AND c.checkpoint_ns = p.checkpoint_ns)
+               AS checkpoints,
+             (SELECT count(*)::int FROM ${CHECKPOINT_SCHEMA}.checkpoint_blobs b
+               WHERE b.thread_id = p.thread_id AND b.checkpoint_ns = p.checkpoint_ns)
+               AS blobs,
+             (SELECT count(*)::int FROM ${CHECKPOINT_SCHEMA}.checkpoint_writes w
+               WHERE w.thread_id = p.thread_id AND w.checkpoint_ns = p.checkpoint_ns)
+               AS writes,
+             (SELECT count(*)::int FROM ${CHECKPOINT_SCHEMA}.checkpoint_writes w
+               WHERE w.thread_id = p.thread_id AND w.checkpoint_ns = p.checkpoint_ns
+                 AND w.channel = '__interrupt__')
+               AS "interruptRows"
+        FROM present p
+       ORDER BY p.thread_id, p.checkpoint_ns`,
+    [threadIds],
+  );
+  return rows;
+}
+
 export type OwnedRow = {
   key: string;
   /** Which known candidate payload these bytes decode to, or `unknown`. */

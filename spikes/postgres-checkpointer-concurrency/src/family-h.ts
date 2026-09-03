@@ -27,7 +27,7 @@ import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 
 import { CHECKPOINT_SCHEMA, PROBE_SCHEMA, databaseForCase, threadForCase } from "./contract.ts";
 import { appNameFor, describeSqlError, openDb, type Db, type SqlError } from "./db.ts";
-import { recordNodePark } from "./gate.ts";
+import { parkUntilKilled, recordNodePark } from "./gate.ts";
 import { createProbe, type Probe } from "./probe.ts";
 import { recordEffect } from "./effect-key.ts";
 import { stable } from "./canonical.ts";
@@ -256,7 +256,7 @@ async function crashResume(
       const graph = linearEffectGraph(saver, witness, {
         park: async (node) => {
           await recordNodePark(probe, context.caseId, context.party, "after-effect", node);
-          return await new Promise<never>(() => {});
+          return await parkUntilKilled();
         },
       });
       const run = await invokeNested(graph, threadId, {
