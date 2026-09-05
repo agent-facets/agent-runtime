@@ -1,0 +1,1029 @@
+{
+  "schema": "agent-runtime/kpwm-mutations/1",
+  "note": "One mutation per tick, strictly ordered. Actor and intent default from the command's effect class; anything load-bearing is stated explicitly. Guards are explicit wherever a guard is the point of the case.",
+  "mutations": [
+    {
+      "t": 1,
+      "cmd": "RegisterSourceRef",
+      "args": {
+        "sourceRefId": "src:gh-iss-9"
+      }
+    },
+    {
+      "t": 2,
+      "cmd": "RegisterSourceRef",
+      "args": {
+        "sourceRefId": "src:gh-pr-42"
+      }
+    },
+    {
+      "t": 3,
+      "cmd": "RegisterSourceRef",
+      "args": {
+        "sourceRefId": "src:gh-c-a1"
+      }
+    },
+    {
+      "t": 4,
+      "cmd": "RegisterSourceRef",
+      "args": {
+        "sourceRefId": "src:gh-c-b2"
+      }
+    },
+    {
+      "t": 5,
+      "cmd": "RegisterSourceRef",
+      "args": {
+        "sourceRefId": "src:gh-c-c3"
+      }
+    },
+    {
+      "t": 6,
+      "cmd": "RegisterSourceRef",
+      "args": {
+        "sourceRefId": "src:gh-c-d4"
+      }
+    },
+    {
+      "t": 7,
+      "cmd": "RegisterSourceRef",
+      "args": {
+        "sourceRefId": "src:gh-c-e5"
+      }
+    },
+    {
+      "t": 8,
+      "cmd": "RegisterSourceRef",
+      "args": {
+        "sourceRefId": "src:gh-run-118"
+      }
+    },
+    {
+      "t": 9,
+      "cmd": "RegisterSourceRef",
+      "args": {
+        "sourceRefId": "src:gh-run-119"
+      }
+    },
+    {
+      "t": 10,
+      "cmd": "RegisterSourceRef",
+      "args": {
+        "sourceRefId": "src:gh-run-121"
+      }
+    },
+    {
+      "t": 11,
+      "cmd": "RegisterSourceRef",
+      "args": {
+        "sourceRefId": "src:notion-arch"
+      }
+    },
+    {
+      "t": 12,
+      "cmd": "RegisterSourceRef",
+      "args": {
+        "sourceRefId": "src:notion-rot"
+      }
+    },
+    {
+      "t": 13,
+      "cmd": "RegisterSourceRef",
+      "args": {
+        "sourceRefId": "src:mail-nw"
+      }
+    },
+    {
+      "t": 14,
+      "cmd": "RegisterSourceRef",
+      "args": {
+        "sourceRefId": "src:human-ada"
+      }
+    },
+    {
+      "t": 15,
+      "cmd": "CreateEntity",
+      "args": {
+        "entityId": "ent:halyard"
+      }
+    },
+    {
+      "t": 16,
+      "cmd": "CreateEntity",
+      "args": {
+        "entityId": "ent:halyard-api"
+      }
+    },
+    {
+      "t": 17,
+      "cmd": "CreateEntity",
+      "args": {
+        "entityId": "ent:halyard-auth"
+      }
+    },
+    {
+      "t": 18,
+      "cmd": "CreateEntity",
+      "args": {
+        "entityId": "ent:kestrel"
+      }
+    },
+    {
+      "t": 19,
+      "cmd": "CreateEntity",
+      "args": {
+        "entityId": "ent:kestrel-ingest"
+      }
+    },
+    {
+      "t": 20,
+      "cmd": "CreateEntity",
+      "args": {
+        "entityId": "ent:tokenring"
+      }
+    },
+    {
+      "t": 21,
+      "cmd": "CreateEntity",
+      "args": {
+        "entityId": "ent:parseq"
+      }
+    },
+    {
+      "t": 22,
+      "cmd": "CreateEntity",
+      "args": {
+        "entityId": "ent:auth-suite"
+      }
+    },
+    {
+      "t": 23,
+      "cmd": "CreateEntity",
+      "args": {
+        "entityId": "ent:ada"
+      }
+    },
+    {
+      "t": 24,
+      "cmd": "CreateEntity",
+      "args": {
+        "entityId": "ent:node-ada"
+      }
+    },
+    {
+      "t": 25,
+      "cmd": "CreateEntity",
+      "args": {
+        "entityId": "ent:node-bo"
+      }
+    },
+    {
+      "t": 26,
+      "cmd": "CreateEntity",
+      "args": {
+        "entityId": "ent:ag-coder"
+      }
+    },
+    {
+      "t": 27,
+      "cmd": "CreateEntity",
+      "args": {
+        "entityId": "ent:ag-planner"
+      }
+    },
+    {
+      "t": 28,
+      "cmd": "CreateEntity",
+      "args": {
+        "entityId": "ent:ag-research"
+      }
+    },
+    {
+      "t": 29,
+      "cmd": "CreateWorkItem",
+      "args": {
+        "workItemId": "wi:rotation"
+      }
+    },
+    {
+      "t": 30,
+      "cmd": "CreateClaim",
+      "args": {
+        "claimId": "clm:req-rot-window",
+        "subject": "ent:halyard-auth",
+        "predicate": "requires",
+        "value": "refresh tokens rotate within 24 hours of issue",
+        "validFrom": "2025-11-01T00:00:00.000Z",
+        "validTo": null,
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-iss-9",
+            "locator": "body"
+          }
+        ]
+      }
+    },
+    {
+      "t": 31,
+      "cmd": "CreateClaim",
+      "actor": "human",
+      "args": {
+        "claimId": "clm:req-no-major-bump",
+        "subject": "ent:halyard",
+        "predicate": "requires",
+        "value": "no major dependency bump inside a release freeze",
+        "validFrom": "2025-11-01T00:00:00.000Z",
+        "validTo": null,
+        "evidence": [
+          {
+            "sourceRefId": "src:human-ada",
+            "locator": "statement-1"
+          }
+        ]
+      }
+    },
+    {
+      "t": 32,
+      "cmd": "CreateClaim",
+      "args": {
+        "claimId": "clm:req-audit-log",
+        "subject": "ent:halyard-auth",
+        "predicate": "requires",
+        "value": "every rotation emits an audit event",
+        "validFrom": "2025-11-01T00:00:00.000Z",
+        "validTo": null,
+        "evidence": [
+          {
+            "sourceRefId": "src:notion-arch",
+            "locator": "section-2"
+          }
+        ]
+      }
+    },
+    {
+      "t": 33,
+      "cmd": "CreateClaim",
+      "args": {
+        "claimId": "clm:auth-ttl",
+        "subject": "ent:halyard-auth",
+        "predicate": "access_token_ttl",
+        "value": "30 minutes",
+        "validFrom": "2025-11-01T00:00:00.000Z",
+        "validTo": null,
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-c-b2",
+            "locator": "message"
+          }
+        ]
+      }
+    },
+    {
+      "t": 34,
+      "cmd": "CreateClaim",
+      "args": {
+        "claimId": "clm:tr-latest",
+        "subject": "ent:tokenring",
+        "predicate": "latest_release",
+        "value": "1.4.0",
+        "validFrom": "2025-11-01T00:00:00.000Z",
+        "validTo": null,
+        "evidence": [
+          {
+            "sourceRefId": "src:notion-arch",
+            "locator": "section-5"
+          }
+        ]
+      }
+    },
+    {
+      "t": 35,
+      "cmd": "AssertRelationship",
+      "args": {
+        "relationshipId": "rel:auth-tokenring",
+        "from": "ent:halyard-auth",
+        "relType": "depends_on",
+        "to": "ent:tokenring",
+        "validFrom": "2025-06-01T00:00:00.000Z",
+        "validTo": null,
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-c-b2",
+            "locator": "message"
+          }
+        ]
+      }
+    },
+    {
+      "t": 36,
+      "cmd": "AssertRelationship",
+      "args": {
+        "relationshipId": "rel:api-auth",
+        "from": "ent:halyard-api",
+        "relType": "depends_on",
+        "to": "ent:halyard-auth",
+        "validFrom": "2025-06-01T00:00:00.000Z",
+        "validTo": null,
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-c-a1",
+            "locator": "message"
+          }
+        ]
+      }
+    },
+    {
+      "t": 37,
+      "cmd": "AssertRelationship",
+      "args": {
+        "relationshipId": "rel:ingest-api",
+        "from": "ent:kestrel-ingest",
+        "relType": "depends_on",
+        "to": "ent:halyard-api",
+        "validFrom": "2025-06-01T00:00:00.000Z",
+        "validTo": null,
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-c-d4",
+            "locator": "message"
+          }
+        ]
+      }
+    },
+    {
+      "t": 38,
+      "cmd": "AssertRelationship",
+      "note": "The removed shortcut. Valid before 2025-10-01 and dead after it, so a lane that ignores edge validity answers the impact query with a shorter path.",
+      "args": {
+        "relationshipId": "rel:api-tokenring",
+        "from": "ent:halyard-api",
+        "relType": "depends_on",
+        "to": "ent:tokenring",
+        "validFrom": "2025-04-01T00:00:00.000Z",
+        "validTo": null,
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-c-a1",
+            "locator": "message"
+          }
+        ]
+      }
+    },
+    {
+      "t": 39,
+      "cmd": "InvalidateRelationship",
+      "args": {
+        "relationshipId": "rel:api-tokenring",
+        "invalidFrom": "2025-10-01T00:00:00.000Z",
+        "reason": "halyard-api now routes token checks through halyard-auth",
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-c-a1",
+            "locator": "message"
+          }
+        ]
+      }
+    },
+    {
+      "t": 40,
+      "cmd": "AssertRelationship",
+      "note": "Decoy. Reachable from kestrel-ingest but never on a tokenring impact path.",
+      "args": {
+        "relationshipId": "rel:ingest-parseq",
+        "from": "ent:kestrel-ingest",
+        "relType": "depends_on",
+        "to": "ent:parseq",
+        "validFrom": "2025-06-01T00:00:00.000Z",
+        "validTo": null,
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-c-d4",
+            "locator": "message"
+          }
+        ]
+      }
+    },
+    {
+      "t": 41,
+      "cmd": "CreateClaim",
+      "args": {
+        "claimId": "clm:api-ratelimit",
+        "subject": "ent:halyard-api",
+        "predicate": "rate_limit_per_minute",
+        "value": "1000",
+        "validFrom": "2025-11-01T00:00:00.000Z",
+        "validTo": null,
+        "origin": "agent_inference",
+        "evidence": [
+          {
+            "sourceRefId": "src:notion-arch",
+            "locator": "section-5"
+          }
+        ]
+      }
+    },
+    {
+      "t": 42,
+      "cmd": "CreateClaim",
+      "args": {
+        "claimId": "clm:kestrel-pins-tr1",
+        "subject": "ent:kestrel-ingest",
+        "predicate": "pins_dependency",
+        "value": "tokenring 1.4.0",
+        "validFrom": "2025-12-20T00:00:00.000Z",
+        "validTo": null,
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-c-d4",
+            "locator": "message"
+          }
+        ]
+      }
+    },
+    {
+      "t": 43,
+      "cmd": "CreateClaim",
+      "args": {
+        "claimId": "clm:obs-flake-118",
+        "subject": "ent:auth-suite",
+        "predicate": "run_failed",
+        "value": "run 118 failed with a token collision",
+        "validFrom": "2025-12-28T00:00:00.000Z",
+        "validTo": null,
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-run-118",
+            "locator": "log"
+          }
+        ]
+      }
+    },
+    {
+      "t": 44,
+      "cmd": "CreateClaim",
+      "args": {
+        "claimId": "clm:obs-flake-119",
+        "subject": "ent:auth-suite",
+        "predicate": "run_failed",
+        "value": "run 119 failed with a token collision",
+        "validFrom": "2025-12-29T00:00:00.000Z",
+        "validTo": null,
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-run-119",
+            "locator": "log"
+          }
+        ]
+      }
+    },
+    {
+      "t": 45,
+      "cmd": "CreateClaim",
+      "args": {
+        "claimId": "clm:obs-flake-121",
+        "subject": "ent:auth-suite",
+        "predicate": "run_failed",
+        "value": "run 121 failed with a token collision",
+        "validFrom": "2025-12-30T00:00:00.000Z",
+        "validTo": null,
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-run-121",
+            "locator": "log"
+          }
+        ]
+      }
+    },
+    {
+      "t": 46,
+      "cmd": "SummarizeClaims",
+      "note": "The three observations stay true of their intervals. Summarised is not superseded and is not invalidated.",
+      "args": {
+        "claimId": "clm:sum-flake",
+        "subject": "ent:auth-suite",
+        "predicate": "failure_mode",
+        "value": "the auth integration suite is flaky under parallel execution due to token collision",
+        "validFrom": "2025-12-28T00:00:00.000Z",
+        "validTo": null,
+        "summarizes": [
+          "clm:obs-flake-118",
+          "clm:obs-flake-119",
+          "clm:obs-flake-121"
+        ],
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-run-118",
+            "locator": "log"
+          },
+          {
+            "sourceRefId": "src:gh-run-119",
+            "locator": "log"
+          },
+          {
+            "sourceRefId": "src:gh-run-121",
+            "locator": "log"
+          }
+        ]
+      }
+    },
+    {
+      "t": 47,
+      "cmd": "SupersedeClaim",
+      "note": "World progression. The 30-minute revision remains true of its own interval.",
+      "guard": {
+        "mode": "expected_version",
+        "target": "clm:auth-ttl"
+      },
+      "args": {
+        "claimId": "clm:auth-ttl",
+        "value": "15 minutes",
+        "worldChangeAt": "2026-02-01T00:00:00.000Z",
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-c-c3",
+            "locator": "message"
+          }
+        ]
+      }
+    },
+    {
+      "t": 48,
+      "cmd": "CorrectClaim",
+      "actor": "human",
+      "note": "Correction, not progression. The rate limit was never 1000 for this interval.",
+      "guard": {
+        "mode": "expected_version",
+        "target": "clm:api-ratelimit"
+      },
+      "args": {
+        "claimId": "clm:api-ratelimit",
+        "value": "100",
+        "reason": "the architecture page was stale; the merged diff is authoritative",
+        "decisionId": "dec:fix-ratelimit",
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-pr-42",
+            "locator": "diff-L44"
+          }
+        ]
+      }
+    },
+    {
+      "t": 49,
+      "cmd": "SupersedeClaim",
+      "note": "Makes the pin decision stale without invalidating it.",
+      "guard": {
+        "mode": "expected_version",
+        "target": "clm:tr-latest"
+      },
+      "args": {
+        "claimId": "clm:tr-latest",
+        "value": "2.0.0",
+        "worldChangeAt": "2026-01-20T00:00:00.000Z",
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-c-e5",
+            "locator": "message"
+          }
+        ]
+      }
+    },
+    {
+      "t": 50,
+      "cmd": "CreateEntity",
+      "args": {
+        "entityId": "ent:northwind"
+      }
+    },
+    {
+      "t": 51,
+      "cmd": "CreateEntity",
+      "args": {
+        "entityId": "ent:devi"
+      }
+    },
+    {
+      "t": 52,
+      "cmd": "CreateEntity",
+      "args": {
+        "entityId": "ent:devi-alt"
+      }
+    },
+    {
+      "t": 53,
+      "cmd": "CreateClaim",
+      "args": {
+        "claimId": "clm:devi-role",
+        "subject": "ent:devi",
+        "predicate": "engagement_lead_for",
+        "value": "Northwind Analytics security audit",
+        "validFrom": "2026-01-02T00:00:00.000Z",
+        "validTo": null,
+        "evidence": [
+          {
+            "sourceRefId": "src:mail-nw",
+            "locator": "msg-1"
+          }
+        ]
+      }
+    },
+    {
+      "t": 54,
+      "cmd": "CreateClaim",
+      "args": {
+        "claimId": "clm:nw-window",
+        "subject": "ent:northwind",
+        "predicate": "audit_window",
+        "value": "2026-03-09 to 2026-03-13",
+        "validFrom": "2026-01-03T00:00:00.000Z",
+        "validTo": null,
+        "evidence": [
+          {
+            "sourceRefId": "src:mail-nw",
+            "locator": "msg-3"
+          }
+        ]
+      }
+    },
+    {
+      "t": 55,
+      "cmd": "CreateClaim",
+      "note": "MUST be refused. The candidate is restricted and only a contentless rejection record may persist.",
+      "expect": "refused",
+      "args": {
+        "claimId": "clm:nw-personal",
+        "subject": "ent:devi",
+        "predicate": "personal_circumstance",
+        "value": "from src:mail-nw msg-2",
+        "sensitivity": "restricted",
+        "validFrom": "2026-01-03T00:00:00.000Z",
+        "validTo": null,
+        "evidence": [
+          {
+            "sourceRefId": "src:mail-nw",
+            "locator": "msg-2"
+          }
+        ]
+      }
+    },
+    {
+      "t": 56,
+      "cmd": "AssertRelationship",
+      "args": {
+        "relationshipId": "rel:nw-devi-alt",
+        "from": "ent:northwind",
+        "relType": "employs",
+        "to": "ent:devi-alt",
+        "validFrom": "2026-01-02T00:00:00.000Z",
+        "validTo": null,
+        "evidence": [
+          {
+            "sourceRefId": "src:mail-nw",
+            "locator": "msg-1"
+          }
+        ]
+      }
+    },
+    {
+      "t": 57,
+      "cmd": "MergeEntities",
+      "actor": "human",
+      "guard": {
+        "mode": "expected_version",
+        "target": "ent:devi-alt"
+      },
+      "args": {
+        "survivorId": "ent:devi",
+        "mergedId": "ent:devi-alt",
+        "decisionId": "dec:merge-devi",
+        "reason": "same person, two surface forms in one thread"
+      }
+    },
+    {
+      "t": 58,
+      "cmd": "CreateEntity",
+      "args": {
+        "entityId": "ent:halyard-alt"
+      }
+    },
+    {
+      "t": 59,
+      "cmd": "MergeEntities",
+      "actor": "human",
+      "guard": {
+        "mode": "expected_version",
+        "target": "ent:halyard-alt"
+      },
+      "args": {
+        "survivorId": "ent:halyard",
+        "mergedId": "ent:halyard-alt",
+        "decisionId": "dec:merge-halyard",
+        "reason": "repo name and project name are the same project"
+      }
+    },
+    {
+      "t": 60,
+      "cmd": "IngestPeerActivity",
+      "args": {
+        "publisherNodeId": "node.bo",
+        "recordId": "node.bo/0000000001"
+      }
+    },
+    {
+      "t": 61,
+      "cmd": "RecordContradiction",
+      "note": "Local commit evidence against the peer's report. Deliberately never resolved.",
+      "args": {
+        "contradictionId": "cfl:kestrel-version",
+        "members": [
+          "clm:kestrel-pins-tr1"
+        ],
+        "peerRecordId": "node.bo/0000000001",
+        "basis": "source_conflict"
+      }
+    },
+    {
+      "t": 62,
+      "cmd": "CreateClaim",
+      "note": "MUST be refused. A peer report cannot author a local claim.",
+      "expect": "refused",
+      "actor": "peer",
+      "args": {
+        "claimId": "clm:peer-kestrel-tr2",
+        "subject": "ent:kestrel-ingest",
+        "predicate": "pins_dependency",
+        "value": "tokenring 2.0.0",
+        "validFrom": "2026-01-04T00:00:00.000Z",
+        "validTo": null,
+        "evidence": [
+          {
+            "peerRecordId": "node.bo/0000000001"
+          }
+        ]
+      }
+    },
+    {
+      "t": 63,
+      "cmd": "OpenCandidateFromPeerReport",
+      "args": {
+        "candidateId": "cand:kestrel-tr2",
+        "recordId": "node.bo/0000000001"
+      }
+    },
+    {
+      "t": 64,
+      "cmd": "CanonizeClaim",
+      "actor": "human",
+      "guard": {
+        "mode": "expected_version",
+        "target": "clm:req-no-major-bump"
+      },
+      "args": {
+        "claimId": "clm:req-no-major-bump",
+        "decisionId": "dec:canon-freeze",
+        "rationale": "release freeze constraint is binding"
+      }
+    },
+    {
+      "t": 65,
+      "cmd": "CanonizeClaim",
+      "note": "MUST be refused. Canonization is human-only and is never delegable.",
+      "expect": "refused",
+      "actor": "agent",
+      "guard": {
+        "mode": "expected_version",
+        "target": "clm:req-rot-window"
+      },
+      "args": {
+        "claimId": "clm:req-rot-window",
+        "decisionId": null,
+        "rationale": "agent attempt"
+      }
+    },
+    {
+      "t": 66,
+      "cmd": "CorrectClaim",
+      "note": "MUST be refused as STALE_VERSION. Identical to t67 in every respect except the version token it carries, so staleness is the only variable.",
+      "expect": "refused",
+      "guard": {
+        "mode": "expected_version",
+        "target": "clm:auth-ttl",
+        "useStaleToken": true
+      },
+      "args": {
+        "claimId": "clm:auth-ttl",
+        "value": "45 minutes",
+        "reason": "stale writer",
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-c-b2",
+            "locator": "message"
+          }
+        ],
+        "decisionId": "dec:ttl-stale"
+      }
+    },
+    {
+      "t": 67,
+      "cmd": "CorrectClaim",
+      "note": "The same intent retried against the current token must succeed.",
+      "guard": {
+        "mode": "expected_version",
+        "target": "clm:auth-ttl"
+      },
+      "args": {
+        "claimId": "clm:auth-ttl",
+        "value": "10 minutes",
+        "reason": "retry against the observed current version",
+        "decisionId": "dec:ttl-retry",
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-c-c3",
+            "locator": "message"
+          }
+        ]
+      }
+    },
+    {
+      "t": 68,
+      "cmd": "RetractClaim",
+      "actor": "human",
+      "guard": {
+        "mode": "expected_version",
+        "target": "clm:devi-role"
+      },
+      "args": {
+        "claimId": "clm:devi-role",
+        "retractionClass": "sensitive",
+        "reason": "vendor contact detail withdrawn from the knowledge plane",
+        "decisionId": "dec:retract-devi"
+      }
+    },
+    {
+      "t": 69,
+      "cmd": "PublishActivityRecord",
+      "args": {
+        "recordId": "node.ada/0000000001",
+        "workItemId": "wi:rotation",
+        "kind": "completed",
+        "summary": "Refresh-token rotation landed for halyard-auth.",
+        "status": "done",
+        "outputs": [
+          {
+            "type": "github_pr",
+            "uri": "synthetic://github.invalid/acme/halyard/pull/42"
+          }
+        ],
+        "knowledgeRefs": [
+          "clm:req-no-major-bump"
+        ]
+      }
+    },
+    {
+      "t": 70,
+      "cmd": "PublishActivityRecord",
+      "note": "MUST be refused. A publisher may not write into another publisher's namespace.",
+      "expect": "refused",
+      "args": {
+        "recordId": "node.bo/0000000002",
+        "workItemId": "wi:rotation",
+        "kind": "progress",
+        "summary": "attempted cross-namespace write",
+        "status": "active",
+        "outputs": [],
+        "knowledgeRefs": []
+      }
+    },
+    {
+      "t": 71,
+      "cmd": "CreateClaim",
+      "note": "MUST be refused. A claim with no evidence reaching a source is not admissible.",
+      "expect": "refused",
+      "args": {
+        "claimId": "clm:unsourced",
+        "subject": "ent:halyard",
+        "predicate": "status",
+        "value": "healthy",
+        "validFrom": "2026-01-05T00:00:00.000Z",
+        "validTo": null,
+        "evidence": []
+      }
+    },
+    {
+      "t": 72,
+      "cmd": "CreateClaim",
+      "note": "MUST be refused. The interval is inverted.",
+      "expect": "refused",
+      "args": {
+        "claimId": "clm:bad-interval",
+        "subject": "ent:halyard",
+        "predicate": "status",
+        "value": "healthy",
+        "validFrom": "2026-03-01T00:00:00.000Z",
+        "validTo": "2026-01-01T00:00:00.000Z",
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-iss-9",
+            "locator": "body"
+          }
+        ]
+      }
+    },
+    {
+      "t": 73,
+      "cmd": "CreateClaim",
+      "note": "MUST be refused. The malformed source has no usable document.",
+      "expect": "refused",
+      "args": {
+        "claimId": "clm:from-malformed",
+        "subject": "ent:halyard",
+        "predicate": "status",
+        "value": "unknown",
+        "validFrom": "2026-01-05T00:00:00.000Z",
+        "validTo": null,
+        "evidence": [
+          {
+            "sourceRefId": "src:malformed",
+            "locator": "body"
+          }
+        ]
+      }
+    },
+    {
+      "t": 74,
+      "cmd": "ReinforceClaim",
+      "note": "Adds evidence and an observation count. It must not raise authority or canonize anything.",
+      "args": {
+        "claimId": "clm:req-rot-window",
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-pr-42",
+            "locator": "body"
+          }
+        ]
+      }
+    },
+    {
+      "t": 76,
+      "cmd": "SupersedeClaim",
+      "note": "World progression that leaves dec:fix-ratelimit pointing at a superseded revision. Staleness is a flag for a human, never an automatic invalidation of the decision.",
+      "guard": {
+        "mode": "expected_version",
+        "target": "clm:api-ratelimit"
+      },
+      "args": {
+        "claimId": "clm:api-ratelimit",
+        "value": "200",
+        "worldChangeAt": "2026-04-01T00:00:00.000Z",
+        "evidence": [
+          {
+            "sourceRefId": "src:gh-pr-42",
+            "locator": "body"
+          }
+        ]
+      }
+    },
+    {
+      "t": 77,
+      "cmd": "CreateClaim",
+      "note": "The research conclusion. The write-up itself stays in Notion; only the reference and the conclusion are local.",
+      "args": {
+        "claimId": "clm:rot-approach",
+        "subject": "ent:halyard-auth",
+        "predicate": "rotation_approach",
+        "value": "sliding-window refresh with server-side revocation",
+        "validFrom": "2025-12-15T00:00:00.000Z",
+        "validTo": null,
+        "origin": "agent_inference",
+        "evidence": [
+          {
+            "sourceRefId": "src:notion-rot",
+            "locator": "section-3"
+          }
+        ]
+      }
+    },
+    {
+      "t": 78,
+      "cmd": "PutActiveContext",
+      "args": {
+        "activeContextId": "ac:rotation",
+        "workItemId": "wi:rotation",
+        "items": [
+          {
+            "claimId": "clm:req-no-major-bump",
+            "tier": "canon"
+          },
+          {
+            "claimId": "clm:req-rot-window",
+            "tier": "reliable"
+          },
+          {
+            "claimId": "clm:auth-ttl",
+            "tier": "reliable"
+          }
+        ]
+      }
+    }
+  ]
+}

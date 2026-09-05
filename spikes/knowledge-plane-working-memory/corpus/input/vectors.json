@@ -1,0 +1,38 @@
+{
+  "schema": "agent-runtime/kpwm-corpus-vectors/1",
+  "note": "Frozen literal retrieval INPUTS over a fixed vocabulary. No model, no provider, no network. Both lanes consume these identical vectors through their own adapter; neither computes its own, so embedding quality cannot become the confound. These are inputs, not answers: the graded judgments that score a ranking live in the oracle and are never mounted into a lane.",
+  "vocabulary": [
+    "auth",
+    "suite",
+    "fail",
+    "token",
+    "collision",
+    "parallel",
+    "rotation",
+    "limit",
+    "audit",
+    "vendor",
+    "flaky",
+    "freeze"
+  ],
+  "fusionWeights": { "lexical": 0.4, "semantic": 0.4, "graph": 0.1, "recency": 0.05, "episodic": 0.05 },
+  "vectors": {
+    "clm:sum-flake": [1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0],
+    "clm:obs-flake-118": [1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0],
+    "clm:obs-flake-119": [1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0],
+    "clm:obs-flake-121": [1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0],
+    "clm:req-rot-window": [0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0],
+    "clm:req-audit-log": [1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0],
+    "clm:req-no-major-bump": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+    "clm:auth-ttl": [1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+    "clm:api-ratelimit": [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0],
+    "clm:rot-approach": [0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0],
+    "clm:kestrel-pins-tr1": [0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+    "clm:devi-role": [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0],
+    "clm:nw-window": [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0],
+    "node.bo/0000000001": [0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]
+  },
+  "queryVectors": {
+    "Q21": [1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0]
+  }
+}

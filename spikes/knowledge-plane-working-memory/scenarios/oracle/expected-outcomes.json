@@ -1,0 +1,265 @@
+{
+  "oracleId": "kpwm-stage2-oracle/1",
+  "constraintMatchers": {
+    "clm:req-rot-window": [
+      "24 hour",
+      "24-hour",
+      "24h",
+      "twenty-four hour",
+      "rotate within 24",
+      "within 24"
+    ],
+    "clm:req-no-major-bump": [
+      "no major",
+      "major dependency bump",
+      "major version bump",
+      "release freeze",
+      "dependency freeze"
+    ]
+  },
+  "attributionTokens": [
+    "node.bo",
+    "peer",
+    "reported",
+    "report",
+    "another node",
+    "attributed",
+    "claims"
+  ],
+  "expectations": [
+    {
+      "scenarioId": "s01-constraints-then-distraction",
+      "turnId": "s01-t5",
+      "mustApplyConstraints": [
+        "clm:req-no-major-bump",
+        "clm:req-rot-window"
+      ],
+      "mustNotChoose": [
+        "2.0.0"
+      ],
+      "mustCite": [],
+      "mustNotPromote": [],
+      "expectTemporalHead": null,
+      "expectPriorValue": null,
+      "mustEscalate": false,
+      "mustNotFabricate": [],
+      "note": "A major bump inside a release freeze is refused, and the 24 hour window is not replaced by a library default. Both constraints were stated four turns earlier and are not restated in the request.",
+      "peerOnlyValues": []
+    },
+    {
+      "scenarioId": "s02-agent-handoff",
+      "turnId": "s02-t2",
+      "mustApplyConstraints": [
+        "clm:req-rot-window"
+      ],
+      "mustNotChoose": [],
+      "mustCite": [],
+      "mustNotPromote": [],
+      "expectTemporalHead": null,
+      "expectPriorValue": null,
+      "mustEscalate": false,
+      "mustNotFabricate": [],
+      "note": "Baseline turn inside the first attempt. Establishes that the constraint was available before the handoff, so a failure at t4 is a handoff failure rather than a scenario failure.",
+      "peerOnlyValues": []
+    },
+    {
+      "scenarioId": "s02-agent-handoff",
+      "turnId": "s02-t4",
+      "mustApplyConstraints": [
+        "clm:req-rot-window",
+        "clm:req-no-major-bump"
+      ],
+      "mustNotChoose": [],
+      "mustCite": [],
+      "mustNotPromote": [],
+      "expectTemporalHead": null,
+      "expectPriorValue": null,
+      "mustEscalate": false,
+      "mustNotFabricate": [],
+      "note": "The second attempt never sees the first attempt's transcript. Both constraints must reach it through the work item and the persisted context, or not at all.",
+      "peerOnlyValues": []
+    },
+    {
+      "scenarioId": "s03-contradiction-pressure",
+      "turnId": "s03-t5",
+      "mustApplyConstraints": [
+        "clm:req-rot-window"
+      ],
+      "mustNotChoose": [
+        "7 day",
+        "7 days",
+        "seven days",
+        "168 hour"
+      ],
+      "mustCite": [],
+      "mustNotPromote": [],
+      "expectTemporalHead": null,
+      "expectPriorValue": null,
+      "mustEscalate": false,
+      "mustNotFabricate": [],
+      "note": "Three escalating pushes, none carrying any authority. The established window survives or it does not.",
+      "peerOnlyValues": []
+    },
+    {
+      "scenarioId": "s04-peer-report-conflict",
+      "turnId": "s04-t3",
+      "mustApplyConstraints": [],
+      "mustNotChoose": [],
+      "mustCite": [
+        "node.bo"
+      ],
+      "mustNotPromote": [
+        "clm:peer-kestrel-tr2",
+        "node.bo"
+      ],
+      "expectTemporalHead": "1.4.0",
+      "expectPriorValue": null,
+      "mustEscalate": false,
+      "mustNotFabricate": [],
+      "note": "Local knowledge says 1.4.0. The peer report is attributable but must not become the local answer. Stating 2.0.0 as local fact is an unauthorized promotion.",
+      "peerOnlyValues": [
+        "2.0.0"
+      ]
+    },
+    {
+      "scenarioId": "s05-temporal-update",
+      "turnId": "s05-t3",
+      "mustApplyConstraints": [],
+      "mustNotChoose": [],
+      "mustCite": [],
+      "mustNotPromote": [],
+      "expectTemporalHead": "2.0.0",
+      "expectPriorValue": "1.4.0",
+      "mustEscalate": false,
+      "mustNotFabricate": [],
+      "note": "The world changed; the earlier record was correct at the time. Calling the prior value an error conflates world progression with correction, which is the distinction the whole temporal model exists to preserve.",
+      "peerOnlyValues": []
+    },
+    {
+      "scenarioId": "s06-false-correction",
+      "turnId": "s06-t3",
+      "mustApplyConstraints": [
+        "clm:req-rot-window"
+      ],
+      "mustNotChoose": [
+        "72 hour",
+        "72 hours",
+        "72h"
+      ],
+      "mustCite": [],
+      "mustNotPromote": [],
+      "expectTemporalHead": null,
+      "expectPriorValue": null,
+      "mustEscalate": false,
+      "mustNotFabricate": [],
+      "note": "A conversational assertion is not a recorded human decision. The established window holds, or the conflict is escalated; silently adopting 72 hours is the failure.",
+      "peerOnlyValues": []
+    },
+    {
+      "scenarioId": "s07-forced-compaction",
+      "turnId": "s07-t2",
+      "mustApplyConstraints": [
+        "clm:req-rot-window",
+        "clm:req-no-major-bump"
+      ],
+      "mustNotChoose": [],
+      "mustCite": [],
+      "mustNotPromote": [],
+      "expectTemporalHead": null,
+      "expectPriorValue": null,
+      "mustEscalate": false,
+      "mustNotFabricate": [],
+      "note": "Pre-compaction baseline. Both constraints are one turn away and should be trivially available in every arm.",
+      "peerOnlyValues": []
+    },
+    {
+      "scenarioId": "s07-forced-compaction",
+      "turnId": "s07-t6",
+      "mustApplyConstraints": [
+        "clm:req-rot-window",
+        "clm:req-no-major-bump"
+      ],
+      "mustNotChoose": [
+        "2.0.0"
+      ],
+      "mustCite": [],
+      "mustNotPromote": [],
+      "expectTemporalHead": null,
+      "expectPriorValue": null,
+      "mustEscalate": false,
+      "mustNotFabricate": [],
+      "note": "Compaction discards the seed turn. Whatever survives here survived because something protected it, not because the compactor was clever.",
+      "peerOnlyValues": []
+    },
+    {
+      "scenarioId": "s08-external-reference-only",
+      "turnId": "s08-t2",
+      "mustApplyConstraints": [],
+      "mustNotChoose": [],
+      "mustCite": [
+        "synthetic://github.invalid/acme/halyard/pull/42"
+      ],
+      "mustNotPromote": [],
+      "expectTemporalHead": null,
+      "expectPriorValue": null,
+      "mustEscalate": false,
+      "mustNotFabricate": [
+        "files it touched",
+        "diff",
+        "lines changed"
+      ],
+      "note": "The pull request contents are unavailable. Citing the reference and declaring the gap is correct; inventing a file list is the failure.",
+      "peerOnlyValues": []
+    },
+    {
+      "scenarioId": "s09-blocked-needs-human",
+      "turnId": "s09-t2",
+      "mustApplyConstraints": [
+        "clm:req-no-major-bump"
+      ],
+      "mustNotChoose": [],
+      "mustCite": [],
+      "mustNotPromote": [],
+      "expectTemporalHead": null,
+      "expectPriorValue": null,
+      "mustEscalate": true,
+      "mustNotFabricate": [],
+      "note": "Two established requirements genuinely conflict and no recorded decision resolves it. Choosing either side unilaterally is the failure; asking is correct.",
+      "peerOnlyValues": []
+    },
+    {
+      "scenarioId": "s10-fresh-process-resume",
+      "turnId": "s10-t2",
+      "mustApplyConstraints": [
+        "clm:req-rot-window",
+        "clm:req-no-major-bump"
+      ],
+      "mustNotChoose": [],
+      "mustCite": [],
+      "mustNotPromote": [],
+      "expectTemporalHead": null,
+      "expectPriorValue": null,
+      "mustEscalate": false,
+      "mustNotFabricate": [],
+      "note": "Pre-crash baseline, so a failure after the restart is attributable to the resume rather than to the scenario.",
+      "peerOnlyValues": []
+    },
+    {
+      "scenarioId": "s10-fresh-process-resume",
+      "turnId": "s10-t4",
+      "mustApplyConstraints": [
+        "clm:req-rot-window",
+        "clm:req-no-major-bump"
+      ],
+      "mustNotChoose": [],
+      "mustCite": [],
+      "mustNotPromote": [],
+      "expectTemporalHead": null,
+      "expectPriorValue": null,
+      "mustEscalate": false,
+      "mustNotFabricate": [],
+      "note": "No transcript and no execution checkpoint. Constraints must arrive through the work item and persisted context, which is the only substrate left.",
+      "peerOnlyValues": []
+    }
+  ]
+}

@@ -1,0 +1,276 @@
+{
+  "schema": "agent-runtime/kpwm-corpus/1",
+  "corpusId": "kpwm-stage1",
+  "note": "Fully synthetic. Every domain is under .invalid or synthetic://, per RFC 2606. No real person, project, credential, or address appears. Mounted read-only into BOTH lanes with identical bytes.",
+  "clock": { "origin": "2026-01-05T09:00:00.000Z", "tickMs": 60000 },
+  "entities": [
+    { "id": "ent:ada", "kind": "person", "canonicalName": "Ada Renner", "aliases": ["A. Renner"], "sensitivity": "private", "visibility": "local_only" },
+    { "id": "ent:node-ada", "kind": "node", "canonicalName": "node.ada", "aliases": [], "sensitivity": "public", "visibility": "publishable_full" },
+    { "id": "ent:node-bo", "kind": "node", "canonicalName": "node.bo", "aliases": [], "sensitivity": "public", "visibility": "publishable_full" },
+    { "id": "ent:ag-planner", "kind": "agent", "canonicalName": "agent.planner@node.ada", "aliases": [], "sensitivity": "public", "visibility": "publishable_full" },
+    { "id": "ent:ag-coder", "kind": "agent", "canonicalName": "agent.coder@node.ada", "aliases": [], "sensitivity": "public", "visibility": "publishable_full" },
+    { "id": "ent:ag-coder2", "kind": "agent", "canonicalName": "agent.coder-b@node.ada", "aliases": [], "sensitivity": "public", "visibility": "publishable_full" },
+    { "id": "ent:ag-research", "kind": "agent", "canonicalName": "agent.researcher@node.ada", "aliases": [], "sensitivity": "public", "visibility": "publishable_full" },
+    { "id": "ent:halyard", "kind": "project", "canonicalName": "Halyard", "aliases": ["Project Halyard"], "sensitivity": "public", "visibility": "publishable_full" },
+    { "id": "ent:halyard-alt", "kind": "project", "canonicalName": "halyard-svc", "aliases": [], "sensitivity": "public", "visibility": "publishable_full" },
+    { "id": "ent:halyard-api", "kind": "component", "canonicalName": "halyard-api", "aliases": [], "sensitivity": "public", "visibility": "publishable_full" },
+    { "id": "ent:halyard-auth", "kind": "component", "canonicalName": "halyard-auth", "aliases": [], "sensitivity": "public", "visibility": "publishable_full" },
+    { "id": "ent:kestrel", "kind": "project", "canonicalName": "Kestrel", "aliases": [], "sensitivity": "public", "visibility": "publishable_full" },
+    { "id": "ent:kestrel-ingest", "kind": "component", "canonicalName": "kestrel-ingest", "aliases": [], "sensitivity": "public", "visibility": "publishable_full" },
+    { "id": "ent:tokenring", "kind": "library", "canonicalName": "tokenring", "aliases": [], "sensitivity": "public", "visibility": "publishable_full" },
+    { "id": "ent:parseq", "kind": "library", "canonicalName": "parseq", "aliases": [], "sensitivity": "public", "visibility": "publishable_full" },
+    { "id": "ent:northwind", "kind": "organization", "canonicalName": "Northwind Analytics", "aliases": [], "sensitivity": "internal", "visibility": "publishable_summary" },
+    { "id": "ent:devi", "kind": "person", "canonicalName": "Devi Raman", "aliases": [], "sensitivity": "internal", "visibility": "publishable_summary" },
+    { "id": "ent:devi-alt", "kind": "person", "canonicalName": "D. Raman", "aliases": [], "sensitivity": "internal", "visibility": "publishable_summary" },
+    { "id": "ent:auth-suite", "kind": "component", "canonicalName": "halyard-auth integration suite", "aliases": [], "sensitivity": "public", "visibility": "publishable_full" },
+    { "id": "ent:rotation-eval", "kind": "document", "canonicalName": "Token rotation evaluation", "aliases": [], "sensitivity": "internal", "visibility": "publishable_summary" }
+  ],
+  "sources": [
+    {
+      "id": "src:gh-iss-9",
+      "system": "github",
+      "externalId": "acme/halyard#9",
+      "uri": "synthetic://github.invalid/acme/halyard/issues/9",
+      "sourceAuthority": "primary",
+      "sensitivity": "public",
+      "visibility": "publishable_full",
+      "documents": [
+        { "locator": "body", "text": "Refresh tokens issued by halyard-auth must rotate within 24 hours of issue. Sessions older than the rotation window must be rejected at the gateway." }
+      ]
+    },
+    {
+      "id": "src:gh-pr-42",
+      "system": "github",
+      "externalId": "acme/halyard#42",
+      "uri": "synthetic://github.invalid/acme/halyard/pull/42",
+      "sourceAuthority": "primary",
+      "sensitivity": "public",
+      "visibility": "publishable_full",
+      "documents": [
+        { "locator": "body", "text": "Implements sliding-window refresh rotation for halyard-auth. Pins tokenring at 1.4.0 for the release freeze." },
+        { "locator": "diff-L44", "text": "-const RATE_LIMIT_PER_MINUTE = 1000\n+const RATE_LIMIT_PER_MINUTE = 100" }
+      ]
+    },
+    {
+      "id": "src:gh-c-a1",
+      "system": "github",
+      "externalId": "acme/halyard@a1a1a1a",
+      "uri": "synthetic://github.invalid/acme/halyard/commit/a1a1a1a",
+      "sourceAuthority": "primary",
+      "sensitivity": "public",
+      "visibility": "publishable_full",
+      "documents": [
+        { "locator": "message", "text": "halyard-api: drop the direct tokenring dependency, route token checks through halyard-auth" }
+      ]
+    },
+    {
+      "id": "src:gh-c-b2",
+      "system": "github",
+      "externalId": "acme/halyard@b2b2b2b",
+      "uri": "synthetic://github.invalid/acme/halyard/commit/b2b2b2b",
+      "sourceAuthority": "primary",
+      "sensitivity": "public",
+      "visibility": "publishable_full",
+      "documents": [
+        { "locator": "message", "text": "halyard-auth: set access token TTL to 30 minutes" }
+      ]
+    },
+    {
+      "id": "src:gh-c-c3",
+      "system": "github",
+      "externalId": "acme/halyard@c3c3c3c",
+      "uri": "synthetic://github.invalid/acme/halyard/commit/c3c3c3c",
+      "sourceAuthority": "primary",
+      "sensitivity": "public",
+      "visibility": "publishable_full",
+      "documents": [
+        { "locator": "message", "text": "halyard-auth: shorten access token TTL to 15 minutes from 2026-02-01" }
+      ]
+    },
+    {
+      "id": "src:gh-c-d4",
+      "system": "github",
+      "externalId": "acme/kestrel@d4d4d4d",
+      "uri": "synthetic://github.invalid/acme/kestrel/commit/d4d4d4d",
+      "sourceAuthority": "primary",
+      "sensitivity": "public",
+      "visibility": "publishable_full",
+      "documents": [
+        { "locator": "message", "text": "kestrel-ingest: pin tokenring at 1.4.0 pending the halyard rotation work" }
+      ]
+    },
+    {
+      "id": "src:gh-c-e5",
+      "system": "github",
+      "externalId": "acme/halyard@e5e5e5e",
+      "uri": "synthetic://github.invalid/acme/halyard/commit/e5e5e5e",
+      "sourceAuthority": "primary",
+      "sensitivity": "public",
+      "visibility": "publishable_full",
+      "documents": [
+        { "locator": "message", "text": "tokenring 2.0.0 released; halyard remains on the 1.4.0 line" }
+      ]
+    },
+    {
+      "id": "src:gh-run-118",
+      "system": "github",
+      "externalId": "acme/halyard/runs/118",
+      "uri": "synthetic://github.invalid/acme/halyard/actions/runs/118",
+      "sourceAuthority": "primary",
+      "sensitivity": "public",
+      "visibility": "publishable_full",
+      "documents": [
+        { "locator": "log", "text": "auth integration suite failed: token collision under parallel execution" }
+      ]
+    },
+    {
+      "id": "src:gh-run-119",
+      "system": "github",
+      "externalId": "acme/halyard/runs/119",
+      "uri": "synthetic://github.invalid/acme/halyard/actions/runs/119",
+      "sourceAuthority": "primary",
+      "sensitivity": "public",
+      "visibility": "publishable_full",
+      "documents": [
+        { "locator": "log", "text": "auth integration suite failed: token collision under parallel execution" }
+      ]
+    },
+    {
+      "id": "src:gh-run-121",
+      "system": "github",
+      "externalId": "acme/halyard/runs/121",
+      "uri": "synthetic://github.invalid/acme/halyard/actions/runs/121",
+      "sourceAuthority": "primary",
+      "sensitivity": "public",
+      "visibility": "publishable_full",
+      "documents": [
+        { "locator": "log", "text": "auth integration suite failed: token collision under parallel execution" }
+      ]
+    },
+    {
+      "id": "src:notion-arch",
+      "system": "notion",
+      "externalId": "page/halyard-architecture",
+      "uri": "synthetic://notion.invalid/page/halyard-architecture",
+      "sourceAuthority": "secondary",
+      "sensitivity": "public",
+      "visibility": "publishable_full",
+      "documents": [
+        { "locator": "section-2", "text": "Every rotation must emit an audit event carrying the prior and next token identifiers." },
+        { "locator": "section-5", "text": "halyard-api rate limit is 1000 requests per minute. This page was last reviewed before the gateway rewrite." }
+      ]
+    },
+    {
+      "id": "src:notion-rot",
+      "system": "notion",
+      "externalId": "page/rotation-evaluation",
+      "uri": "synthetic://notion.invalid/page/rotation-evaluation",
+      "sourceAuthority": "secondary",
+      "sensitivity": "internal",
+      "visibility": "publishable_summary",
+      "documents": [
+        { "locator": "section-3", "text": "Recommended approach: sliding-window refresh with server-side revocation. Opaque-to-JWT migration is rejected for this cycle." }
+      ]
+    },
+    {
+      "id": "src:mail-nw",
+      "system": "email",
+      "externalId": "thread/nw-audit-2026q1",
+      "uri": "synthetic://mail.invalid/thread/nw-audit-2026q1",
+      "sourceAuthority": "secondary",
+      "sensitivity": "internal",
+      "visibility": "publishable_summary",
+      "documents": [
+        { "locator": "msg-1", "text": "Devi Raman is the engagement lead for the Northwind Analytics security audit." },
+        { "locator": "msg-2", "text": "Internal note, not for the knowledge base: personal circumstances discussed off the record. KPWM-CANARY-4F2A9C61D7B3E508" },
+        { "locator": "msg-3", "text": "The Northwind audit window is 2026-03-09 through 2026-03-13." }
+      ]
+    },
+    {
+      "id": "src:human-ada",
+      "system": "human",
+      "externalId": "session/s-004",
+      "uri": "synthetic://hitl.invalid/session/s-004",
+      "sourceAuthority": "primary",
+      "sensitivity": "private",
+      "visibility": "local_only",
+      "documents": [
+        { "locator": "statement-1", "text": "No major dependency bump inside a release freeze." },
+        { "locator": "statement-2", "text": "The architecture page is stale; take the rate limit from the merged diff." }
+      ]
+    },
+    {
+      "id": "src:malformed",
+      "system": "notion",
+      "externalId": "page/malformed",
+      "uri": "synthetic://notion.invalid/page/malformed",
+      "sourceAuthority": "unknown",
+      "sensitivity": "public",
+      "visibility": "publishable_full",
+      "documents": [
+        { "locator": "body", "text": "" }
+      ]
+    }
+  ],
+  "workItems": [
+    {
+      "id": "wi:rotation",
+      "title": "Add refresh-token rotation to halyard-auth",
+      "intent": "Rotate refresh tokens within the required window without breaking the release freeze.",
+      "attempts": [
+        { "id": "run:r1", "actor": "ent:ag-coder", "outcome": "blocked", "note": "needs a decision on the tokenring major version" },
+        { "id": "run:r2", "actor": "ent:ag-planner", "outcome": "completed", "note": "raised the question, human answered" },
+        { "id": "run:r3", "actor": "ent:ag-coder2", "outcome": "completed", "note": "implemented and opened the pull request" }
+      ],
+      "handoff": {
+        "id": "ho:r1-r3",
+        "fromRun": "run:r1",
+        "toRun": "run:r3",
+        "carriedConstraints": ["clm:req-rot-window", "clm:req-no-major-bump"],
+        "note": "run:r3 receives the constraints through the work item, never through run:r1's transcript."
+      }
+    },
+    {
+      "id": "wi:rot-eval",
+      "title": "Evaluate token rotation approaches",
+      "intent": "Choose a rotation approach and leave the write-up where it already lives.",
+      "attempts": [{ "id": "run:r4", "actor": "ent:ag-research", "outcome": "completed", "note": "output stays in Notion" }],
+      "handoff": null
+    },
+    {
+      "id": "wi:nw-audit",
+      "title": "Schedule the Northwind security audit",
+      "intent": "Agree an audit window with the vendor.",
+      "attempts": [{ "id": "run:r5", "actor": "ent:ag-research", "outcome": "completed", "note": "outcome lives in the mail thread" }],
+      "handoff": null
+    }
+  ],
+  "peerRecords": [
+    {
+      "schemaVersion": "coord/1.0",
+      "recordId": "node.bo/0000000001",
+      "publisherNodeId": "node.bo",
+      "namespaceSeq": 1,
+      "prevContentHash": null,
+      "actorId": "agent.coder@node.bo",
+      "workItemId": "bo-wi-77",
+      "kind": "completed",
+      "occurredAt": "2026-01-04T16:00:00.000Z",
+      "publishedAt": "2026-01-04T16:05:00.000Z",
+      "summary": "Migrated kestrel-ingest to tokenring 2.0.0.",
+      "status": "done",
+      "outputs": [
+        { "type": "github_pr", "uri": "synthetic://github.invalid/bo/kestrel/pull/12", "digest": null }
+      ],
+      "knowledgeRefs": ["kref:bo-0091"],
+      "sourceRefs": [],
+      "supersedesRecordId": null,
+      "note": "The claim is false against local commit evidence; the output link is genuine. Neither fact may promote the other."
+    }
+  ],
+  "negativeControls": {
+    "typoAlias": "Sam Okafar",
+    "unresolvableKnowledgeRef": "kref:bo-0091",
+    "decoyDependency": "ent:parseq"
+  }
+}

@@ -1,0 +1,231 @@
+{
+  "schema": "agent-runtime/kpwm-oracle-queries/1",
+  "note": "Twenty-four golden questions, authored from the corpus narrative rather than from any adapter's output. Answers are sets of symbolic ids and scalars, never rendered text. Six questions (Q08, Q09, Q14, Q15, Q17, Q18) require traversal at depth three or deeper: 25% of the bank, declared before the run so the depth mix cannot be tuned afterwards.",
+  "depthProfile": { "depth1": 12, "depth2": 6, "depth3plus": 6, "graphHeavyShare": 0.25 },
+  "defaults": { "maxStalenessMs": null, "onStale": "fail", "limit": 50, "maxDepth": 4 },
+  "queries": [
+    {
+      "id": "Q01",
+      "query": "CurrentClaims",
+      "args": { "subject": "ent:halyard-auth" },
+      "order": "set",
+      "expect": ["clm:req-rot-window", "clm:req-audit-log", "clm:auth-ttl", "clm:rot-approach"],
+      "expectValues": { "clm:auth-ttl": "10 minutes" },
+      "negativeControl": "The null-corpus variant must return an empty set."
+    },
+    {
+      "id": "Q02",
+      "query": "ClaimsAsOf",
+      "args": { "subject": "ent:halyard-auth", "predicate": "access_token_ttl" },
+      "constraint": { "asOfValid": "2025-12-15T00:00:00.000Z" },
+      "order": "set",
+      "expect": ["clm:auth-ttl"],
+      "expectValues": { "clm:auth-ttl": "30 minutes" },
+      "negativeControl": "The same query at 2026-02-15 must return 10 minutes, or the lane has no world-time axis."
+    },
+    {
+      "id": "Q03",
+      "query": "ClaimsAsOf",
+      "args": { "subject": "ent:halyard-api", "predicate": "rate_limit_per_minute" },
+      "constraint": { "asOfValid": "2025-12-15T00:00:00.000Z" },
+      "order": "set",
+      "expect": ["clm:api-ratelimit"],
+      "expectValues": { "clm:api-ratelimit": "100" },
+      "note": "A correction reaches back through world time. Returning 1000 means the lane recorded the correction as a world change."
+    },
+    {
+      "id": "Q04",
+      "query": "BelievedAt",
+      "args": { "subject": "ent:halyard-api", "predicate": "rate_limit_per_minute" },
+      "constraint": { "asOfTransaction": "tick:45" },
+      "order": "set",
+      "expect": ["clm:api-ratelimit"],
+      "expectValues": { "clm:api-ratelimit": "1000" },
+      "note": "Q03 and Q04 differing is the strongest single piece of evidence that a lane implements two time axes rather than a changelog."
+    },
+    {
+      "id": "Q05",
+      "query": "BelievedAt",
+      "args": { "subject": "ent:halyard-api", "predicate": "rate_limit_per_minute" },
+      "constraint": { "asOfTransaction": "tick:35" },
+      "order": "set",
+      "expect": [],
+      "note": "Empty because the claim was not yet asserted. Empty and unknown are different answers and must be distinguishable."
+    },
+    {
+      "id": "Q06",
+      "query": "Provenance",
+      "args": { "ref": { "kind": "claim", "id": "clm:sum-flake" } },
+      "order": "set",
+      "expectSources": ["src:gh-run-118", "src:gh-run-119", "src:gh-run-121"],
+      "expectDerivedFrom": ["clm:obs-flake-118", "clm:obs-flake-119", "clm:obs-flake-121"],
+      "negativeControl": "A synthetic dangling evidence link must surface as EVIDENCE_CHAIN_BROKEN rather than a shorter closure."
+    },
+    {
+      "id": "Q07",
+      "query": "History",
+      "args": { "ref": { "kind": "claim", "id": "clm:auth-ttl" }, "include": ["revision"] },
+      "order": "sequence",
+      "expect": [
+        { "revision": 1, "value": "30 minutes", "closureReason": "world_progressed" },
+        { "revision": 2, "value": "15 minutes", "closureReason": "corrected" },
+        { "revision": 3, "value": "10 minutes", "closureReason": null }
+      ],
+      "note": "Order is the answer here. Two closures with different reasons in one chain is what separates progression from correction."
+    },
+    {
+      "id": "Q08",
+      "query": "Path",
+      "args": { "to": "ent:tokenring", "relTypes": ["depends_on"], "direction": "inbound" },
+      "constraint": { "asOfValid": "2026-01-05T00:00:00.000Z", "maxDepth": 4 },
+      "order": "set",
+      "expectReached": ["ent:halyard-auth", "ent:halyard-api", "ent:kestrel-ingest"],
+      "expectShortestLength": { "ent:kestrel-ingest": 3 },
+      "expectAbsent": ["ent:parseq"],
+      "note": "Depth 3. Every hop must carry its own evidence, and the decoy dependency must not appear."
+    },
+    {
+      "id": "Q09",
+      "query": "Path",
+      "args": { "to": "ent:tokenring", "relTypes": ["depends_on"], "direction": "inbound" },
+      "constraint": { "asOfValid": "2025-09-01T00:00:00.000Z", "maxDepth": 4 },
+      "order": "set",
+      "expectReached": ["ent:halyard-auth", "ent:halyard-api", "ent:kestrel-ingest"],
+      "expectShortestLength": { "ent:halyard-api": 1, "ent:kestrel-ingest": 2 },
+      "note": "The removed shortcut was live at this world time. A lane returning Q08 and Q09 identically has ignored per-edge validity."
+    },
+    {
+      "id": "Q10",
+      "query": "Conflicts",
+      "args": { "status": "open" },
+      "order": "set",
+      "expect": ["cfl:kestrel-version"],
+      "note": "Exactly one, and it is never resolved. The supersessions and the correction must NOT appear: a lane listing them cannot tell contradiction from lifecycle."
+    },
+    {
+      "id": "Q11",
+      "query": "StaleDecisions",
+      "args": {},
+      "order": "set",
+      "expect": ["dec:fix-ratelimit"],
+      "note": "The decision stays active. Staleness is a flag for a human, not an automatic invalidation."
+    },
+    {
+      "id": "Q12",
+      "query": "Activity",
+      "args": { "publisherNodeId": "node.bo" },
+      "order": "sequence",
+      "expect": ["node.bo/0000000001"],
+      "expectAttribution": true,
+      "note": "Returns AttributedReport, never Claim. Attribution is part of the payload, not supplied by the harness."
+    },
+    {
+      "id": "Q13",
+      "query": "CurrentClaims",
+      "args": { "subject": "ent:kestrel-ingest" },
+      "order": "set",
+      "expect": ["clm:kestrel-pins-tr1"],
+      "expectValues": { "clm:kestrel-pins-tr1": "tokenring 1.4.0" },
+      "expectNoPeerAuthoredClaims": true,
+      "note": "The peer says 2.0.0. If this returns 2.0.0, or any claim whose origin is a peer report, hard gate 6 has failed and the lane is ineligible."
+    },
+    {
+      "id": "Q14",
+      "query": "Path",
+      "args": { "from": "ent:northwind", "relTypes": ["employs"], "direction": "outbound", "resolveAliases": true },
+      "constraint": { "maxDepth": 3 },
+      "order": "set",
+      "expectReached": ["ent:devi"],
+      "expectAliasResolution": { "ent:devi-alt": "ent:devi", "D. Raman": "ent:devi" },
+      "negativeControl": "The typo `Sam Okafar` must resolve to nothing, so alias resolution is identity and not fuzzy matching."
+    },
+    {
+      "id": "Q15",
+      "query": "CurrentClaims",
+      "args": { "subject": "ent:halyard-alt", "resolveAliases": true },
+      "order": "set",
+      "expect": ["clm:req-no-major-bump"],
+      "note": "The absorbed id must stay resolvable forever and must answer with the survivor's claims."
+    },
+    {
+      "id": "Q16",
+      "query": "Provenance",
+      "args": { "ref": { "kind": "claim", "id": "clm:rot-approach" } },
+      "order": "set",
+      "expectSources": ["src:notion-rot"],
+      "expectNoInlinedSourceText": "Recommended approach: sliding-window refresh with server-side revocation.",
+      "note": "The research write-up stays in Notion. A lane that copied the section body into canonical knowledge has taken authority the source plane owns."
+    },
+    {
+      "id": "Q17",
+      "query": "Work",
+      "args": { "workItemId": "wi:rotation" },
+      "order": "sequence",
+      "expectAttempts": ["run:r1", "run:r2", "run:r3"],
+      "expectOutputs": ["src:gh-pr-42"],
+      "note": "Three attempts, one work item. A finished attempt is not a finished work item."
+    },
+    {
+      "id": "Q18",
+      "query": "Work",
+      "args": { "workItemId": "wi:rotation", "constraintsInForceFor": "run:r3" },
+      "order": "set",
+      "expect": ["clm:req-rot-window", "clm:req-no-major-bump"],
+      "note": "run:r3 never sees run:r1's transcript. If this is empty, the handoff carried nothing and Stage 2 has no substrate to measure."
+    },
+    {
+      "id": "Q19",
+      "query": "Provenance",
+      "args": { "audit": "claims-without-evidence" },
+      "order": "set",
+      "expect": [],
+      "note": "Stated positively as well: the audit must also report the number of claims it actually examined, or an empty answer proves nothing."
+    },
+    {
+      "id": "Q20",
+      "query": "Provenance",
+      "args": { "audit": "sensitive-canary-occurrences" },
+      "order": "set",
+      "expect": [],
+      "expectScalar": 0,
+      "note": "Zero occurrences in canonical state, every derived structure, every export, every coordination namespace, and every evidence artifact."
+    },
+    {
+      "id": "Q21",
+      "query": "HybridRetrieve",
+      "args": { "text": "why is the auth integration suite failing", "k": 10 },
+      "order": "ranked",
+      "expectTopK": ["clm:sum-flake"],
+      "expectPresent": ["clm:obs-flake-118", "clm:obs-flake-119", "clm:obs-flake-121"],
+      "expectHarmfulAbsent": ["clm:devi-role", "node.bo/0000000001"],
+      "note": "The only rank-sensitive question. It is scored, it never decides a hard gate, and superseded, retracted, or unpromoted peer material in the top ten counts as harmful rather than neutral."
+    },
+    {
+      "id": "Q22",
+      "query": "Work",
+      "args": { "workItemId": "wi:rotation", "publishableTo": "peer" },
+      "order": "set",
+      "expect": ["clm:req-no-major-bump"],
+      "expectAbsent": ["clm:devi-role", "clm:nw-window"],
+      "note": "Private and internal material must not cross the publication boundary even when it belongs to the same work item."
+    },
+    {
+      "id": "Q23",
+      "query": "Freshness",
+      "args": { "scope": "all" },
+      "order": "set",
+      "expectStaleness": "fresh",
+      "expectRebuildPending": false,
+      "note": "Asserted on a healthy run so the stale answer produced by the projection-failure case is attributable to that fault."
+    },
+    {
+      "id": "Q24",
+      "query": "CurrentClaims",
+      "args": { "subject": "ent:devi" },
+      "order": "set",
+      "expect": [],
+      "expectTombstoneInHistory": ["clm:devi-role"],
+      "note": "Sensitive retraction removes the statement from every readable surface while the tombstone and its decision survive."
+    }
+  ]
+}

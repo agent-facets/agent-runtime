@@ -1,0 +1,84 @@
+{
+  "schema": "agent-runtime/spike-fixtures/3",
+  "spike": "knowledge-plane-working-memory",
+  "base_image": "node:24.6.0-bookworm-slim@sha256:9b741b28148b0195d62fa456ed84dd6c953c1f17a3761f3e6e6797a754d9edff",
+  "database_image": "pgvector/pgvector:pg17-bookworm@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f",
+  "graph_image": "neo4j:2026.07.1-community-ubi10@sha256:4c470275ab23a8a330d302ca98d3d440cd4b09d71b3fa3c05144999e5d9b241d",
+  "git_image": "alpine/git:v2.49.1@sha256:c0280cf9572316299b08544065d3bf35db65043d5e3963982ec50647d2746e26",
+  "candidate": {
+    "neo4j-driver": {
+      "version": "6.2.0",
+      "integrity": "sha512-9W/Tk7EyjZHtv87NFpqoIbl0mlQx8bX8phUFzAM9xmeJrRpGDvqkpdQzc11DjwzywQCdhifaZPSvokSnAp7YTg==",
+      "license": "Apache-2.0"
+    },
+    "pg": {
+      "version": "8.16.3",
+      "integrity": "sha512-enxc1h0jA/aq5oSDMvqyW3q89ra6XIIDZgCX9vkMrnz5DFTw/Ny3Li2lFQ+pt3L6MCgm/5o2o8HW9hiJji+xvw==",
+      "license": "MIT"
+    },
+    "zod": {
+      "version": "4.5.4",
+      "integrity": "sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA==",
+      "license": "MIT"
+    }
+  },
+  "toolchain": {
+    "typescript": "6.0.3",
+    "@types/node": "24.12.2",
+    "@types/pg": "8.15.6"
+  },
+  "frozen": {
+    "note": "The corpus and the oracle are authored, hashed, and frozen before any adapter exists. These digests are baked into the image, so a tampered or regenerated oracle is caught by the image rather than by the tree that was tampered with. Changing either requires an append-only amendment and a full regeneration of BOTH lanes' evidence.",
+    "corpusRoot": "4c013d24661b9677ecacf05863ae021e884b7b4a670641f2d0fef0142bd20b99",
+    "oracleRoot": "1646f5798e2158e22f63fb9634f70b4be2b15ca79791de3f5f219798b98da76d",
+    "amendments": 0,
+    "amendmentBudget": 5,
+    "authoringChanges": [
+      {
+        "at": "step-11",
+        "tree": "corpus",
+        "from": "10c7304dd4f574b0708801467eba1511190e6a5768627bd1af12f10e70ead577",
+        "to": "f0e718233bf3c4ae5dc4fe043819cbfca69e0466ed6a4edcc87a8c0c1376019c",
+        "change": "t66 gained a decision reference so it differs from t67 in exactly one variable: the version token it carries.",
+        "why": "The stale-write case was being refused for an unrelated authorization reason, which would have measured the wrong thing in both lanes.",
+        "note": "An authoring change, made before any lane evidence existed. It is not an amendment: an amendment is a change made after a lane has been measured, and it costs a full regeneration of both lanes."
+      },
+      {
+        "at": "step-11",
+        "tree": "corpus+oracle",
+        "from": {
+          "corpus": "f0e718233bf3c4ae5dc4fe043819cbfca69e0466ed6a4edcc87a8c0c1376019c",
+          "oracle": "ef7d18b46f8bc88313a2d2586ba08a778ed600e7b968b08b58ab3c81fc733aa3"
+        },
+        "to": {
+          "corpus": "4c013d24661b9677ecacf05863ae021e884b7b4a670641f2d0fef0142bd20b99",
+          "oracle": "1646f5798e2158e22f63fb9634f70b4be2b15ca79791de3f5f219798b98da76d"
+        },
+        "change": "Retrieval INPUTS and the golden QUESTIONS moved to the corpus side as corpus/input/vectors.json and corpus/input/queries.json. The oracle keeps the graded judgments as oracle/judgments.json and keeps every expected answer in oracle/expected-queries.json. No question, vector, weight, grade, or expected answer changed value.",
+        "why": "The oracle held both the inputs a lane must consume and the answers it must not see. A lane cannot answer the hybrid retrieval question without the vectors, and cannot be asked the golden questions without the question bank, so answering them at all would have required mounting the oracle into a lane and destroying its isolation.",
+        "note": "An authoring change, made before any lane evidence existed. A new validator criterion checks that each question asked matches the oracle's copy exactly, so the two trees cannot drift into asking different things."
+      }
+    ]
+  },
+  "editions": {
+    "neo4j": "Community",
+    "unavailable_features": [
+      "existence constraints",
+      "property type constraints",
+      "node and relationship key constraints",
+      "graph types",
+      "role-based access control",
+      "online backup",
+      "change data capture",
+      "multiple user databases"
+    ]
+  },
+  "notes": [
+    "Stage 1 makes zero live model calls. Retrieval uses frozen literal vectors; no provider, model, or network is involved.",
+    "Neo4j Community is GPL-3.0 and is reached only over Bolt as a separate process; no Neo4j code is linked or redistributed.",
+    "Neo4j usage reporting is disabled explicitly in compose; the measurement network has no gateway in any case.",
+    "DICE, ARC-Mem, Brigade, and Multica are design references only. No code or text from any of them is vendored here.",
+    "The independently authored oracle is never baked into this image and is never mounted into an adapter container. It is mounted read-only into a network-less comparator container at the compare stage.",
+    "apt packages are not pinned; only image digests and the npm lockfile are."
+  ]
+}
