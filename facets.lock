@@ -574,8 +574,8 @@
         "kind": "registry",
         "registry": "https://api.agentfacets.io"
       },
-      "version": "1.3.0",
-      "integrity": "sha256:be85be9bc09b87be4ffca314ec83cd317589a3da573ec73abc28e0cdda0e2ab2",
+      "version": "1.3.1",
+      "integrity": "sha256:fb53a7239e3bf13114ec8196231e3d11d9ae126aa1a55eaaa23a1848c8e80c94",
       "assets": [
         {
           "scope": "project",
@@ -654,8 +654,8 @@
         "kind": "registry",
         "registry": "https://api.agentfacets.io"
       },
-      "version": "1.0.0",
-      "integrity": "sha256:40e2909d2d14404ded12a62d659878deb8a2e0c33cc65698f2c6e4179c0da7a5",
+      "version": "1.1.1",
+      "integrity": "sha256:154ac96c3f262895f4e96fd8ddd662e952d1c1ed520a713f5e273125a0f82651",
       "assets": [
         {
           "scope": "project",
@@ -667,7 +667,7 @@
           "files": [
             {
               "path": "skills/voice-to-text/SKILL.md",
-              "integrity": "sha256:83c5da5275cd931d1f5eadb98cc568e1db3e1fcf85cbbf44154fe97dffae5d03"
+              "integrity": "sha256:0565fd88ca820d263e279201b492cfe42968648b0ca9e19d7354ed4f769116b7"
             }
           ]
         }
