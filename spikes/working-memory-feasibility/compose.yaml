@@ -1,0 +1,48 @@
+# One database and one app container on a private network.
+#
+# No `ports:` and `internal: true`, so Bolt and the Neo4j Browser are reachable
+# only from the app container. Auth is disabled, which is defensible *only*
+# because the network has no gateway and nothing is published.
+
+name: ${COMPOSE_PROJECT_NAME:-wmf}
+
+networks:
+  wmf:
+    internal: true
+
+volumes:
+  neo4j-data:
+
+services:
+  neo4j:
+    image: neo4j:2026.07.1-community-ubi10@sha256:4c470275ab23a8a330d302ca98d3d440cd4b09d71b3fa3c05144999e5d9b241d
+    networks: [wmf]
+    volumes:
+      - neo4j-data:/data
+    environment:
+      NEO4J_AUTH: none
+      NEO4J_server_config_strict__validation_enabled: "false"
+      NEO4J_dbms_usage__report_enabled: "false"
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 256m
+      TZ: UTC
+    healthcheck:
+      # A Bolt query, not a port probe: the HTTP listener answers before the
+      # database can serve Cypher.
+      test: ["CMD-SHELL", "cypher-shell -a bolt://localhost:7687 'RETURN 1' || exit 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+    restart: "no"
+
+  app:
+    build: .
+    networks: [wmf]
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      TZ: UTC
+    restart: "no"

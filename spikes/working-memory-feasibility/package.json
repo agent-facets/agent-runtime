@@ -1,0 +1,19 @@
+{
+  "name": "working-memory-feasibility",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Feasibility spike: can the working-memory mechanics be implemented simply and sanely?",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test src/spike.test.ts",
+    "demo": "node src/demo.ts"
+  },
+  "dependencies": {
+    "neo4j-driver": "6.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.2",
+    "typescript": "6.0.3"
+  }
+}
