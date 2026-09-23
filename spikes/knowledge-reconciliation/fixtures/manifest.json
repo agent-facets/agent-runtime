@@ -1,0 +1,37 @@
+{
+  "schema": "knowledge-reconciliation/fixtures/1",
+  "note": "Synthetic, non-sensitive fixtures. No real organisation, system, or credential appears here. Source identity, project scope, and the policy interval are host-owned: they are declared in this file and never taken from model output.",
+  "key": {
+    "subject": "production-service-credentials",
+    "predicate": "rotation-days"
+  },
+  "sources": [
+    {
+      "id": "harbor-policy@1",
+      "project": "synthetic:harbor",
+      "sourceId": "harbor-policy",
+      "sourceRevision": 1,
+      "file": "harbor-policy.md",
+      "policyIntervalStart": "2026-01-01",
+      "role": "live demo: a new claim for a project with no accepted value"
+    },
+    {
+      "id": "cedar-policy@1",
+      "project": "synthetic:cedar",
+      "sourceId": "cedar-policy",
+      "sourceRevision": 1,
+      "file": "cedar-baseline.md",
+      "policyIntervalStart": "2026-01-01",
+      "role": "synthetic baseline, accepted through a clearly labelled synthetic decision"
+    },
+    {
+      "id": "cedar-policy@2",
+      "project": "synthetic:cedar",
+      "sourceId": "cedar-policy",
+      "sourceRevision": 2,
+      "file": "cedar-correction.md",
+      "policyIntervalStart": "2026-01-01",
+      "role": "live demo: a conflicting claim against the synthetic baseline"
+    }
+  ]
+}

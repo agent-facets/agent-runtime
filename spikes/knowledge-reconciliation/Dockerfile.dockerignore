@@ -1,0 +1,10 @@
+*
+!knowledge-reconciliation/package.json
+!knowledge-reconciliation/package-lock.json
+!knowledge-reconciliation/tsconfig.json
+!knowledge-reconciliation/src
+!knowledge-reconciliation/fixtures
+!anthropic-parity/src/candidate.ts
+!anthropic-parity/src/profile.ts
+!anthropic-parity/src/canonical.ts
+**/node_modules

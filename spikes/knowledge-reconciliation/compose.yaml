@@ -1,0 +1,80 @@
+# Three services, two networks, and a deliberate gap between them.
+#
+# `neo4j` and `app` share an internal, gateway-less network with no published
+# ports: Bolt and the Browser are unreachable from the host, so the command
+# service in `app` is the only way to reach knowledge.
+#
+# `extractor` is on a different network entirely. It can reach the provider and
+# cannot reach the database — it has no Bolt address, no credentials for one,
+# and no route. That is the point: the component holding a subscription token
+# has no capability to write accepted knowledge.
+
+name: ${COMPOSE_PROJECT_NAME:-okr}
+
+networks:
+  knowledge:
+    internal: true
+  egress:
+    internal: false
+
+volumes:
+  neo4j-data:
+
+services:
+  neo4j:
+    image: neo4j:2026.07.1-community-ubi10@sha256:4c470275ab23a8a330d302ca98d3d440cd4b09d71b3fa3c05144999e5d9b241d
+    networks: [knowledge]
+    volumes:
+      - neo4j-data:/data
+    environment:
+      NEO4J_AUTH: none
+      NEO4J_server_config_strict__validation_enabled: "false"
+      NEO4J_dbms_usage__report_enabled: "false"
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 256m
+      TZ: UTC
+    healthcheck:
+      # A Cypher query, not a port probe: the HTTP listener answers before the
+      # database can serve queries.
+      test: ["CMD-SHELL", "cypher-shell -a bolt://localhost:7687 'RETURN 1' || exit 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+    restart: "no"
+
+  app:
+    image: agent-runtime/knowledge-reconciliation:local
+    build:
+      context: ..
+      dockerfile: knowledge-reconciliation/Dockerfile
+    networks: [knowledge]
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      TZ: UTC
+    volumes:
+      # Read-only: the command service reads extraction artifacts and must not
+      # be able to edit the evidence it is about to be asked to approve.
+      - ${ARTIFACTS_DIR:-../../tmp/spikes/knowledge-reconciliation/scratch}:/artifacts:ro
+    restart: "no"
+
+  extractor:
+    image: agent-runtime/knowledge-reconciliation:local
+    build:
+      context: ..
+      dockerfile: knowledge-reconciliation/Dockerfile
+    networks: [egress]
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    entrypoint: ["node", "--no-warnings", "src/extract.ts"]
+    environment:
+      CREDENTIAL_FILE: /run/credential/auth.json
+      TZ: UTC
+    volumes:
+      # Read-only, and never written back. The default is a placeholder so the
+      # file parses when the extractor is not the service being run.
+      - ${CREDENTIAL_FILE:-/dev/null}:/run/credential/auth.json:ro
+      - ${ARTIFACTS_DIR:-../../tmp/spikes/knowledge-reconciliation/scratch}:/artifacts
+    restart: "no"

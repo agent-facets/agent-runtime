@@ -20,6 +20,7 @@ to kill assumptions early, not to confirm them.
 | [04](./04-openai-device-auth.md) | OpenAI device auth | Does device-code login complete in a container and refresh? | **Pass** |
 | [05](./05-langgraph-durability.md) | LangGraph durability | Does a run resume correctly after a kill mid-run and mid-interrupt? | **Pass**, scoped |
 | [06](./06-postgres-checkpointer-concurrency.md) | Postgres checkpointer and Store | Do the official checkpointer and Store behave as documented under concurrency? | **Pass**, with required safeguards |
+| [08](./08-observation-to-knowledge-reconciliation.md) | Observation to knowledge | Can an evidence-backed observation become durable, human-approved knowledge a later task retrieves? | **Pass**, scoped |
 
 ## Working records
 
