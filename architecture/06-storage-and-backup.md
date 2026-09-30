@@ -1,5 +1,37 @@
 # Storage and Backup
 
+## Phase 1 as built (MVP 01)
+
+The [framework MVP roadmap](../openspec/roadmaps/framework-mvp.md) supersedes this document where they differ. What
+Phase 1 actually stores:
+
+- **One PostgreSQL database, two owners.** The `runtime` schema holds application records (runs, questions,
+  invocations, model attempts, tool operations, events, execution definitions, runtime owner, migration journal).
+  The official LangGraph saver owns the `checkpoints` schema. The schema names below (`app`, `lg_checkpoints`) are
+  historical.
+- **Two drivers.** Application SQL uses Bun SQL. The saver's own `pg` pool (at most 4 connections) is the single
+  approved exception and is only reachable from `packages/runtime/src/persistence/saver/`. Bun SQL is used
+  transactions-only: on Bun 1.3.14 a plain pool query can run inside another caller's transaction under contention
+  ([G1 evidence](./integration-evidence/mvp-01/g1-bun-persistence.md)), so every statement runs in an explicit
+  transaction or on a reserved session. The application pool is capped at 5 connections.
+- **Separate commits.** Saver writes and application transactions never share a transaction. The run lifecycle
+  (later blocks) defines what each crash window means; no atomicity across the two is claimed.
+- **Startup.** A runtime first takes a session-level advisory lock on a dedicated reserved connection (a second
+  instance changes nothing and reports `owned_elsewhere`). Under a migration lock it checks both schemas before
+  changing either: the application journal records each migration's name and SHA-256 checksum and refuses unknown,
+  altered, newer or gapped history; the saver ledger is read (read-only) and must be a known prefix of versions 0–4
+  for saver 1.0.5, because the saver's own `setup()` silently skips newer ledgers. It then applies application
+  migrations, runs the saver's `setup()`, and claims a new owner epoch. Readiness reports the outcome.
+- **Ownership loss.** A lost or replaced ownership session is latched permanently; the process stops dispatching,
+  reports `ownership_lost` and exits for a supervised restart. PostgreSQL's TCP keepalives
+  (`tcp_keepalives_idle=10`, `interval=5`, `count=3`) end sessions orphaned by a destroyed network namespace, so a
+  replacement runtime can take over within about 25 seconds.
+- **Volumes.** Database, runtime state and Tailscale state are separate named volumes; ordinary restarts preserve them.
+
+Deferred beyond Phase 1: checkpoint retention and pruning, event partitioning and archives, the artifact store,
+backup tooling and cloud backup, restore rehearsal, and any host-reboot or disaster-recovery guarantee. The sections
+below are historical design intent for those later concerns.
+
 Four stores and one derived index, each with one job. The failure mode to avoid
 is a single store doing three jobs badly.
 

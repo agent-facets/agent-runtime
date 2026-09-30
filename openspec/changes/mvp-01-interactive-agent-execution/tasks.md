@@ -111,88 +111,88 @@ Run block checks, frozen-install verification and isolated container smoke tests
 Require passing cold/forced Turbo checks, direct-Bun discovery safety, shared-input invalidation and warm-cache build-output restoration fixtures, package import guards and the workspace-built image smoke. Keep cache-behavior observations distinct from the forced checks used as fresh acceptance evidence.
 
 ### Step 10 - Review: Assess foundation evidence; obtain owner acceptance
-- [ ] 2.7 Review: Assess foundation evidence; obtain owner acceptance
+- [x] 2.7 Review: Assess foundation evidence; obtain owner acceptance
 
 Present scaffold and test-isolation findings, then obtain approval to continue or a concrete correction request.
 
 ## 3. Durable records and Bun compatibility — Research
 
 ### Step 11 - Pause: Switch model for exploration
-- [ ] 3.1 Pause: Switch model for exploration
+- [x] 3.1 Pause: Switch model for exploration
 
 ### Step 12 - Explore: Inspect persistence APIs; verify the bounded G1 proof plan
-- [ ] 3.2 Explore: Inspect persistence APIs; verify the bounded G1 proof plan
+- [x] 3.2 Explore: Inspect persistence APIs; verify the bounded G1 proof plan
 
 Inspect pinned Bun SQL reserved-session behavior and official saver APIs against the spike evidence. Report public-API choices for schemas, migrations, pool/client errors and lock loss. Keep the first G1 fixture independent of the full application schema/controller.
 
 ### Step 13 - Explore: Map data invariants; verify the constraint and transaction checklist
-- [ ] 3.3 Explore: Map data invariants; verify the constraint and transaction checklist
+- [x] 3.3 Explore: Map data invariants; verify the constraint and transaction checklist
 
 Map design Decisions 3–4 to records, keys/unions, migrations and tests covering same-run references, JSON null/false, event ordering, epochs and idempotency.
 
 ### Step 14 - Propose: Present persistence and G1 work; obtain owner approval
-- [ ] 3.4 Propose: Present persistence and G1 work; obtain owner approval
+- [x] 3.4 Propose: Present persistence and G1 work; obtain owner approval
 
 Present the implementation and isolated PostgreSQL test scope, including the checkpointer-only `pg` exception and the early stop before full schema work if G1 fails.
 
 ## 4. Durable records and Bun compatibility — Implementation
 
 ### Step 15 - Pause: Switch model for implementation
-- [ ] 4.1 Pause: Switch model for implementation
+- [x] 4.1 Pause: Switch model for implementation
 
 ### Step 16 - Implement: Add application and saver adapters; verify driver-boundary tests
-- [ ] 4.2 Implement: Add application and saver adapters; verify driver-boundary tests
+- [x] 4.2 Implement: Add application and saver adapters; verify driver-boundary tests
 
 Implement Bun SQL application access and the official saver adapter with its controlled `pg` pool and pool/client error listeners. Test the configured pool limits, schema separation and the import-boundary guard. Do not introduce application queries through `pg`.
 
 ### Step 17 - Implement: Add serialized schema setup; verify migration and readiness tests
-- [ ] 4.3 Implement: Add serialized schema setup; verify migration and readiness tests
+- [x] 4.3 Implement: Add serialized schema setup; verify migration and readiness tests
 
 Implement migration journal/ownership metadata, serialized application/saver setup and schema-version readiness. Test concurrent starters, idempotent setup and refusal of unknown/newer schema versions. Full run records still follow the early G1 gate.
 
 ### Step 18 - Implement: Add runtime ownership; verify singleton and lost-session fencing tests
-- [ ] 4.4 Implement: Add runtime ownership; verify singleton and lost-session fencing tests
+- [x] 4.4 Implement: Add runtime ownership; verify singleton and lost-session fencing tests
 
 Implement singleton ownership, reserved-session identity/lock checks, owner epochs, per-run serialization primitives and pool limits. Test two instances, idle locks, session replacement and stale owners; do not reserve a database connection per run.
 
 ### Step 19 - Implement: Add the bounded G1 fixture; verify root-agent restart and negative-answer assertions
-- [ ] 4.5 Implement: Add the bounded G1 fixture; verify root-agent restart and negative-answer assertions
+- [x] 4.5 Implement: Add the bounded G1 fixture; verify root-agent restart and negative-answer assertions
 
 Use real Bun/official-saver persistence with a deterministic model and interrupting root `createAgent` tool. Assert synchronous durability, omission of `checkpoint_id`, fresh-process resume and a negative answer. Include independent work witnesses, without depending on production run records or repeating the old spike programme.
 
 Use a child Bun process killed after confirmed pause settlement, then a fresh process carrying an ID-addressed `{ questionId, answer: false }` envelope. An independent witness SHALL observe the delivered answer once. Also prove lost ownership prevents subsequent dispatch. Duplicate application-answer protection remains a G3/controller test; do not assume a raw duplicate graph resume is deduplicated by LangGraph.
 
 ### Step 20 - Verify: Run the early G1 gate; stop on Bun or ownership incompatibility
-- [ ] 4.6 Verify: Run the early G1 gate; stop on Bun or ownership incompatibility
+- [x] 4.6 Verify: Run the early G1 gate; stop on Bun or ownership incompatibility
 
 Run current block checks and the isolated G1 fixture before full schema/controller buildout. Require successful pause/resume, lock/session-loss fencing and cross-driver coexistence; report the exact tested matrix. A failed mandatory check stops here for explicit replanning.
 
 ### Step 21 - Implement: Add durable record schemas; verify database invariants and scalar-answer tests
-- [ ] 4.7 Implement: Add durable record schemas; verify database invariants and scalar-answer tests
+- [x] 4.7 Implement: Add durable record schemas; verify database invariants and scalar-answer tests
 
 Add run/question/invocation/attempt/tool/event/definition records, variant CHECKs, same-run references, deferred consistency and uniqueness. Tests SHALL reject invalid unions, duplicate pending questions, cross-run references and oversubscribed budgets while accepting allowed false/null values.
 
 ### Step 22 - Implement: Add atomic mutations and snapshots; verify idempotency and event-order tests
-- [ ] 4.8 Implement: Add atomic mutations and snapshots; verify idempotency and event-order tests
+- [x] 4.8 Implement: Add atomic mutations and snapshots; verify idempotency and event-order tests
 
 Implement creation-request idempotency, event/source-key allocation, atomic transition primitives and consistent snapshots. Add concurrency/rollback tests for one creation per request, payload conflicts, ordered committed history and terminal protection.
 
 Explicitly test same-source-key/same-payload replay, same-key/different-payload refusal, decimal-string event sequences and same-owner ambiguous-commit readback before dispatch.
 
 ### Step 23 - Implement: Document persistence; verify schema and evidence descriptions
-- [ ] 4.9 Implement: Document persistence; verify schema and evidence descriptions
+- [x] 4.9 Implement: Document persistence; verify schema and evidence descriptions
 
 Update README database/test setup, `architecture/06-storage-and-backup.md` and `architecture/09-data-model-and-lifecycle.md`. Add separately dated evidence pointers to the spike-report index. Distinguish G1 results from the unfinished full lifecycle and retain original spike reports unchanged.
 
 Record the already-observed early G1 results in `g1-bun-persistence.md`, including the exact tested source/matrix and its limited proof scope. Do not claim later record-schema checks have passed before their Verify step.
 
 ### Step 24 - Verify: Run persistence regressions; require passing G1 and record suites
-- [ ] 4.10 Verify: Run persistence regressions; require passing G1 and record suites
+- [x] 4.10 Verify: Run persistence regressions; require passing G1 and record suites
 
 Run block checks and PostgreSQL ownership/saver/schema/mutation suites against the resulting exact matrix, including pool failures, rollback and preserved-storage restart.
 
 ### Step 25 - Review: Assess persistence evidence; obtain owner acceptance
-- [ ] 4.11 Review: Assess persistence evidence; obtain owner acceptance
+- [x] 4.11 Review: Assess persistence evidence; obtain owner acceptance
 
 Present the durable-record and G1 findings. Do not claim host reboot or active crash recovery has been established.
 

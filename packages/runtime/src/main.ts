@@ -1,15 +1,14 @@
 import { loadConfig } from './config.ts';
-import { createDatabaseProbe } from './database-probe.ts';
-import { LISTEN_HOSTNAME, startServer } from './server.ts';
+import { startRuntime } from './runtime.ts';
+import { LISTEN_HOSTNAME } from './server.ts';
 
-const config = loadConfig(process.env);
-const server = startServer({ port: config.port, probeDatabase: createDatabaseProbe(config.databaseUrl) });
-
-console.log(`agent-runtime listening on http://${LISTEN_HOSTNAME}:${server.port}`);
+const runtime = startRuntime({ config: loadConfig(process.env) });
+console.log(`agent-runtime listening on http://${LISTEN_HOSTNAME}:${runtime.port}`);
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
-    server.stop();
-    process.exit(0);
+    void runtime.stop(0);
   });
 }
+
+process.exit(await runtime.stopped);
