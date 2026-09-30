@@ -146,12 +146,67 @@ describe('application database access', () => {
     expect(bunPoolAccess("import { type ReservedSQL, type TransactionSQL } from 'bun';")).toEqual([]);
   });
 
+  test('only the application database adapter starts transactions with begin()', async () => {
+    // A failed ReservedSQL.begin() raises an extra unhandled rejection on Bun 1.3.14; everything else goes through
+    // AppDatabase.transaction/readOnly (pool) or sessionTransaction (reserved sessions).
+    const violations: string[] = [];
+    for (const file of listSourceFiles(runtimeDir)) {
+      if (file === appDatabaseAdapter || /\.test\.ts$/.test(file)) continue;
+      if (/\.begin\s*\(/.test(await Bun.file(file).text())) violations.push(relative(repoRoot, file));
+    }
+    expect(violations).toEqual([]);
+  });
+
   test('only the application database adapter opens Bun SQL connections', async () => {
     const violations: string[] = [];
     for (const file of listSourceFiles(runtimeDir)) {
       if (file === appDatabaseAdapter) continue;
       for (const access of bunPoolAccess(await Bun.file(file).text())) {
         violations.push(`${relative(repoRoot, file)}: ${access}`);
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+});
+
+// The agent's workspace tools only read. Their source may not reach process execution, dynamic evaluation or any
+// filesystem mutation; the tool tests separately prove behavior with independent witnesses.
+const workspaceToolsDir = join(runtimeDir, 'src', 'workspace');
+const forbiddenInWorkspaceTools: [string, RegExp][] = [
+  ['process execution', /\bBun\s*\.\s*(?:spawn|spawnSync|\$)\b|child_process|\bexecSync\b|\bexecFile\b|\bspawn\s*\(/],
+  ['dynamic evaluation', /\beval\s*\(|\bnew\s+Function\s*\(/],
+  [
+    'filesystem mutation',
+    /\b(?:writeFile|appendFile|unlink|rename|mkdir|mkdtemp|rmdir|rm|chmod|chown|lchown|symlink|link|truncate|utimes|copyFile|cp)(?:Sync)?\s*\(|\bBun\s*\.\s*write\b|O_WRONLY|O_RDWR|O_CREAT|O_TRUNC|O_APPEND/,
+  ],
+];
+
+describe('workspace tools cannot execute or mutate', () => {
+  test('the detector recognizes each forbidden capability', () => {
+    const samples = [
+      "Bun.spawn(['sh'])",
+      "import { exec } from 'node:child_process'",
+      'eval(code)',
+      'await writeFile(path, data)',
+      'unlinkSync(path)',
+      'open(path, constants.O_WRONLY)',
+      'await Bun.write(path, data)',
+    ];
+    for (const sample of samples) {
+      expect(forbiddenInWorkspaceTools.some(([, pattern]) => pattern.test(sample))).toBe(true);
+    }
+    expect(
+      forbiddenInWorkspaceTools.some(([, pattern]) => pattern.test('await lstat(path); symlinks are refused')),
+    ).toBe(false);
+  });
+
+  test('workspace tool source contains none of them', async () => {
+    const violations: string[] = [];
+    for (const file of listSourceFiles(workspaceToolsDir)) {
+      if (/\.test\.ts$/.test(file)) continue;
+      const source = await Bun.file(file).text();
+      for (const [label, pattern] of forbiddenInWorkspaceTools) {
+        if (pattern.test(source)) violations.push(`${relative(repoRoot, file)}: ${label}`);
       }
     }
     expect(violations).toEqual([]);

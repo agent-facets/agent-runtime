@@ -77,7 +77,13 @@ export interface SeededQuestion extends SeededRun {
 }
 
 /** Moves a seeded working run to waiting on a pending question, as question publication would. */
-export async function pauseOnQuestion(tx: Tx, run: SeededRun, callId = 'call-1'): Promise<SeededQuestion> {
+export async function pauseOnQuestion(
+  tx: Tx,
+  run: SeededRun,
+  callId = 'call-1',
+  definition: { prompt?: string; input?: unknown } = {},
+): Promise<SeededQuestion> {
+  const prompt = definition.prompt ?? 'Proceed?';
   const questionId = operationIdFor(run.runId, `message-${callId}`, callId);
   const questionBinding = {
     threadId: run.runId,
@@ -92,7 +98,7 @@ export async function pauseOnQuestion(tx: Tx, run: SeededRun, callId = 'call-1')
     definitionDigest: DIGEST,
   };
   const bindingDigest = 'b'.repeat(64);
-  const input = {
+  const input = definition.input ?? {
     kind: 'choice',
     multiple: false,
     options: [
@@ -106,7 +112,7 @@ export async function pauseOnQuestion(tx: Tx, run: SeededRun, callId = 'call-1')
       ${j({ prompt: 'Proceed?' })}::text::jsonb, ${DIGEST}, ${j({ kind: 'paused', questionId })}::text::jsonb)`;
   await tx`insert into runtime.questions (run_id, question_id, operation_id, prompt, input, binding, payload_digest,
       binding_digest, disposition)
-    values (${run.runId}, ${questionId}, ${questionId}, 'Proceed?', ${j(input)}::text::jsonb,
+    values (${run.runId}, ${questionId}, ${questionId}, ${prompt}, ${j(input)}::text::jsonb,
       ${j(questionBinding)}::text::jsonb, ${DIGEST}, ${bindingDigest}, ${j({ kind: 'pending' })}::text::jsonb)`;
   await tx`update runtime.invocations set disposition = 'settled', ended_at = now()
     where run_id = ${run.runId} and invocation_id = ${run.invocationId}`;
@@ -119,7 +125,7 @@ export async function pauseOnQuestion(tx: Tx, run: SeededRun, callId = 'call-1')
     run.runId,
     row.last_seq - 1,
     'question.asked',
-    { questionId, prompt: 'Proceed?', input },
+    { questionId, prompt, input },
     `question:${questionId}`,
   );
   await insertEvent(
