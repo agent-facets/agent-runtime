@@ -22,6 +22,16 @@ to kill assumptions early, not to confirm them.
 | [06](./06-postgres-checkpointer-concurrency.md) | Postgres checkpointer and Store | Do the official checkpointer and Store behave as documented under concurrency? | **Pass**, with required safeguards |
 | [08](./08-observation-to-knowledge-reconciliation.md) | Observation to knowledge | Can an evidence-backed observation become durable, human-approved knowledge a later task retrieves? | **Pass**, scoped |
 
+## MVP integration evidence
+
+Added 2026-09-29. These records verify the Phase-1 build
+([mvp-01](../../openspec/changes/mvp-01-interactive-agent-execution/tasks.md)) under Bun. They are separate from
+the original spike results above, which were measured on Node and are left unchanged.
+
+| Gate | Record | Outcome |
+|---|---|---|
+| G1 — Bun persistence and ownership | [g1-bun-persistence.md](../integration-evidence/mvp-01/g1-bun-persistence.md) | **Pass** (early gate), with a Bun SQL pool defect found and mitigated |
+
 ## Working records
 
 A report is the conclusion; it is not the notebook. Where a spike's reasoning is

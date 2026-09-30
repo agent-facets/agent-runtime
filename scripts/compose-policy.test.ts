@@ -4,6 +4,7 @@ import { repoRoot } from './lib/workspace.ts';
 
 interface ComposeService {
   image?: string;
+  command?: string[];
   build?: unknown;
   network_mode?: string;
   networks?: string[];
@@ -58,6 +59,11 @@ describe('deployment topology', () => {
     expect(postgres.networks).toEqual(['backend']);
     expect(compose.networks.backend?.internal).toBe(true);
     expect(tailscale.networks).toEqual(['backend', 'egress']);
+  });
+
+  test('PostgreSQL ends orphaned runtime sessions so ownership can move to a replacement', () => {
+    const settings = (postgres.command ?? []).filter((arg) => arg !== '-c' && arg !== 'postgres');
+    expect(settings).toEqual(['tcp_keepalives_idle=10', 'tcp_keepalives_interval=5', 'tcp_keepalives_count=3']);
   });
 
   test('pins third-party images by digest', () => {

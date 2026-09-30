@@ -48,6 +48,16 @@ services:
 
   postgres:
     image: postgres:17.11-bookworm@sha256:639ab7ceb90e13123085b741fb31ef493fba25463002f6da665352e7b534b652
+    # When the Tailscale container is replaced, the runtime's sockets disappear without a FIN or RST. Keepalive
+    # probes end those orphaned sessions (and release runtime ownership) in about 25 seconds instead of hours.
+    command:
+      - postgres
+      - -c
+      - tcp_keepalives_idle=10
+      - -c
+      - tcp_keepalives_interval=5
+      - -c
+      - tcp_keepalives_count=3
     environment:
       POSTGRES_DB: agent_runtime
       POSTGRES_USER: agent_runtime
