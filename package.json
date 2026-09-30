@@ -1,5 +1,6 @@
 {
   "name": "agent-runtime",
+  "license": "MIT",
   "module": "index.ts",
   "devDependencies": {
     "@types/bun": "latest"

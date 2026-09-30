@@ -7,7 +7,7 @@
 //   node src/cli.ts pending      --project synthetic:harbor
 //   node src/cli.ts apply        --proposal prop_... --decision-id d1 --action correct \
 //                                --target-token st_... --proposal-digest <digest> \
-//                                --rationale "..." --operator rathe --origin owner
+//                                --rationale "..." --operator owner --origin owner
 //   node src/cli.ts read         --project synthetic:harbor
 //   node src/cli.ts history      --project synthetic:harbor
 //

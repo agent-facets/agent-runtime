@@ -78,9 +78,14 @@ of them invalidates multiple documents.
 
 ## Status
 
-Pre-implementation. No application code exists yet. The repository contains
-OpenSpec governance, facet tooling, these documents, and the throwaway P0 spike
+Pre-implementation. No application code exists yet beyond a Bun hello-world
+scaffold. The repository contains OpenSpec governance, optional facet tooling
+configuration (`facets.json`), these documents, and the throwaway P0 spike
 harnesses under `spikes/`.
+
+These documents and the spike results below are a historical record of the
+design as it stood when they were written. Where they disagree with the
+[MVP roadmap](../openspec/roadmaps/framework-mvp.md), the roadmap is current.
 
 P0 progress is tracked in the
 [spike report index](./spike-reports/README.md). All six spikes pass; the sixth

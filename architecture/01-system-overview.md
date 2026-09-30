@@ -53,7 +53,7 @@ there is nothing to reconcile between them.
            └────────────────┼────────────────────┘
                             │
                   Tailscale Serve (HTTPS)
-                   rathebox.<tailnet>.ts.net
+                     node.<tailnet>.ts.net
                             │
                      127.0.0.1 only
                             │

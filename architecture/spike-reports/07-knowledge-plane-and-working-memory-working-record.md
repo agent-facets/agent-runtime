@@ -31,10 +31,10 @@ then — holding the winner constant — measures what working memory earns its
 complexity. The two stages are separate so storage effects and prompt-governance
 effects cannot be confounded.
 
-Planning context that predates this record lives at
+Planning context that predates this record lived at
 `.opencode/plans/knowledge-plane-working-memory-spike/context.md`. That file is
-plan-local and not durable; everything from it that still matters is restated
-here.
+plan-local, not durable, and not included in this repository; everything from it
+that still matters is restated here.
 
 ---
 
@@ -3051,7 +3051,9 @@ tmp/spikes/knowledge-plane-working-memory/retired-2026-09-09/
 ```
 
 The archive was verified **before** anything was deleted: extracted to a
-temporary directory and checked with `sha256sum -c`, 103/103 OK.
+temporary directory and checked with `sha256sum -c`, 103/103 OK. It is local
+(`tmp/` is gitignored) and is not included in this repository, and neither are
+the scratch probes.
 
 Also removed: sixteen local Docker image tags
 (`agent-runtime/knowledge-plane-working-memory:{smoke-h1..h4, stage1-initial,

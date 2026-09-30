@@ -1,6 +1,7 @@
 {
   "name": "knowledge-reconciliation",
   "version": "0.0.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "description": "Feasibility spike: can an evidence-backed observation become durable, human-approved knowledge?",

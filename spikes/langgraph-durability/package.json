@@ -1,6 +1,7 @@
 {
   "name": "langgraph-durability-spike",
   "version": "0.0.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "description": "Throwaway P0 spike: does a LangGraph run resume correctly after a SIGKILL mid-run and mid-interrupt, using the official Postgres checkpointer?",

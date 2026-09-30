@@ -40,6 +40,10 @@ fake OpenCode client and a sentinel OAuth record. None of its internal transform
 functions are imported: comparing a copy of the oracle against the oracle would
 prove only self-consistency.
 
+The fixtures include OpenCode-branded prompt text. Its license and the reference
+plugin's license are in
+[`THIRD_PARTY_NOTICES.md`](../../THIRD_PARTY_NOTICES.md).
+
 ## The deliberate asymmetry
 
 Inputs differ before transformation and must be identical after it. That is the
