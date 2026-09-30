@@ -2,7 +2,8 @@
 // checkpoint writes, so anything thrown from a model or tool node must already be safe: a fixed name, a fixed
 // message per code, and no text from a provider, SDK, filesystem or credential. Classification evidence travels on
 // the object in memory only and is never serialized.
-import type { TerminalErrorCode } from './terminal.ts';
+import type { ProviderErrorCode } from '../providers/failure-mapping.ts';
+import type { FailedResponse, TerminalErrorCode } from './terminal.ts';
 
 export type ExecutionFailureCode =
   /** A model response contained credential material outside displayable text. */
@@ -35,9 +36,35 @@ const MESSAGES: Record<ExecutionFailureCode, string> = {
 
 /** What is known about a failed model call, for classification by the controller. Never serialized. */
 export type ModelFailureEvidence =
-  | { kind: 'terminal'; code: TerminalErrorCode; reason?: string }
+  | { kind: 'terminal'; code: TerminalErrorCode; reason?: string; attemptId?: string }
+  /** An unsuccessful response the provider integration classified, with the attempt that received it. */
+  | { kind: 'provider'; attemptId: string; status: number; code: ProviderErrorCode; retryAfter?: string }
+  /** An HTTP status reported by a model with no provider classification. */
   | { kind: 'http'; status: number }
   | { kind: 'unknown' };
+
+/**
+ * The classified unsuccessful responses of one run's model call in progress, passed from the terminal (which
+ * classifies them) to the model boundary (which turns the SDK's resulting error into typed evidence). A run makes
+ * one model call at a time.
+ */
+export class ModelCallReports {
+  #last: FailedResponse | undefined;
+
+  /** Terminal side: an unsuccessful response was classified. */
+  readonly record = (failure: FailedResponse): void => {
+    this.#last = failure;
+  };
+
+  /** Model boundary side: a new call starts. */
+  callStarted(): void {
+    this.#last = undefined;
+  }
+
+  last(): FailedResponse | undefined {
+    return this.#last;
+  }
+}
 
 export class ExecutionFailure extends Error {
   override readonly name = 'ExecutionFailure';

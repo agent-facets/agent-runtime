@@ -1,0 +1,93 @@
+{
+  "upstream": {
+    "package": "@ex-machina/opencode-anthropic-auth",
+    "version": "2.0.0-next.5",
+    "repository": "https://github.com/ex-machina-co/opencode-anthropic-auth",
+    "revision": "156cb66c6889e1be3ad2b839345ea409942ab40f",
+    "tarballIntegrity": "sha512-EBnFXXBCbd1rl496OydEBqMRqcuqAgpjFH1vhWio0Lw+hZHzzwFWoabrRDSKE3gC09Knd7Q6+lp4DvAOt0qjWw==",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2026 Ex Machina",
+    "licenseFile": "LICENSE",
+    "licenseSha256": "bf737fd6a5d9da55873eb7ea481fd9e875bcfefc13ed42766a1964c6040c5581"
+  },
+  "licenseCopy": "licenses/opencode-anthropic-auth.LICENSE.txt",
+  "sources": [
+    {
+      "path": "src/auth.ts",
+      "sha256": "839f14b535ab92182222a4e053fd3b1a98ae8209acc26b6924c326c848bf9fca",
+      "use": "adapted",
+      "into": ["src/auth.ts"],
+      "note": "Authorize URL, callback parsing, code exchange and refresh with bounded validation; global fetch and fixed timeouts replaced by the injected transport and signal."
+    },
+    {
+      "path": "src/bounded.ts",
+      "sha256": "ff8690e62460a385db3368b075307d5216f771787f4af827f0b9dd4f3f80ad67",
+      "use": "adapted",
+      "into": ["src/bounded.ts"],
+      "note": "Bounded, strictly decoded UTF-8 body reading."
+    },
+    {
+      "path": "src/pkce.ts",
+      "sha256": "b45a06ecceaf1b8d93876c20b0cc7ddd701fbf9cd92819ac68c3af017debcd52",
+      "use": "adapted",
+      "into": ["src/pkce.ts"],
+      "note": "S256 PKCE verifier and challenge."
+    },
+    {
+      "path": "src/constants.ts",
+      "sha256": "cd8372d2efc9dacbf0ea401307afc5b0337afffd86b79423ea3f4f8499f32188",
+      "use": "adapted",
+      "into": ["src/oauth.ts", "src/profile.ts"],
+      "note": "OAuth endpoints, client ID, scopes and the request-profile constants. OpenCode prompt-sanitation anchors and the tool prefix are not carried over."
+    },
+    {
+      "path": "src/cch.ts",
+      "sha256": "0ad4e4b9714d52b8b43754783d573c41149aa9c87e4d0793721bce2dc6d779fb",
+      "use": "adapted",
+      "into": ["src/billing.ts"],
+      "note": "Billing-header derivation from the leading user text."
+    },
+    {
+      "path": "src/transform.ts",
+      "sha256": "2abe143045d4ec9d63dd26aa272e156bf46f48280fe4e00e6b9796c565e7d8a5",
+      "use": "adapted",
+      "into": ["src/request.ts"],
+      "note": "Only the OAuth header, beta merge, beta query and identity/billing system-block construction. Tool aliasing, response rewriting, OpenCode prompt sanitation and environment-configured endpoints are excluded."
+    },
+    {
+      "path": "src/version-rejection.ts",
+      "sha256": "dcf87cd05f8b298c1b04ab54c575729e14295a1a496801ff0ec068961076fab8",
+      "use": "adapted",
+      "into": ["src/response.ts"],
+      "note": "Recognition of the structured minimum-client-version rejection, for classification only; no version adoption or retry."
+    },
+    {
+      "path": "src/config.ts",
+      "sha256": "8d648088dc55367fc08c7517d5881e677e28c1aaf8c66a44acde35a4a180db9d",
+      "use": "excluded",
+      "into": [],
+      "note": "Environment-variable version override. Profiles are explicit and immutable here."
+    },
+    {
+      "path": "src/index.ts",
+      "sha256": "2ece12e85f9804c7315b82870b839232d5a2bfb857413977656efecc76e6cf5e",
+      "use": "excluded",
+      "into": [],
+      "note": "OpenCode plugin entry: hooks, connection tracking, alias leases, refresh caches, automatic version recovery and response replacement. The runtime owns credentials, locking and retries."
+    },
+    {
+      "path": "src/json-response-stream.ts",
+      "sha256": "b8ec03f2e4ba5fab48cfca6119a42b7c843ad460dedb379cf11a38ce6dfdade4",
+      "use": "excluded",
+      "into": [],
+      "note": "Response tool-name rewriting. Native tool names need no rewrite; response bytes are never changed."
+    },
+    {
+      "path": "src/rate-limit.ts",
+      "sha256": "440331462335369cfd446aca36dff78cd6a97f3b269a35562e06c6592876454e",
+      "use": "excluded",
+      "into": [],
+      "note": "Rewrites 429 response bodies. The runtime classifies failures without rewriting responses."
+    }
+  ]
+}

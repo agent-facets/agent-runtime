@@ -175,30 +175,52 @@ describe('refresh within one process', () => {
     });
   });
 
-  test('an invalid supplied refresh token is not written', async () => {
-    const store = freshStore();
-    await store.replace(usable(1, NOW));
+  test('an invalid supplied refresh token is not written, and the replaced one is not trusted again', async () => {
     for (const refreshToken of ['', 'x'.repeat(15), 'has a space in the token', 'x'.repeat(20_000)]) {
-      const { issuer } = fakeIssuer(() => refreshed('a2', { refreshToken }));
-      expect(await coordinatorFor(store, issuer).current()).toEqual({ kind: 'temporarily_unavailable' });
+      const store = freshStore();
+      await store.replace(usable(1, NOW));
+      const { issuer, calls } = fakeIssuer(() => refreshed('a2', { refreshToken }));
+      const coordinator = coordinatorFor(store, issuer);
+      expect(await coordinator.current()).toEqual({ kind: 'reauthorization_required' });
+      expect(await coordinator.current()).toEqual({ kind: 'reauthorization_required' });
+      expect(calls).toEqual([1]);
+      const read = await store.read('openai', 'default');
+      expect(read.kind === 'record' && read.record).toMatchObject({
+        generation: 2,
+        lifecycle: 'reauthorization_required',
+        reason: 'refresh_result_invalid',
+      });
+      expect(readFileSync(store.pathFor('openai', 'default'), 'utf8')).not.toContain('synthetic-');
     }
-    const read = await store.read('openai', 'default');
-    expect(read.kind === 'record' && read.record.generation).toBe(1);
   });
 
-  test('temporary issuer failure keeps the credential and is not retried automatically', async () => {
+  test('a refresh that certainly consumed nothing keeps the credential and is not retried automatically', async () => {
     const store = freshStore();
     await store.replace(usable(1, NOW));
-    for (const outcome of [
-      () => ({ kind: 'unavailable' }) as const,
-      () => Promise.reject(new Error('socket hang up')),
-    ]) {
-      const { issuer, calls } = fakeIssuer(outcome as () => IssuerOutcome);
-      expect(await coordinatorFor(store, issuer).current()).toEqual({ kind: 'temporarily_unavailable' });
-      expect(calls).toEqual([1]);
-    }
+    const { issuer, calls } = fakeIssuer(() => ({ kind: 'unavailable' }));
+    expect(await coordinatorFor(store, issuer).current()).toEqual({ kind: 'temporarily_unavailable' });
+    expect(calls).toEqual([1]);
     const read = await store.read('openai', 'default');
     expect(read.kind === 'record' && read.record).toEqual(usable(1, NOW));
+  });
+
+  test('a refresh with an unknown outcome is never replayed, in this or any other process', async () => {
+    for (const outcome of [() => ({ kind: 'uncertain' }) as const, () => Promise.reject(new Error('socket hang up'))]) {
+      const store = freshStore();
+      await store.replace(usable(1, NOW));
+      const { issuer, calls } = fakeIssuer(outcome as () => IssuerOutcome);
+      expect(await coordinatorFor(store, issuer).current()).toEqual({ kind: 'reauthorization_required' });
+      // A second coordinator stands in for another process sharing the credential volume.
+      expect(await coordinatorFor(store, issuer).current()).toEqual({ kind: 'reauthorization_required' });
+      expect(calls).toEqual([1]);
+      const read = await store.read('openai', 'default');
+      expect(read.kind === 'record' && read.record).toMatchObject({
+        generation: 2,
+        lifecycle: 'reauthorization_required',
+        reason: 'refresh_outcome_unknown',
+      });
+      expect(readFileSync(store.pathFor('openai', 'default'), 'utf8')).not.toContain('synthetic-');
+    }
   });
 
   test('definitive rejection is recorded once, drops token material and stops refreshing', async () => {

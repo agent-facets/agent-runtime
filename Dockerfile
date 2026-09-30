@@ -4,11 +4,13 @@ WORKDIR /repo
 
 # Workspace manifests first, so dependency installation is cached independently of source changes.
 COPY package.json bun.lock bunfig.toml ./
+COPY packages/anthropic-subscription/package.json packages/anthropic-subscription/package.json
 COPY packages/runtime/package.json packages/runtime/package.json
 COPY packages/ui/package.json packages/ui/package.json
 RUN bun install --frozen-lockfile --ignore-scripts
 
 COPY tsconfig.base.json ./
+COPY packages/anthropic-subscription packages/anthropic-subscription
 COPY packages/runtime packages/runtime
 COPY packages/ui packages/ui
 RUN bun run --cwd packages/runtime build
@@ -21,6 +23,9 @@ WORKDIR /app
 RUN mkdir -p /var/lib/agent-runtime && chown bun:bun /var/lib/agent-runtime && chmod 0700 /var/lib/agent-runtime
 
 COPY --from=build /repo/packages/runtime/dist ./dist
+# The bundle includes code derived from third-party MIT material; its notice and license travel with the image.
+COPY --from=build /repo/packages/anthropic-subscription/THIRD_PARTY_NOTICES.md ./licenses/anthropic-subscription/
+COPY --from=build /repo/packages/anthropic-subscription/licenses ./licenses/anthropic-subscription/licenses
 
 USER bun
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \

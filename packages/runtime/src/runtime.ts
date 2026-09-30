@@ -2,6 +2,7 @@ import type { RuntimeConfig } from './config.ts';
 import { PersistenceError } from './persistence/errors.ts';
 import type { OwnershipOptions } from './persistence/ownership.ts';
 import { openPersistence, type Persistence } from './persistence/persistence.ts';
+import { createProviderAssembly } from './providers/assembly.ts';
 import { RunStore } from './records/run-store.ts';
 import { formatDiagnostic } from './security/diagnostics.ts';
 import { type PersistenceStatus, startServer } from './server.ts';
@@ -9,7 +10,7 @@ import { type PersistenceStatus, startServer } from './server.ts';
 export interface RuntimeHandle {
   readonly port: number;
   status(): PersistenceStatus;
-  /** Resolves when persistence startup has finished, successfully or not. */
+  /** Resolves when persistence startup and the provider readiness report have finished, successfully or not. */
   readonly started: Promise<void>;
   /** Resolves with the exit code once the runtime has stopped. */
   readonly stopped: Promise<number>;
@@ -43,6 +44,22 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
   });
 
   const server = startServer({ port: options.config.port, persistenceStatus: () => status });
+
+  // Provider integrations for configured providers. Readiness only reads stored credentials; nothing logs in,
+  // refreshes or sends inference here. The API that starts runs through them arrives with the console.
+  const operator = options.config.operator;
+  const providers =
+    operator === undefined
+      ? undefined
+      : createProviderAssembly({ config: operator, stateDir: options.config.stateDir });
+  const providersReported = (async () => {
+    if (operator === undefined || providers === undefined) return;
+    for (const provider of ['anthropic', 'openai'] as const) {
+      if (operator.providers[provider] === undefined) continue;
+      const readiness = await providers.registry.readiness(provider);
+      log(formatDiagnostic({ event: 'provider_readiness', operation: 'startup', provider, reason: readiness }));
+    }
+  })();
 
   const stop = (code = 0): Promise<number> => {
     stopping ??= (async () => {
@@ -106,5 +123,11 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
           },
         );
 
-  return { port: server.port ?? options.config.port, status: () => status, started, stopped, stop };
+  return {
+    port: server.port ?? options.config.port,
+    status: () => status,
+    started: Promise.all([started, providersReported]).then(() => {}),
+    stopped,
+    stop,
+  };
 }
