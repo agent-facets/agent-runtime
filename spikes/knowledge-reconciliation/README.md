@@ -83,7 +83,7 @@ The demo, in the order it was actually run:
   --extraction-file /artifacts/extraction/harbor-new.json
 ./run.sh cli apply  --proposal <id> --proposal-digest <digest> --target-token <token> \
   --decision-id dec-owner-harbor-accept --action accept_new \
-  --operator rathe --origin owner --rationale '...'
+  --operator owner --origin owner --rationale '...'
 
 ./run.sh cli read    --project synthetic:harbor
 ./run.sh cli history --project synthetic:cedar

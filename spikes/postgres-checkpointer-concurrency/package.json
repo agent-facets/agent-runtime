@@ -1,6 +1,7 @@
 {
   "name": "postgres-checkpointer-concurrency-spike",
   "version": "0.0.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "description": "Throwaway P0 spike: do the official Postgres checkpointer and Store behave as documented under concurrency?",

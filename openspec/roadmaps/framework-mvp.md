@@ -182,15 +182,15 @@ Each change proceeds in roadmap order:
 
 ## Sources
 
-- Meta plan: `.opencode/plans/meta-plan/plan.md`
+- Meta plan: internal planning document, not included in this repository
 - Governance: `openspec/config.yaml`, `openspec/specs/spec-governance/spec.md`
 - Architecture: `architecture/README.md`, `architecture/02-control-plane.md`,
   `architecture/04-memory-system.md`, `architecture/05-model-authentication.md`,
   `architecture/10-delivery-phases.md`
 - Spikes: `architecture/spike-reports/03` through `08`
-- Facets: `/home/rathe/dev/work/facets` (adapter SDK, protocol, CLI docs),
-  `/home/rathe/dev/work/facet-registry/facets/address-pr-feedback/`,
-  `/home/rathe/dev/work/viper-plans/`
+- Facets (separate repositories, not included here): the facets repository
+  (adapter SDK, protocol, CLI docs), the `address-pr-feedback` facet in the
+  facet registry, and the `viper-plans` repository
 - Frameworks: https://docs.langchain.com/oss/javascript/langchain/agents,
   https://docs.langchain.com/oss/javascript/langgraph/persistence,
   https://docs.langchain.com/oss/javascript/langchain/mcp

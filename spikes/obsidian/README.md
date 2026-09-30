@@ -84,8 +84,14 @@ Container paths are fixed. Volume names are configurable.
 
 Volumes are never deleted unless `--cleanup` is passed.
 
-The live `~/dev/vaults/agents/Agents` vault is never mounted, read, or
-modified by anything here.
+The live user vault is never mounted, read, or modified by anything here.
+
+## Licensing
+
+The image downloads Obsidian, which is proprietary software under the
+[Obsidian Terms of Service](https://obsidian.md/terms). The MIT License in this
+repository does not cover it. Build the image locally; do not publish or
+redistribute it. See [`THIRD_PARTY_NOTICES.md`](../../THIRD_PARTY_NOTICES.md).
 
 ## Secrets
 

@@ -1,0 +1,6 @@
+# Worktrunk project config. Hooks run on `wt switch --create`.
+
+# mise keys trust by absolute path, so a freshly created worktree is always
+# untrusted until this runs. Switching to an existing worktree does not run it.
+[[pre-start]]
+trust = "mise trust"

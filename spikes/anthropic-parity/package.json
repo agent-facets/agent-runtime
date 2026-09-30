@@ -1,6 +1,7 @@
 {
   "name": "anthropic-parity-spike",
   "version": "0.0.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "description": "Throwaway P0 spike: differential parity between the shipped OpenCode Anthropic auth plugin and a decorated fetch under stock ChatAnthropic.",

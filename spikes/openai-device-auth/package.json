@@ -1,6 +1,7 @@
 {
   "name": "openai-device-auth-spike",
   "version": "0.0.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "description": "Throwaway P0 spike: OpenAI device-code login, credential-store durability, and transport-semantic parity between the released Codex client and a decorated fetch under stock ChatOpenAI.",
