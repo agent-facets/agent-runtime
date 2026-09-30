@@ -8,11 +8,20 @@ export const CREDENTIAL_RECORD_VERSION = 1;
 export const CREDENTIAL_RECORD_MAX_BYTES = 65_536;
 
 export const slotSchema = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/);
+
+/**
+ * Token bounds. The 16-character minimum is this runtime's safety floor, not a provider format: exact-match
+ * screening cannot safely recognize shorter values, so shorter tokens are refused instead of silently unscreened.
+ */
+export const CREDENTIAL_TOKEN_MIN_LENGTH = 16;
+export const CREDENTIAL_TOKEN_MAX_LENGTH = 16_384;
+export const CREDENTIAL_TOKEN_PATTERN = /^[\x21-\x7e]+$/;
+
 const secret = z
   .string()
-  .min(1)
-  .max(16_384)
-  .regex(/^[\x21-\x7e]+$/, 'must be printable ASCII without spaces');
+  .min(CREDENTIAL_TOKEN_MIN_LENGTH)
+  .max(CREDENTIAL_TOKEN_MAX_LENGTH)
+  .regex(CREDENTIAL_TOKEN_PATTERN, 'must be printable ASCII without spaces');
 // Epoch milliseconds. The lower bound (September 2001) rejects epoch seconds, which would otherwise decode as 1970.
 const epochMs = z.number().int().min(1_000_000_000_000).max(Number.MAX_SAFE_INTEGER);
 const generation = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);

@@ -118,6 +118,10 @@ describe('invalid records fail closed', () => {
     ['a non-positive generation', JSON.stringify({ ...usable(1), generation: 0 })],
     ['missing account metadata', JSON.stringify({ ...usable(1), account: {} })],
     ['invalid UTF-8', '\xff\xfe'],
+    ['an empty access token', JSON.stringify({ ...usable(1), accessToken: '' })],
+    ['a one-character access token', JSON.stringify({ ...usable(1), accessToken: 'a' })],
+    ['a 15-character access token', JSON.stringify({ ...usable(1), accessToken: 'a'.repeat(15) })],
+    ['a 15-character refresh token', JSON.stringify({ ...usable(1), refreshToken: 'r'.repeat(15) })],
   ];
   for (const [label, contents] of cases) {
     test(label, async () => {
@@ -131,6 +135,25 @@ describe('invalid records fail closed', () => {
       expect((await store.read('openai', 'default')).kind).toBe('record');
     });
   }
+
+  test('a short token is refused without the stored record being rewritten', async () => {
+    const store = freshStore();
+    await store.ensureDirectories('openai');
+    const path = store.pathFor('openai', 'default');
+    const contents = JSON.stringify({ ...usable(1), accessToken: 'a'.repeat(15) });
+    writeFileSync(path, contents, { mode: 0o600 });
+    expect(await store.read('openai', 'default')).toEqual({ kind: 'invalid' });
+    expect(await Bun.file(path).text()).toBe(contents);
+    await expect(store.replace(usable(2, { accessToken: 'a'.repeat(15) }))).rejects.toMatchObject({
+      code: 'invalid_record',
+    });
+  });
+
+  test('tokens of exactly 16 characters are admitted', async () => {
+    const store = freshStore();
+    await store.replace(usable(1, { accessToken: 'a'.repeat(16), refreshToken: 'r'.repeat(16) }));
+    expect((await store.read('openai', 'default')).kind).toBe('record');
+  });
 
   test('an oversized record', async () => {
     const store = freshStore();

@@ -1,5 +1,14 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -11,7 +20,7 @@ import {
 } from './coordinator.ts';
 import { acquireProviderLock, CredentialLockError, LOCK_FILE } from './lock.ts';
 import type { CredentialRecord } from './record.ts';
-import { CredentialStore } from './store.ts';
+import { CredentialStore, type ReadResult } from './store.ts';
 
 const scratchRoot = mkdtempSync(join(tmpdir(), 'agent-runtime-coordination-'));
 afterAll(() => rmSync(scratchRoot, { recursive: true, force: true }));
@@ -34,8 +43,8 @@ function usable(generation: number, expiresAtMs: number, overrides: Record<strin
     generation,
     updatedAtMs: NOW,
     lifecycle: 'usable',
-    accessToken: `access-${generation}`,
-    refreshToken: `refresh-${generation}`,
+    accessToken: `synthetic-access-${generation}-token`,
+    refreshToken: `synthetic-refresh-${generation}-token`,
     expiresAtMs,
     account: { accountId: 'acct_synthetic' },
     ...overrides,
@@ -54,9 +63,12 @@ function fakeIssuer(outcome: (generation: number) => IssuerOutcome | Promise<Iss
   return { issuer, calls };
 }
 
-const refreshed = (accessToken: string, extra: Record<string, unknown> = {}): IssuerOutcome => ({
+/** Synthetic tokens meet the 16-character admission floor. */
+const tok = (name: string) => `synthetic-${name}-token`;
+
+const refreshed = (name: string, extra: Record<string, unknown> = {}): IssuerOutcome => ({
   kind: 'refreshed',
-  credential: { accessToken, expiresAtMs: NOW + 3_600_000, ...extra },
+  credential: { accessToken: tok(name), expiresAtMs: NOW + 3_600_000, ...extra },
 });
 
 function coordinatorFor(store: CredentialStore, issuer: CredentialIssuer, now = NOW) {
@@ -125,7 +137,7 @@ describe('refresh within one process', () => {
     const { issuer, calls } = fakeIssuer(() => refreshed('new-access'));
     const state = await coordinatorFor(store, issuer).current();
     expect(calls).toEqual([1]);
-    expect(state.kind === 'ready' && state.credential.accessToken).toBe('new-access');
+    expect(state.kind === 'ready' && state.credential.accessToken).toBe(tok('new-access'));
   });
 
   test('64 concurrent callers share one refresh', async () => {
@@ -149,16 +161,16 @@ describe('refresh within one process', () => {
     const coordinator = coordinatorFor(store, issuer);
     const first = await coordinator.current();
     expect(first.kind === 'ready' && [first.credential.refreshToken, first.credential.account]).toEqual([
-      'refresh-1',
+      'synthetic-refresh-1-token',
       { accountId: 'acct_synthetic' },
     ]);
 
-    next = refreshed('a3', { refreshToken: 'r3', account: { accountId: 'acct_rotated' } });
+    next = refreshed('a3', { refreshToken: tok('r3'), account: { accountId: 'acct_rotated' } });
     const second = await coordinator.refresh({ observedGeneration: 2 });
     expect(second.kind === 'ready' && second.credential).toMatchObject({
       generation: 3,
-      accessToken: 'a3',
-      refreshToken: 'r3',
+      accessToken: tok('a3'),
+      refreshToken: tok('r3'),
       account: { accountId: 'acct_rotated' },
     });
   });
@@ -166,7 +178,7 @@ describe('refresh within one process', () => {
   test('an invalid supplied refresh token is not written', async () => {
     const store = freshStore();
     await store.replace(usable(1, NOW));
-    for (const refreshToken of ['', 'has space', 'x'.repeat(20_000)]) {
+    for (const refreshToken of ['', 'x'.repeat(15), 'has a space in the token', 'x'.repeat(20_000)]) {
       const { issuer } = fakeIssuer(() => refreshed('a2', { refreshToken }));
       expect(await coordinatorFor(store, issuer).current()).toEqual({ kind: 'temporarily_unavailable' });
     }
@@ -202,7 +214,7 @@ describe('refresh within one process', () => {
       generation: 2,
       lifecycle: 'reauthorization_required',
     });
-    expect(readFileSync(store.pathFor('openai', 'default'), 'utf8')).not.toContain('access-1');
+    expect(readFileSync(store.pathFor('openai', 'default'), 'utf8')).not.toContain('synthetic-access-1');
   });
 
   test('a delayed rejection of an older generation cannot revoke a newer authorization', async () => {
@@ -210,8 +222,8 @@ describe('refresh within one process', () => {
     await store.replace(usable(1, NOW + 3_600_000));
     const coordinator = coordinatorFor(store, fakeIssuer(() => refreshed('x')).issuer);
     await coordinator.authorize(async () => ({
-      accessToken: 'login',
-      refreshToken: 'login-refresh',
+      accessToken: tok('login'),
+      refreshToken: tok('login-refresh'),
       expiresAtMs: NOW + 3_600_000,
       account: { accountId: 'acct_synthetic' },
     }));
@@ -233,6 +245,8 @@ describe('refresh within one process', () => {
     await Bun.sleep(50);
     controller.abort(new Error('cancelled'));
     await expect(abandoned).rejects.toThrow('cancelled');
+    // The abandoned waiter did not release the shared refresh's lock: it is held until the issuer settles.
+    await expect(acquireProviderLock(store, 'openai', { waitMs: 150 })).rejects.toMatchObject({ code: 'lock_busy' });
     finish();
     expect(generationOf(await patient)).toBe(2);
     expect(calls).toEqual([1]);
@@ -248,6 +262,73 @@ describe('refresh within one process', () => {
     await invalid.ensureDirectories('openai');
     writeFileSync(invalid.pathFor('openai', 'default'), '{"truncated', { mode: 0o600 });
     expect(await coordinatorFor(invalid, issuer).current()).toEqual({ kind: 'reauthorization_required' });
+  });
+});
+
+describe('cancellation before work starts', () => {
+  const lockFile = (store: CredentialStore) => join(store.directoryFor('openai'), LOCK_FILE);
+  const aborted = () => {
+    const controller = new AbortController();
+    controller.abort(new Error('run cancelled'));
+    return controller.signal;
+  };
+
+  test('a pre-aborted refresh or current() starts no issuer call and takes no lock', async () => {
+    const store = freshStore();
+    await store.replace(usable(1, NOW));
+    const { issuer, calls } = fakeIssuer(() => refreshed('never'));
+    const coordinator = coordinatorFor(store, issuer);
+    await expect(coordinator.refresh({ signal: aborted() })).rejects.toThrow('run cancelled');
+    await expect(coordinator.current(aborted())).rejects.toThrow('run cancelled');
+    await Bun.sleep(50);
+    expect(calls).toEqual([]);
+    expect(existsSync(lockFile(store))).toBe(false);
+    const read = await store.read('openai', 'default');
+    expect(read.kind === 'record' && read.record.generation).toBe(1);
+  });
+
+  test('a caller cancelled while the record is being read starts nothing', async () => {
+    const controller = new AbortController();
+    class AbortingStore extends CredentialStore {
+      override async read(provider: 'anthropic' | 'openai', slot: string): Promise<ReadResult> {
+        const result = await super.read(provider, slot);
+        controller.abort(new Error('run cancelled'));
+        return result;
+      }
+    }
+    const plain = freshStore();
+    await plain.replace(usable(1, NOW));
+    const store = new AbortingStore(plain.root);
+    const { issuer, calls } = fakeIssuer(() => refreshed('never'));
+    await expect(coordinatorFor(store, issuer).current(controller.signal)).rejects.toThrow('run cancelled');
+    await Bun.sleep(50);
+    expect(calls).toEqual([]);
+    expect(existsSync(lockFile(store))).toBe(false);
+  });
+
+  test('lock acquisition cancelled before or during setup launches no helper and leaks no descriptor', async () => {
+    const store = freshStore();
+    await store.ensureDirectories('openai');
+    let launched = 0;
+    const spawned = () => launched++;
+    const before = readdirSync('/proc/self/fd').length;
+    await expect(acquireProviderLock(store, 'openai', { signal: aborted(), hooks: { spawned } })).rejects.toMatchObject(
+      {
+        code: 'lock_aborted',
+      },
+    );
+    const controller = new AbortController();
+    await expect(
+      acquireProviderLock(store, 'openai', {
+        signal: controller.signal,
+        hooks: { spawned, afterSetup: () => controller.abort() },
+      }),
+    ).rejects.toMatchObject({ code: 'lock_aborted' });
+    expect(launched).toBe(0);
+    expect(readdirSync('/proc/self/fd').length).toBe(before);
+    const lock = await acquireProviderLock(store, 'openai', { hooks: { spawned } });
+    expect(launched).toBe(1);
+    await lock.release();
   });
 });
 
@@ -322,7 +403,9 @@ describe('refresh across processes', () => {
     expect(results).toHaveLength(64);
     expect(new Set(results.map((state) => state.credential?.generation))).toEqual(new Set([2]));
     const read = await store.read('openai', 'default');
-    expect(read.kind === 'record' && read.record.lifecycle === 'usable' && read.record.refreshToken).toBe('refresh-1');
+    expect(read.kind === 'record' && read.record.lifecycle === 'usable' && read.record.refreshToken).toBe(
+      'synthetic-refresh-1-token',
+    );
   }, 30_000);
 
   test('a refresh waiting behind a login adopts the login instead of refreshing', async () => {

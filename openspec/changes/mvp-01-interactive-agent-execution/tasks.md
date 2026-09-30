@@ -6,6 +6,8 @@ Implement the reconciled [proposal](proposal.md), [execution specification](spec
 
 Owner-approved refinement on 2026-09-29 adds the Bun/Turbo monorepo and separate runtime/UI package boundaries after the original adversarial reconciliation. Retained adversarial artifacts/reviews describe the earlier revision, not a new review of these edits. Task identities, ordering and model-switch pauses are preserved; updating this plan marks no implementation work complete.
 
+Owner-approved corrective replan on 2026-09-30 inserts groups 17–18 after the completed 7.1 pause and before resuming 7.2. Their Step IDs 118–128 are additional stable identities, not instructions to execute them after Step 117: execution SHALL follow document order. Original task IDs, relative ordering, completed checkboxes, model-switch gates and historical evidence SHALL remain intact. Tasks 17.1–17.2 record research and proposal approval actually completed in the conversation; all corrective implementation, verification, acceptance and new pauses remain unfinished. Earlier block-6 acceptance is historical evidence, not proof that the newly identified cases pass. This revision does not claim renewed adversarial review or authorize source edits in Plan mode.
+
 ## Step Types
 
 - **Verify** → CHECK. Run automated checks (tests, lint, type checks).
@@ -278,12 +280,101 @@ Review implementation, tests and documentation before connecting these boundarie
 ## 7. Controlled execution and human continuation — Research
 
 ### Step 41 - Pause: Switch model for exploration
-- [ ] 7.1 Pause: Switch model for exploration
+- [x] 7.1 Pause: Switch model for exploration
+
+Task 7.2 was paused after prerequisite defects were identified. The following corrective block SHALL complete, including verification and owner acceptance, before 7.2 resumes. The original lifecycle/controller proposal at 7.4 remains a separate approval gate.
+
+## 17. Authority-boundary prerequisite corrections — Research
+
+### Step 118 - Explore: Confirm boundary defects; verify correction sites and independent regression witnesses
+- [x] 17.1 Explore: Confirm boundary defects; verify correction sites and independent regression witnesses
+
+Read-only inspection covered the current workspace, credential, security and configuration modules, their tests and README, plus the pinned framework's public middleware/state-inspection contracts. Synthetic in-memory probes confirmed: search excerpting can retain a suffix of a recognized credential; private-key masking leaves the body; a quote-filled clipped line serializes to 114,619 bytes and fails its ignored budget admission; a 1,048,576-byte input is accepted after redaction expands its text to 1,376,256 bytes; and credential decoding accepts a short token that exact matching ignores. These are narrow probes, not a new acceptance-suite run.
+
+Static findings also identify pre-aborted refresh initiation, missing descriptor-size rechecks in search, swallowed candidate-inspection failures, lexical-only root validation and silently partial protected-inode discovery. Their new regression fixtures remain implementation work. The research read no actual credential records, contacted no providers, wrote no application files and established no new G1–G5 pass.
+
+### Step 119 - Propose: Present the bounded corrective scope; obtain owner approval of policies and verification
+- [x] 17.2 Propose: Present the bounded corrective scope; obtain owner approval of policies and verification
+
+The owner approved the corrective scope and this tasks-only revision on 2026-09-30. The approved policies are: complete-content screening before projection; whole private-key-block masking, conservatively through EOF when malformed; literal matching of original non-secret text with incomplete reporting for withheld coverage; complete serialized post-sanitation bounds; a shared 16-character minimum for usable access/refresh tokens; opaque exact-matching capability; pre-abort checks without cancelling existing shared rotation; and complete-or-failed workspace/private-location validation.
+
+The corrective block SHALL NOT implement the graph/controller, contact providers, alter upstream code, upgrade dependencies, add database migrations or rewrite historical evidence. Complete stock-message replay preservation, pre-checkpoint safe exceptions and actual in-flight settlement remain block-8 obligations. The existing proposal/specification intent and architecture remain controlling; these tasks repair prerequisites rather than widen Phase-1 authority.
+
+## 18. Authority-boundary prerequisite corrections — Implementation
+
+### Step 120 - Pause: Switch model for implementation
+- [x] 18.1 Pause: Switch model for implementation
+
+### Step 121 - Implement: Screen complete content before projection; verify secret-span and source-location regressions
+- [x] 18.2 Implement: Screen complete content before projection; verify secret-span and source-location regressions
+
+Update `packages/runtime/src/security/content-policy.ts` and workspace file/search projection to identify recognized credential spans over the complete admitted decoded file before line pagination, clipping or excerpt selection. Merge overlapping protected spans without running replacements over replacement text. Mask complete recognized private-key blocks, including delimiters and body; missing/mismatched termination or malformed nesting SHALL conservatively withhold the remainder through EOF. Preserve original source line numbering and line boundaries.
+
+Search SHALL retain case-sensitive literal matching against original non-secret source text, not inserted redaction markers. Matches intersecting credential spans SHALL be suppressed; excerpts SHALL be derived from sanitized spans without reinserting raw query text or using obsolete offsets. Withheld searchable coverage SHALL make the result explicitly incomplete rather than a complete negative search. Credential-bearing semantic fields, including paths/cursors, SHALL produce a fixed safe refusal rather than a rewritten identity. All tool-outcome variants SHALL be validated/sanitized before release; arbitrary errors SHALL NOT bypass the boundary.
+
+Add regressions for credentials crossing either excerpt boundary, replacements before a match, queries within protected material, no manufactured matches from markers, complete/multiple/malformed PEM blocks, LF/CRLF, pagination starting inside a block, and ordinary lines after a closed block retaining their numbers. Include overlapping credentials, repeated sanitation and the existing ordinary-code false-positive corpus. If a rendered result cannot satisfy the safety postcondition, withhold it safely rather than iterating unbounded replacement.
+
+### Step 122 - Implement: Enforce final serialized bounds; verify escaping, expansion and bounded assembly
+- [x] 18.3 Implement: Enforce final serialized bounds; verify escaping, expansion and bounded assembly
+
+Update `workspace/results.ts`, file clipping and `security/pre-graph.ts`. The authoritative tool bound SHALL be 65,536 UTF-8 bytes for the complete final serialized `ToolOutcome`, including envelope, metadata, escaping and sanitation. Item budgets/headroom MAY remain optimizations, but an item SHALL NOT be appended after failed budget admission. Oversized single lines SHALL use a Unicode-code-point-safe prefix selected by serialized entry cost; serialized JSON and semantic tool arguments SHALL never be cut. A final overflow SHALL return a bounded application-owned refusal, not an arbitrary exception or oversized payload.
+
+Retain the assembler's 1,048,576-byte input bound and additionally enforce that bound on its final sanitized serialized message representation. Account for retained structure as well as string data; empty fragments SHALL NOT accumulate unbounded arrays/maps. Overflow SHALL reject the message with a safe reason and release retained buffers. This is a correction to the existing synthetic interface, not a substitute for block 8's metadata-preserving stock-message sanitizer or block 10's provider-terminal checks.
+
+Test exact-limit/+1 cases, quotes/backslashes/control characters, multibyte single lines, envelope-only overflow, redaction expansion, retained tool-call structure, empty fragments and malformed/storable-text boundaries. Measure entire outcomes rather than only `.result`. Keep visible clipping/pagination correct; final sanitation SHALL NOT invalidate the enforced bound.
+
+### Step 123 - Implement: Align credential screening and cancellation entry; verify admission and shared-rotation witnesses
+- [x] 18.4 Implement: Align credential screening and cancellation entry; verify admission and shared-rotation witnesses
+
+Share a minimum length of 16 printable non-space ASCII characters between access/refresh credential decoding and exact-matcher admission, retaining the existing maximum. This is an explicit runtime safety policy, not an inferred provider token-format guarantee. Short existing records SHALL fail decoding without automatic rewriting; invalid newly issued/rotated credentials SHALL NOT replace the last committed generation. Update synthetic fixtures rather than weakening the new rule. No SQL migration, credential import or real issuer operation is authorized.
+
+Replace the exposed secret-value iterable with an opaque exact-matching/redaction capability owned by the credential boundary. Consumers SHALL receive no token enumeration capability. Construction intended for execution SHALL require an explicit matcher, with explicitly credential-free fixtures distinguished from production construction. Test all supported admitted token lengths, unknown/default matcher omission, overlap and repeated sanitation. Actual generation freshness, retention for in-flight responses and controller wiring remain block-8 integration obligations and SHALL NOT be described as delivered here.
+
+Correct `credentials/coordinator.ts` and `credentials/lock.ts` so pre-aborted callers initiate no new refresh or lock-helper operation. Recheck cancellation after asynchronous setup and immediately before starting local work. Once a shared refresh has started, an individual waiter may abandon waiting but SHALL NOT cancel shared issuer settlement, discard rotated credentials or release its provider lock prematurely. Preserve the parent-held kernel-lock design and bounded ordinary lock wait.
+
+Add independent issuer/helper counters for pre-aborted calls and controlled setup races, plus a separate cancelled-waiter fixture proving an existing shared refresh persists exactly once under its retained lock. Retest generation fencing, partial rotation, two-process exclusion and token-free rejection records. No fallback locking mechanism or automatic ambiguous-refresh retry is authorized.
+
+### Step 124 - Implement: Validate workspace admission and scan accounting; verify alias, fault and descriptor-bound fixtures
+- [x] 18.5 Implement: Validate workspace admission and scan accounting; verify alias, fault and descriptor-bound fixtures
+
+Update runtime path validation and the common workspace policy/filesystem/protected-identity helpers. Establish normalized/canonical workspace and private-location separation before usable workspace admission; inspect configured-root ancestors and refuse static symlink aliases rather than checking only the final root component. Keep private configuration/state overlap checks component-aware and consistent across all tool modes. Missing optional credential slots SHALL remain distinguishable from a required private-root inspection failure.
+
+Protected-inode discovery SHALL return complete protection or an explicit failure, not silently skip permission/metadata errors or present capped traversal as complete. Bound raw enumeration and retained traversal work, not merely the number of successfully collected identities. If protection cannot be established, workspace access SHALL remain unavailable; do not repair permissions or mutate owner directories.
+
+Search SHALL recheck the opened descriptor's size against the per-file and remaining aggregate read allowances before allocation/read, using a bounded common read primitive. Actual scan accounting SHALL include reads later discarded after an observed change. Disappeared/unreadable eligible candidates SHALL contribute to incomplete coverage rather than being silently omitted; intentional policy exclusions remain exclusions. Preserve the existing file/result/traversal limits and no-process/no-mutation tool boundary.
+
+Test static root-ancestor aliases, private-location aliases, incomplete protected discovery, ordinary file growth between resolution and open, discarded-read accounting, and candidate disappearance/permission failure. Use deterministic injected filesystem barriers where needed rather than timing-only races. This remains an owner-controlled-volume boundary, not hostile-host isolation or an `openat2`/FFI implementation.
+
+### Step 125 - Implement: Document corrected authority boundaries; verify examples and scope against implementation
+- [x] 18.6 Implement: Document corrected authority boundaries; verify examples and scope against implementation
+
+Update README and `architecture/05-model-authentication.md` / `architecture/08-execution-security.md` with full-content screening, private-key EOF handling, original non-secret literal-search semantics and withheld coverage, complete post-sanitation size bounds, the credential safety floor and short-record behavior, pre-abort/shared-rotation distinction, and workspace/private-location validation failure behavior. Verify examples, links and commands against the implemented code. There is no existing `docs/` content to reconcile.
+
+Retain the distinction between synthetic boundary components and their unfinished graph/provider integration. Preserve prior acceptance records and adversarial history; do not retroactively claim the earlier suites covered these regressions or claim future verification passed. No upstream report submission or historical G1 rewrite is part of this correction.
+
+### Step 126 - Verify: Run corrective acceptance; require fresh boundary, integration and container checks
+- [x] 18.7 Verify: Run corrective acceptance; require fresh boundary, integration and container checks
+
+Run forced `mise exec -- bun run check:verify`, direct `mise exec -- bun test`, the existing isolated integration suite, affected container smoke and credential/workspace/security regression suites in the pinned Bun image. Container boundary suites SHALL run non-root, with a read-only root filesystem and no provider-network access. Preserve source/dependency/image identity and distinguish each suite's exit status from filtered output; a pipeline that hides a failing test process SHALL NOT count as success.
+
+Require the new regression cases, existing rotation/crash/confinement/typed-input suites, import/process/mutation guards and affected persistence/G1 regressions to pass without acceptance skips. No actual credentials, production storage or provider requests are permitted. Run strict OpenSpec validation, verify preserved historical/adversarial material and confirm cleanup of only launcher-owned fixtures. Any failure SHALL stop dependent work for guidance; no source-changing formatting flags belong in this Verify step.
+
+### Step 127 - Review: Assess corrective evidence; obtain owner acceptance before resuming harness research
+- [x] 18.8 Review: Assess corrective evidence; obtain owner acceptance before resuming harness research
+
+Present actual fixes, test commands/results, policy effects, limits and remaining block-8 integration obligations. Obtain explicit owner acceptance or a concrete correction request. Passing these component suites SHALL NOT be reported as G3 completion or proof of real provider/graph sanitation. Task 7.2 SHALL remain pending until this gate and the following model-switch pause complete.
+
+### Step 128 - Pause: Switch model for exploration
+- [ ] 18.9 Pause: Switch model for exploration
+
+## 7. Controlled execution and human continuation (continued) — Research
 
 ### Step 42 - Explore: Inspect harness hooks; verify the controller integration map
 - [ ] 7.2 Explore: Inspect harness hooks; verify the controller integration map
 
 Recheck pinned public model/tool middleware and interrupt/state-inspection contracts. Preserve root invocation, control-flow exceptions, sole-question batches and service-owned cancellation.
+
+After the corrective block, recheck its interfaces rather than treating the earlier inspection as current-build verification. The integration map SHALL explicitly cover lossless stock-message replay metadata, safe exceptions before checkpoint error writes, mandatory credential matching with generation freshness, stored-binding reconstruction, and actual request/tool/saver settlement. These remain block-8 responsibilities; the corrections do not implement them or approve a changed lifecycle design.
 
 ### Step 43 - Explore: Map lifecycle fault windows; verify independent witnesses for each boundary
 - [ ] 7.3 Explore: Map lifecycle fault windows; verify independent witnesses for each boundary

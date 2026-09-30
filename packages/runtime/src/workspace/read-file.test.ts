@@ -3,6 +3,8 @@ import { chmodSync, linkSync, lstatSync, mkdirSync, renameSync, symlinkSync, wri
 import { appendFile, open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createFixture } from '../../test-support/workspace.ts';
+import { exactSecretMatcher } from '../credentials/matcher.ts';
+import { createContentPolicy, REDACTION } from '../security/content-policy.ts';
 import { confirmUnchanged, parseToolPath, readWholeFile, resolvePath, ToolProblem } from './filesystem.ts';
 import { createWorkspacePolicy } from './policy.ts';
 import { readFile } from './read-file.ts';
@@ -14,7 +16,8 @@ const policy = fixture.policy({ excludeNames: ['SECRETS.yaml'], excludePaths: ['
 async function ok(path: string, extra: Record<string, unknown> = {}) {
   const outcome = await readFile(policy, { path, ...extra });
   if (outcome.outcome !== 'ok') throw new Error(`${path}: ${outcome.outcome} ${outcome.code}`);
-  expect(new TextEncoder().encode(JSON.stringify(outcome.result)).byteLength).toBeLessThanOrEqual(65_536);
+  // The bound covers the complete serialized outcome, envelope included.
+  expect(new TextEncoder().encode(JSON.stringify(outcome)).byteLength).toBeLessThanOrEqual(65_536);
   return outcome.result;
 }
 const codeOf = async (path: unknown, extra: Record<string, unknown> = {}, which = policy) => {
@@ -90,6 +93,28 @@ describe('reading text files', () => {
     expect((await ok('long-line.txt', { startLine: 2 })).lines).toEqual([{ line: 2, text: 'after' }]);
   });
 
+  test('clips a single oversized line by its serialized size, whatever it contains', async () => {
+    for (const [name, unit] of [
+      ['quotes', '"'],
+      ['backslashes', '\\'],
+      ['controls', '\u0001'],
+      ['emoji', '😀'],
+      ['mixed', 'é"\\\u0002😀x'],
+    ] as const) {
+      fixture.write(
+        `single-${name}.txt`,
+        `${unit.repeat(Math.floor(900_000 / new TextEncoder().encode(unit).byteLength))}\nnext`,
+      );
+      const result = await ok(`single-${name}.txt`);
+      expect(result.lines).toHaveLength(1);
+      expect(result.lines[0]?.clipped).toBe(true);
+      expect(result.lines[0]?.text.length).toBeGreaterThan(0);
+      expect(result).toMatchObject({ nextStartLine: 2, limitedBy: 'result_size', complete: false });
+      // The prefix ends on a code-point boundary.
+      expect(result.lines[0]?.text).not.toMatch(/[\uD800-\uDBFF]$/);
+    }
+  });
+
   test('applies the file-size bound exactly', async () => {
     fixture.write('at-limit.txt', 'z'.repeat(1_048_576));
     expect(await codeOf('at-limit.txt')).toBe('ok');
@@ -114,6 +139,44 @@ describe('reading text files', () => {
       expect(await codeOf('locked.txt')).toBe('error:unreadable');
       chmodSync(path, 0o600);
     }
+  });
+});
+
+describe('screening the whole file before paging', () => {
+  const LIVE = 'oauth-live-synthetic-0123456789abcdefABCDEF';
+  const screen = createContentPolicy(exactSecretMatcher([LIVE]));
+
+  test('a private-key block is masked whole, keeping line numbers, even when a page starts inside it', async () => {
+    const lines = ['intro', '-----BEGIN PRIVATE KEY-----', 'BODYONE', 'BODYTWO', '-----END PRIVATE KEY-----', 'after'];
+    fixture.write('screened/key-in-code.txt', lines.join('\r\n'));
+    const whole = await readFile(policy, { path: 'screened/key-in-code.txt' }, { screen });
+    expect(whole.outcome === 'ok' && whole.result.lines).toEqual([
+      { line: 1, text: 'intro' },
+      { line: 2, text: REDACTION },
+      { line: 3, text: REDACTION },
+      { line: 4, text: REDACTION },
+      { line: 5, text: REDACTION },
+      { line: 6, text: 'after' },
+    ]);
+    const inside = await readFile(policy, { path: 'screened/key-in-code.txt', startLine: 4, lineLimit: 1 }, { screen });
+    expect(inside.outcome === 'ok' && inside.result.lines).toEqual([{ line: 4, text: REDACTION }]);
+    expect(JSON.stringify(inside)).not.toContain('BODY');
+  });
+
+  test('an unterminated private-key block is withheld through the end of the file', async () => {
+    fixture.write('screened/truncated-key.txt', 'a\n-----BEGIN PRIVATE KEY-----\nBODY\nplain later text');
+    const outcome = await readFile(policy, { path: 'screened/truncated-key.txt', startLine: 4 }, { screen });
+    expect(outcome.outcome === 'ok' && outcome.result.lines).toEqual([{ line: 4, text: REDACTION }]);
+  });
+
+  test('a live credential is redacted before an oversized line is clipped', async () => {
+    // The credential straddles the clip boundary: unscreened, the clipped prefix would end inside it.
+    fixture.write('screened/long.txt', `${'x'.repeat(57_280)}${LIVE}${'x'.repeat(2_000)}`);
+    const unscreened = await readFile(policy, { path: 'screened/long.txt' });
+    expect(JSON.stringify(unscreened)).toContain(LIVE.slice(0, 10));
+    const outcome = await readFile(policy, { path: 'screened/long.txt' }, { screen });
+    expect(outcome.outcome === 'ok' && outcome.result.lines[0]?.clipped).toBe(true);
+    expect(JSON.stringify(outcome)).not.toContain(LIVE.slice(0, 10));
   });
 });
 

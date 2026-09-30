@@ -2,8 +2,9 @@
 // ignored, so a model cannot believe it has used an option that does not exist.
 import { refuse } from './filesystem.ts';
 import type { WorkspacePolicy } from './policy.ts';
+import type { ContentScreen } from './projection.ts';
 import { type DirectoryReadResult, readDirectory } from './read-directory.ts';
-import { type FileReadResult, readFile, type TextFilter } from './read-file.ts';
+import { type FileReadResult, readFile } from './read-file.ts';
 import { type ToolOutcome, toolOutcome } from './results.ts';
 
 const FILE_KEYS = new Set(['mode', 'path', 'startLine', 'lineLimit']);
@@ -12,7 +13,7 @@ const DIRECTORY_KEYS = new Set(['mode', 'path', 'afterName', 'entryLimit']);
 export function readWorkspace(
   policy: WorkspacePolicy,
   args: unknown,
-  options: { signal?: AbortSignal; filter?: TextFilter } = {},
+  options: { signal?: AbortSignal; screen?: ContentScreen } = {},
 ): Promise<ToolOutcome<FileReadResult | DirectoryReadResult>> {
   if (typeof args !== 'object' || args === null || Array.isArray(args)) {
     return toolOutcome(policy.limits.resultBytes, async () => {
