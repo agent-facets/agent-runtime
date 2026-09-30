@@ -8,6 +8,8 @@ Owner-approved refinement on 2026-09-29 adds the Bun/Turbo monorepo and separate
 
 Owner-approved corrective replan on 2026-09-30 inserts groups 17–18 after the completed 7.1 pause and before resuming 7.2. Their Step IDs 118–128 are additional stable identities, not instructions to execute them after Step 117: execution SHALL follow document order. Original task IDs, relative ordering, completed checkboxes, model-switch gates and historical evidence SHALL remain intact. Tasks 17.1–17.2 record research and proposal approval actually completed in the conversation; all corrective implementation, verification, acceptance and new pauses remain unfinished. Earlier block-6 acceptance is historical evidence, not proof that the newly identified cases pass. This revision does not claim renewed adversarial review or authorize source edits in Plan mode.
 
+Owner-approved provider replan on 2026-09-30 replaces the upstream public-release prerequisite with the minimal internal v2-derived Anthropic subscription package in revised design Decision 10. LangChain/LangGraph and stock ChatAnthropic remain unchanged. Completed task descriptions, including the release research at 9.2, record the earlier work and SHALL remain intact; their upstream-delivery assumptions are superseded for future execution by this amendment. All 128 task identities, the 73 completed checkboxes, document order and model-switch/approval/verification gates are preserved. The pending provider tasks below implement the approved ownership change and the identified in-flight screening prerequisite. This artifact revision completes no additional task or gate and does not authorize implementation before 9.5 approval and the 10.1 pause, upstream edits or live provider traffic. Retained evidence and adversarial artifacts SHALL NOT be rewritten to describe the new approach as already verified.
+
 ## Step Types
 
 - **Verify** → CHECK. Run automated checks (tests, lint, type checks).
@@ -33,13 +35,14 @@ Execution constraints:
 
 - The executor SHALL preserve the historical spikes, unrelated working-tree changes, and existing adversarial history. It SHALL NOT add Phase-2 facets, memory, API-key operation, arbitrary commands, workspace writes, or automatic active-run recovery.
 - Each block SHALL land its own tests and documentation. Block checks mean `mise exec -- bun run check:verify`: forced execution of repository lint, root-script and package typechecks, repository-script and package deterministic tests, and the application build, plus the applicable explicitly invoked integration suite. Scaffolding establishes this command before subsequent blocks use it. Direct `bun test` and root `test`, `typecheck` and `lint` scripts SHALL remain available; a Turbo cache hit SHALL NOT count as freshly executed block-acceptance evidence.
-- The Bun workspace SHALL separate `packages/runtime` from `packages/ui`, with one application deployment. Root configuration owns shared tooling; package manifests own application dependencies and use `workspace:*` for internal links. `packages/contracts` SHALL be introduced with the API block for pure browser-safe wire schemas/types, not server records or credential handling. The UI SHALL NOT import runtime internals. Package scaffolding does not authorize console feature work before the pre-console gates.
+- The Bun workspace SHALL separate `packages/runtime` from `packages/ui`, with one application deployment. Root configuration owns shared tooling; package manifests own application dependencies and use `workspace:*` for internal links. The provider block SHALL introduce private server-only `packages/anthropic-subscription`, with no dependencies on runtime, UI, browser contracts, OpenCode, LangChain or provider SDKs. `packages/contracts` SHALL be introduced with the API block for pure browser-safe wire schemas/types, not server records or credential handling. The UI SHALL NOT import runtime internals or the subscription package. Package scaffolding does not authorize console feature work before the pre-console gates.
 - Default tests SHALL be deterministic and independent of live credentials, provider traffic, production databases, and production services. Integration commands SHALL require isolated test storage and explicit invocation; fixtures SHALL never reset owner volumes or import spike credentials.
 - Future-block test cases MAY remain explicitly skipped with a task reference until their prerequisite lands. A skipped mandatory G1–G5 check SHALL NOT count as passed. All Phase-1 acceptance skips SHALL be resolved before final acceptance.
-- The owner SHALL supply the maintained Anthropic release required by design Decision 10. Blocks 1–8 and the explicitly mock-backed preparation in block 10 can proceed before delivery. Block 9 records the owner handoff; block 10 has one release-dependent pin/bind step after preparation. If the release is missing, execution SHALL stop there without skipping ahead. Real G2 and offline G4/G5 remain mandatory before console buildout. No fake, copied implementation, private import, global-fetch patch or upstream source edit substitutes for the release.
+- The project SHALL own the minimal internal Anthropic extraction specified in design Decision 10. Its baseline is the reviewed `@ex-machina/opencode-anthropic-auth@2.0.0-next.5` source and recorded revision/integrity, not a moving tag or the historical 1.8.1 spike profile. No new upstream release is required. Block 9 confirms ownership/extraction scope; block 10 implements and tests the actual package before connecting production registration and deployment. Actual-package G2 and offline G4/G5 remain mandatory before console buildout. Test doubles SHALL NOT substitute for acceptance. No runtime private upstream imports, OpenCode host/plugin dependency, global-fetch patch, framework/SDK fork, upstream edit or extraction beyond the reviewed scope is authorized.
 - Live verification SHALL have fresh approval for the named provider/model, account setup or renewal operations, maximum physical model requests, and any retry allowance. Approval of this task list or a prior spike SHALL NOT grant that authority. Operator login SHALL occur in the owner's private terminal; only safe readiness and verification outcomes enter the execution transcript.
 - Verification failures SHALL stop dependent work. Changed approaches require explicit replanning; failed Bun checks SHALL NOT silently select Node, a custom saver, a middleware-only request counter, or billed access.
 - Gate evidence SHALL live under `architecture/integration-evidence/mvp-01/`, indexed from `architecture/spike-reports/README.md`. Fixed files are `g1-bun-persistence.md`, `g2-anthropic-boundary.md`, `g3-dispatch-lifecycle.md`, `g4-anthropic-offline.md`, `g4-anthropic-live.md`, `g5-openai-offline.md`, `g5-openai-live.md`, `upstream-handoff.md`, `openai-cost-checkpoint.md`, and `phase-exit.md`.
+- The retained `upstream-handoff.md` path SHALL record internal derivative ownership, exact upstream provenance/license, intentional differences and the update procedure; it SHALL NOT claim delivery of an upstream standalone release. G2 SHALL identify the actual internal package revision and tested source, not infer acceptance from its upstream version or from consumer fakes.
 - Evidence SHALL identify the tested source/dependency/image versions, commands, actual outcomes, observed physical-request counts, applicable owner authorization, unresolved failures and skipped cases. Tokens, authorization codes, raw provider bodies and sensitive fixture content SHALL NOT be recorded.
 - Explore, Propose, Review and Verify steps SHALL NOT edit repository evidence files. Verify emits safe results; subsequent Implement steps transcribe those observed results and update the index, followed by a Verify of the records. No report SHALL claim a future check passed. Later reruns SHALL retain their own provenance rather than silently relabel earlier evidence.
 
@@ -365,51 +368,51 @@ Require the new regression cases, existing rotation/crash/confinement/typed-inpu
 Present actual fixes, test commands/results, policy effects, limits and remaining block-8 integration obligations. Obtain explicit owner acceptance or a concrete correction request. Passing these component suites SHALL NOT be reported as G3 completion or proof of real provider/graph sanitation. Task 7.2 SHALL remain pending until this gate and the following model-switch pause complete.
 
 ### Step 128 - Pause: Switch model for exploration
-- [ ] 18.9 Pause: Switch model for exploration
+- [x] 18.9 Pause: Switch model for exploration
 
 ## 7. Controlled execution and human continuation (continued) — Research
 
 ### Step 42 - Explore: Inspect harness hooks; verify the controller integration map
-- [ ] 7.2 Explore: Inspect harness hooks; verify the controller integration map
+- [x] 7.2 Explore: Inspect harness hooks; verify the controller integration map
 
 Recheck pinned public model/tool middleware and interrupt/state-inspection contracts. Preserve root invocation, control-flow exceptions, sole-question batches and service-owned cancellation.
 
 After the corrective block, recheck its interfaces rather than treating the earlier inspection as current-build verification. The integration map SHALL explicitly cover lossless stock-message replay metadata, safe exceptions before checkpoint error writes, mandatory credential matching with generation freshness, stored-binding reconstruction, and actual request/tool/saver settlement. These remain block-8 responsibilities; the corrections do not implement them or approve a changed lifecycle design.
 
 ### Step 43 - Explore: Map lifecycle fault windows; verify independent witnesses for each boundary
-- [ ] 7.3 Explore: Map lifecycle fault windows; verify independent witnesses for each boundary
+- [x] 7.3 Explore: Map lifecycle fault windows; verify independent witnesses for each boundary
 
 Map question bindings, compatibility manifests, request-attempt states and the crash-window table to assertions. Final graph-state equality SHALL NOT substitute for evidence of actual dispatch or one continuation.
 
 ### Step 44 - Propose: Present lifecycle and G3 work; obtain owner approval
-- [ ] 7.4 Propose: Present lifecycle and G3 work; obtain owner approval
+- [x] 7.4 Propose: Present lifecycle and G3 work; obtain owner approval
 
 Present mock-backed lifecycle implementation and its fault matrix, without enabling real provider requests or changing the approved state machine.
 
 ## 8. Controlled execution and human continuation — Implementation
 
 ### Step 45 - Pause: Switch model for implementation
-- [ ] 8.1 Pause: Switch model for implementation
+- [x] 8.1 Pause: Switch model for implementation
 
 ### Step 46 - Implement: Add the guarded terminal boundary; verify independent I/O admission tests
-- [ ] 8.2 Implement: Add the guarded terminal boundary; verify independent I/O admission tests
+- [x] 8.2 Implement: Add the guarded terminal boundary; verify independent I/O admission tests
 
 Implement the reusable injected terminal boundary with exact endpoint/redirect policy, durable-admission requirement, owner/run/cancellation checks, pre-aborted signals and the five-minute full-body deadline. Test refused admission, cancellation during credential waits, headers followed by a stalled body, redirects and body settlement against independent terminal witnesses. No request is permitted without the application admission contract.
 
 ### Step 47 - Implement: Assemble controlled root execution; verify invocation-contract fixtures
-- [ ] 8.3 Implement: Assemble controlled root execution; verify invocation-contract fixtures
+- [x] 8.3 Implement: Assemble controlled root execution; verify invocation-contract fixtures
 
 Assemble root `createAgent` and the service-owned per-run controller with configured unbound models and official saver. Assert v2 tools, sync durability, stable thread identity, omitted `checkpoint_id`, independence from browser lifetime and absence of a custom agent loop.
 
 ### Step 48 - Implement: Add tool identity and replay handling; verify safe-batch and deduplication tests
-- [ ] 8.4 Implement: Add tool identity and replay handling; verify safe-batch and deduplication tests
+- [x] 8.4 Implement: Add tool identity and replay handling; verify safe-batch and deduplication tests
 
 Implement middleware, stable model-message/operation IDs, replayed-result reuse and ordered projection. Cover read-only batches, refusal of every mixed/multiple-question call, ambiguous/reused IDs, propagation of graph control flow and new calls distinguished from replay.
 
 Explicitly generate agent calls to an unavailable writing tool and an unavailable command tool. Require a recorded refusal or `tool_failure`, unchanged fixture files and zero mutation/process-dispatch witness calls. Exercise both safe-refusal and fatal-handling branches; the requested action SHALL never execute.
 
 ### Step 49 - Implement: Add compatibility verification; verify positive and negative manifest cases
-- [ ] 8.5 Implement: Add compatibility verification; verify positive and negative manifest cases
+- [x] 8.5 Implement: Add compatibility verification; verify positive and negative manifest cases
 
 Implement execution-code/dependency/configuration manifests and required-state digests against stored bindings. Accept identical redeploys and browser/default-model changes; reject changed tool bodies/helpers/protocols, unsupported serialized values and missing/ambiguous saved state before acceptance or dispatch.
 
@@ -418,136 +421,152 @@ Pin assertions for CRLF/LF normalization, unchanged README/browser assets, chang
 Include UI-only source/dependency changes versus changes to shared modules used by execution, using fixtures for packages not implemented yet. Hash the selected execution import/dependency closure, not every workspace, the entire root lockfile, the application bundle or Turbo task hashes. Retest the real shared-module boundary when contracts are extracted in the API block.
 
 ### Step 50 - Implement: Publish settled human questions; verify pause persistence fault windows
-- [ ] 8.6 Implement: Publish settled human questions; verify pause persistence fault windows
+- [x] 8.6 Implement: Publish settled human questions; verify pause persistence fault windows
 
 Implement deterministic `mcp_AskUser` and saver settlement/inspection before atomic publication. Test failures before interrupt persistence, after stream emission, after saver settlement and around application waiting commit. Do not promote orphan checkpoints into answerable questions.
 
 ### Step 51 - Implement: Accept exact answers once; verify identity, duplicate and uncertainty cases
-- [ ] 8.7 Implement: Accept exact answers once; verify identity, duplicate and uncertainty cases
+- [x] 8.7 Implement: Accept exact answers once; verify identity, duplicate and uncertainty cases
 
 Implement answer validation, disposition-first duplicate acknowledgement, conditional acceptance and one ID-addressed truthy resume envelope. Cover false/null/permitted-empty values, wrong/stale/conflicting IDs, two tabs, terminal duplicate acknowledgements, incompatible versus inaccessible state, and ambiguous-commit readback. Replay SHALL still call the framework interrupt.
 
 ### Step 52 - Implement: Integrate request accounting; verify budgets and renewal-retry cases
-- [ ] 8.8 Implement: Integrate request accounting; verify budgets and renewal-retry cases
+- [x] 8.8 Implement: Integrate request accounting; verify budgets and renewal-retry cases
 
 Connect reservation, dispatch confirmation, completion/abandonment and unconfirmed accounting to the guarded terminal and controller. Test zero inference requests for auth-only failure, disabled hidden retries, one permitted renewal retry consuming another step, last-step tools/results/questions, exhausted-budget answers and the admission/crash gap. Preserve default budget 50 and the separate recursion safety bound.
 
 ### Step 53 - Implement: Add durable cancellation; verify dispatch and completion races
-- [ ] 8.9 Implement: Add durable cancellation; verify dispatch and completion races
+- [x] 8.9 Implement: Add durable cancellation; verify dispatch and completion races
 
 Implement cancellation acceptance under the short gate, unanswered-question closure, signal propagation and actual in-flight/body settlement. Test cancellation during credential waits, model bodies and tool reads, both cancellation/completion race orders, and preservation of an already accepted answer. Late output cannot replace the cancelled outcome.
 
 ### Step 54 - Implement: Add finalization and startup reconciliation; verify the complete crash matrix
-- [ ] 8.10 Implement: Add finalization and startup reconciliation; verify the complete crash matrix
+- [x] 8.10 Implement: Add finalization and startup reconciliation; verify the complete crash matrix
 
 Implement successful/failed/no-op finalization and startup classification after ownership. A child-process test SHALL kill execution at every row of design Decision 6's crash-window table and assert the specified result, including accepted-answer-before-dispatch, orphan graph interrupts, unfinished final commits and restart-mid-cancel. Test failed/uncertain persistence and truthful unconfirmed attempts. Never automatically or manually resume prior active work.
 
 ### Step 55 - Implement: Document the lifecycle; verify state and crash-window correspondence
-- [ ] 8.11 Implement: Document the lifecycle; verify state and crash-window correspondence
+- [x] 8.11 Implement: Document the lifecycle; verify state and crash-window correspondence
 
 Update README, `architecture/02-control-plane.md` and `architecture/09-data-model-and-lifecycle.md` for compatibility, counters, questions, states and failures. Preserve separate graph/application commit semantics and dated G3 evidence pointers.
 
 ### Step 56 - Verify: Run G3 and G1 regressions; require every lifecycle boundary to pass
-- [ ] 8.12 Verify: Run G3 and G1 regressions; require every lifecycle boundary to pass
+- [x] 8.12 Verify: Run G3 and G1 regressions; require every lifecycle boundary to pass
 
 Run block checks and isolated lifecycle/fault suites. Require all design crash windows, cancellation boundaries, physical counts and saved-state refusals to pass before provider/console acceptance.
 
 ### Step 57 - Implement: Record G3 evidence; verify correspondence to observed results
-- [ ] 8.13 Implement: Record G3 evidence; verify correspondence to observed results
+- [x] 8.13 Implement: Record G3 evidence; verify correspondence to observed results
 
 Write `g3-dispatch-lifecycle.md` from the preceding verification results and relevant owner reports/authorization. Include exact tested versions, source identity, commands, outcomes, request counts, unresolved issues and skips. Update the separately dated spike-index pointer. Do not rerun providers or infer a pass from missing evidence.
 
 ### Step 58 - Verify: Check G3 evidence; require accurate, safe and complete records
-- [ ] 8.14 Verify: Check G3 evidence; require accurate, safe and complete records
+- [x] 8.14 Verify: Check G3 evidence; require accurate, safe and complete records
 
 Check `g3-dispatch-lifecycle.md` and index links against the observed results, including tested-build identity and request allowance/counts. Reject unsupported pass claims, missing mandatory cases or sensitive content. This step checks records only and performs no new live provider requests.
 
 ### Step 59 - Review: Assess controlled-execution evidence; obtain owner acceptance
-- [ ] 8.15 Review: Assess controlled-execution evidence; obtain owner acceptance
+- [x] 8.15 Review: Assess controlled-execution evidence; obtain owner acceptance
 
 Present G3 findings and limitations; provider integration and live journeys remain unverified.
 
-## 9. Maintained provider boundaries and offline parity — Research
+## 9. Internal subscription boundary and offline provider parity — Research
 
 ### Step 60 - Pause: Switch model for exploration
-- [ ] 9.1 Pause: Switch model for exploration
+- [x] 9.1 Pause: Switch model for exploration
 
 ### Step 61 - Explore: Assess the maintained library release; verify the upstream contract handoff
-- [ ] 9.2 Explore: Assess the maintained library release; verify the upstream contract handoff
+- [x] 9.2 Explore: Assess the maintained library release; verify the upstream contract handoff
 
 Inspect the owner-supplied release against Decision 10: version/integrity, injected login/refresh/inference, native no-rewrite names and safe errors. If no suitable release exists, report the dependency blocked; do not substitute the shipped loader or edit upstream.
 
 ### Step 62 - Explore: Assess provider parity and OpenAI cost; verify the bounded extraction plan
-- [ ] 9.3 Explore: Assess provider parity and OpenAI cost; verify the bounded extraction plan
+- [x] 9.3 Explore: Assess provider parity and OpenAI cost; verify the bounded extraction plan
 
 Inspect stock model construction and OpenAI Responses/terminal fixtures. Cover configured model/profile, replay metadata, terminal events and the OpenAI cost estimate before its transport implementation.
 
-### Step 63 - Review: Confirm the upstream delivery handoff; obtain owner agreement
-- [ ] 9.4 Review: Confirm the upstream delivery handoff; obtain owner agreement
+### Step 63 - Review: Confirm internal extraction ownership and scope; obtain owner agreement
+- [ ] 9.4 Review: Confirm internal extraction ownership and scope; obtain owner agreement
 
-Present the gap against Decision 10 and confirm the delivery owner, required public contract and existing or planned release. The owner can approve mock-backed preparation while delivery remains outstanding. This is not G2 acceptance and does not authorize edits to the library repository.
+Confirm the revised Decision 10 boundary: a project-owned private package derived from the reviewed v2 source, with no OpenCode host or LangChain/SDK fork. Present exact source provenance and the retained auth/PKCE, profile/constants and necessary bounded parsing/header/system-billing helpers; distinguish the excluded plugin hooks, credential store, alias/response rewriting, API-key paths and automatic retry/version recovery. Confirm internal maintenance ownership, applicable license notices, intentional-difference tracking and the absence of an upstream-delivery blocker. Include the identified in-flight credential-generation retention prerequisite. This review is not G2 acceptance or permission to edit upstream or contact providers.
 
-### Step 64 - Propose: Present the release and provider plan; obtain delivery and cost approval
-- [ ] 9.5 Propose: Present the release and provider plan; obtain delivery and cost approval
+### Step 64 - Propose: Present the internal package and provider plan; obtain scope and cost approval
+- [ ] 9.5 Propose: Present the internal package and provider plan; obtain scope and cost approval
 
-Present the runtime-side preparation and early OpenAI cost checkpoint for approval. Name the upstream handoff and the single blocked pin/bind step. Preparation can proceed without a delivered release, but real G2 and offline G4/G5 must pass before console work. No live model allowance is requested or inferred.
+Present the complete next implementation block for approval: the minimal internal package and its contracts, actual auth/profile extraction, runtime credential/operator wiring, the bounded in-flight screening correction, stock-model construction and exact dependency candidates, offline OpenAI transport, production registration and workspace-aware build/fingerprints, documentation and acceptance fixtures. Distinguish synthetic issuer/HTTP fixtures exercising real package code from a fake package that cannot establish G2. Give the early OpenAI effort/risk assessment and explicit stop/replan conditions. No upstream release is required, but actual-package G2 and offline G4/G5 must pass before console work. No live model/auth allowance or upstream-edit authority is requested or inferred.
 
-## 10. Maintained provider boundaries and offline parity — Implementation
+## 10. Internal subscription boundary and offline provider parity — Implementation
 
 ### Step 65 - Pause: Switch model for implementation
 - [ ] 10.1 Pause: Switch model for implementation
 
-### Step 66 - Implement: Prepare the Anthropic boundary contract; verify mock-backed consumer fixtures
-- [ ] 10.2 Implement: Prepare the Anthropic boundary contract; verify mock-backed consumer fixtures
+### Step 66 - Implement: Establish the private subscription package; verify provenance and boundary fixtures
+- [ ] 10.2 Implement: Establish the private subscription package; verify provenance and boundary fixtures
 
-Define the runtime-side boundary and parameterized consumer fixtures for injected login/refresh/inference, native names, safe errors, signals and partial credential updates. Verify the fixtures against a test-only fake. Do not implement copied provider protocol/profile transformations or claim that fake success establishes G2 or real G4 parity.
+Add private server-only `packages/anthropic-subscription` with explicit public entry points, package-local Bun tests/typecheck, runtime `workspace:*` linkage and root/Turbo/build-context integration. Define independent injected contracts for login/exchange, partial refresh, immutable request profiles and safe typed errors without dependencies on runtime internals, OpenCode, LangChain or a provider SDK. Establish consumer fixtures for signals, partial updates, native names and refusal behavior; test doubles at this stage are preparation, not a G2 pass.
 
-### Step 67 - Implement: Connect Anthropic credential lifecycle; verify synthetic auth and renewal tests
-- [ ] 10.3 Implement: Connect Anthropic credential lifecycle; verify synthetic auth and renewal tests
+Verify the selected v2 release's source revision and tarball integrity against Decision 10; inventory the exact upstream source material and retained/excluded behavior before extraction. Retain applicable license/copyright material and add provenance plus intentional-difference documentation and third-party notices. Preserve historical spikes. Package import/isolation tests SHALL reject UI/contracts imports of the server-only package and runtime imports of upstream private files or spike code. Verify workspace resolution, discovery of the new package's tests and inclusion of its inputs in the application build/cache graph. Actual auth/profile implementations follow in 10.3–10.4.
 
-Prepare the credential adapter and operator commands against the declared boundary using a test-only fake; bind the maintained implementation only at the pin/bind step. Test PKCE/state/exchange, refresh margin, runtime/CLI races and terminal rejection using synthetic credentials only; perform no real login here.
+### Step 67 - Implement: Extract Anthropic auth and connect credentials; verify synthetic lifecycle and screening tests
+- [ ] 10.3 Implement: Extract Anthropic auth and connect credentials; verify synthetic lifecycle and screening tests
+
+Extract and adapt only the reviewed subscription auth/PKCE and necessary validation/bounded parsing helpers into the private package. Connect its actual public auth operations to the runtime's existing credential adapter, provider-scoped coordination, private storage and operator commands; do not introduce another credential store or refresh lock. Require state/verifier matching, explicit millisecond expiry, validated token fields, preservation of omitted refresh/account fields, safe typed errors, separate exact auth endpoint policy and injected transport/signal. No API-key creation, ambient credential discovery or automatic ambiguous exchange/refresh retry is permitted.
+
+Use synthetic issuer responses to exercise the actual package: valid/invalid PKCE/state/exchange inputs, malformed/oversized responses, redirects, pre-abort, full-body deadlines, refresh margin, partial rotation, runtime/CLI races, lost acknowledgement and definitive rejection versus temporary unavailability. Preserve the existing rule that abandoning a waiter cannot cancel an already-started shared rotation or release its lock. These are offline tests, not real login or renewal.
+
+Correct credential-screen generation retention and its execution-boundary lifecycle so a generation used by a request remains screened until its responses are sanitized or safely discarded, not merely until HTTP completion. Keep retention bounded and fail closed rather than evict an in-use generation. Add deterministic rotation-pressure fixtures exceeding the old 16-generation cache, delayed responses, concurrent requests, cancellation/error cleanup and observation of newly loaded/rotated credentials before dispatch. Assert synthetic access/refresh material is absent from model/tool projections and checkpoint/error records; recheck the shared-rotation and credential-store regressions. Record this as new verification, not retroactive block-8 evidence.
 
 ### Step 68 - Implement: Connect stock Anthropic inference; verify offline G4 parity and replay
 - [ ] 10.4 Implement: Connect stock Anthropic inference; verify offline G4 parity and replay
 
-Prepare stock ChatAnthropic construction and parameterized offline fixtures against the declared boundary. Mock-backed consumer tests are preparation only; actual request-profile parity must be rerun against the pinned maintained release. Test sentinel key, `dangerouslyAllowBrowser: false`, retry overrides, profile bytes, fragmented streams, leading-user-text preservation, tool-result replay, cancellation and secret-free checkpoints.
+Extract the reviewed profile constants and necessary header/query/system-billing transformations into the private package, with explicit immutable configuration and documented intentional differences. Exclude upstream alias tables, response rewriting, plugin hooks, environment overrides and automatic version recovery. Connect the actual package to stock ChatAnthropic using the existing guarded terminal, a non-secret sentinel key, `dangerouslyAllowBrowser: false`, and disabled SDK/LangChain retries including per-call overrides. Pin the reviewed model-client/SDK versions and verify compatibility with the existing runtime matrix; package metadata alone is not a Bun pass.
+
+Test actual-package output against independently defined golden requests for the selected profile, including approved native-name/no-rewrite differences rather than pretending to reproduce the entire plugin. Cover exact endpoint/query/header policy, beta-query idempotence, unchanged native names over fragmented responses, bounded complete response assembly and successful terminal markers, leading-user text, complete provider metadata, tool-result and question-resume replay, cancellation/deadline settlement, one explicit renewal retry and secret-free checkpoints. Preserve safe typed provider codes, real attempt references and temporary-versus-definitive auth outcomes through the model boundary; do not collapse them into raw SDK exception text or status-only guesses. Independent terminal counters SHALL prove no hidden retries, no inference request for auth-only failure and no dispatch past cancellation or budget.
 
 ### Step 69 - Implement: Add the offline OpenAI transport; verify G5 wire and stream fixtures
 - [ ] 10.5 Implement: Add the offline OpenAI transport; verify G5 wire and stream fixtures
 
 Implement stock Responses transport with injected synthetic credential resolution and coherent account generations. Compare Bun fetch/node:http captures and test two-turn encoding, reasoning/call-ID replay, missing terminal events, redirects and abort/deadline behavior without ambient API fallback. OpenAI operational readiness remains disabled until its later auth block.
 
-### Step 70 - Implement: Document provider integration; verify release and evidence distinctions
-- [ ] 10.6 Implement: Document provider integration; verify release and evidence distinctions
+Use exact reviewed model-client/SDK pins with explicit streaming Responses selection, stateless replay and sentinel credentials. Test constructor, SDK and per-call retry overrides rather than assuming one `maxRetries: 0` disables every layer. Prefer Bun-native fetch if independent wire captures pass; the historical Node-fetch header mismatch alone SHALL NOT select the compatibility transport. A Bun `node:http` path is permitted only with fresh parity, pre-abort, full-body deadline and settlement evidence under the same guarded terminal. Include complete tool arguments followed by missing/failed terminal events, cross-generation account/token consistency, and safe normalized provider failures. No device login, real refresh or provider traffic belongs in this task.
 
-Update README, `architecture/05-model-authentication.md` and dated gate-evidence pointers. Distinguish the maintained release and selected matrix from deferred live checks and remaining OpenAI device-auth work.
+### Step 70 - Implement: Document internal provider ownership; verify provenance and acceptance distinctions
+- [ ] 10.6 Implement: Document internal provider ownership; verify provenance and acceptance distinctions
 
-Record the handoff and early cost decision in upstream-handoff.md and openai-cost-checkpoint.md. Clearly mark missing real-package evidence and do not describe a mock-backed Anthropic binding as operational.
+Update README, `architecture/05-model-authentication.md`, applicable package/security architecture sections, the private package's public-boundary/provenance/update documentation and third-party notices. Describe the actual stock-model/internal-package split, injected I/O, runtime-owned credentials, in-flight screening guarantee, explicit model/profile configuration and manual upstream-update policy. Distinguish implemented components from production registration still pending at 10.8, and offline checks from future live acceptance and OpenAI device-auth work. Do not rewrite historical acceptance reports.
 
-### Step 71 - Verify: Check independent provider preparation; distinguish completed fixtures from blocked gates
-- [ ] 10.7 Verify: Check independent provider preparation; distinguish completed fixtures from blocked gates
+Record internal ownership, exact upstream provenance/license and intentional extraction differences in `upstream-handoff.md`, retaining that planned path without claiming an upstream standalone release was delivered. Record the early OpenAI effort/risk decision in `openai-cost-checkpoint.md`. Add dated index pointers, but claim only checks already observed; the following Verify steps remain pending.
 
-Run block checks, mock-backed consumer suites, offline OpenAI transport checks and G1/G3 regressions. Require those checks to pass. Report real G2 and real-package Anthropic parity as outstanding—not skipped passes—when the release is unavailable.
+### Step 71 - Verify: Check actual provider components; require package and offline regressions to pass
+- [ ] 10.7 Verify: Check actual provider components; require package and offline regressions to pass
 
-### Step 72 - Implement: Bind the reviewed Anthropic release; verify real-package contract and parity suites
-- [ ] 10.8 Implement: Bind the reviewed Anthropic release; verify real-package contract and parity suites
+Run forced block checks including the new package, actual-package synthetic issuer/consumer suites, independent Anthropic profile and offline OpenAI transport fixtures, rotation-pressure screening tests and G1/G3 regressions. Check source provenance/license, intentional-difference records, package boundaries and the handoff/cost documentation against observed results. Require all checks to pass before production registration; any failure stops dependent work. Test doubles cannot substitute for the actual extraction, and an available source tarball is not a G2/G4 pass. Distinguish this component checkpoint from the final packaged pre-console gates after 10.8. No live credentials or provider requests are permitted.
 
-BLOCKED until the owner supplies a reviewed release satisfying Decision 10. Stop before writes if it is unavailable; do not skip ahead. Pin its exact version/integrity, connect its public exports/options to the prepared adapter and enable only the real supported binding. Completion requires the following Verify to pass G2 and actual-package offline G4, with no private imports, global-fetch replacement, unchanged-loader fallback or copied provider implementation.
+### Step 72 - Implement: Wire production provider assembly; verify registration, image and execution fingerprints
+- [ ] 10.8 Implement: Wire production provider assembly; verify registration, image and execution fingerprints
+
+After 10.7 passes, connect the tested internal Anthropic package, stock-model factory, credential/operator adapter, guarded terminal and safe failure mapping to production runtime assembly and configured provider readiness. Missing configuration or usable authorization SHALL keep the provider unavailable; OpenAI operational readiness remains disabled until its auth block. Use per-run stored model/profile/slot bindings without exposing caller-controlled SDK overrides. This is production wiring of the actual implementation, not an upstream release pin/bind or test-only replacement.
+
+Extend execution-manifest construction to resolve the selected adapter's owned workspace import/resource closure, including the private package and relevant locked dependencies, without hashing every workspace or the whole lockfile. Verify unchanged redeploys and browser/default-only changes remain compatible while changes to an execution-used package helper, profile/resource or dependency refuse continuation. Generate and ship the manifest alongside the runtime bundle; verify the single non-root image resolves package imports and operator entry points without source-tree, OpenCode or development-server dependencies.
+
+Exercise the production construction path with synthetic credentials and issuer/model transports, independent request witnesses and the official saver. Retest auth-only failures, account/generation coherence, credential-safe messages/errors, cancellation, the one counted renewal retry, tool/question/result replay and immutable stored-binding reconstruction. Update registration, image/command and current-status documentation affected by this step. No REST/SSE or console feature work is included. No new upstream release, live provider request or database migration is required by this integration; completion still requires the following Verify to pass the packaged pre-console gates.
 
 ### Step 73 - Verify: Run the pre-console gates; require G2 and offline G4/G5 with regressions
 - [ ] 10.9 Verify: Run the pre-console gates; require G2 and offline G4/G5 with regressions
 
-Run block checks, G2, offline G4/G5 and G1/G3 against the exact resulting matrix. Require independent request witnesses and no skipped mandatory cases before console buildout.
+Run forced block checks, actual-internal-package G2, offline G4/G5 and G1/G3 against the exact resulting source/dependency matrix and packaged production wiring. Require independent request witnesses, source/provenance and approved-difference checks, cross-package execution fingerprints, the in-flight screening regressions and single-image integration with no skipped mandatory cases before console buildout. Missing upstream public exports are no longer a blocker; any failing package, safety or parity check remains one. Do not perform live provider operations.
 
 ### Step 74 - Implement: Record pre-console evidence; verify correspondence to observed results
 - [ ] 10.10 Implement: Record pre-console evidence; verify correspondence to observed results
 
 Write `g2-anthropic-boundary.md`, `g4-anthropic-offline.md` and `g5-openai-offline.md` from the preceding verification results and relevant owner reports/authorization. Include exact tested versions, source identity, commands, outcomes, request counts, unresolved issues and skips. Update the separately dated spike-index pointer. Do not rerun providers or infer a pass from missing evidence.
 
+G2 SHALL name the actual internal package source identity, the upstream extraction baseline and approved differences. Keep synthetic issuer/transport execution distinct from fake-package preparation and from later live acceptance. Update the ownership/provenance and OpenAI cost records only with decisions and results actually observed; preserve the earlier G1/G3 and historical spike/adversarial records.
+
 ### Step 75 - Verify: Check pre-console evidence; require accurate, safe and complete records
 - [ ] 10.11 Verify: Check pre-console evidence; require accurate, safe and complete records
 
-Check `g2-anthropic-boundary.md`, `g4-anthropic-offline.md`, `g5-openai-offline.md` and index links against the observed results, including tested-build identity and request allowance/counts. Reject unsupported pass claims, missing mandatory cases or sensitive content. This step checks records only and performs no new live provider requests.
+Check `g2-anthropic-boundary.md`, `g4-anthropic-offline.md`, `g5-openai-offline.md`, ownership/provenance and OpenAI cost records and index links against observed results, including actual-package and upstream source identities, deliberate differences, packaged-build identity and request allowance/counts. Reject unsupported pass claims, missing mandatory cases or sensitive content. This step checks records only and performs no new live provider requests.
 
 ### Step 76 - Review: Assess offline provider readiness; obtain owner acceptance
 - [ ] 10.12 Review: Assess offline provider readiness; obtain owner acceptance

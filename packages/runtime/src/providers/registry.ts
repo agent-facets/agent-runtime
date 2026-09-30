@@ -59,6 +59,21 @@ export class ProviderRegistry {
     };
   }
 
+  /**
+   * The binding a paused run was started with, if it can still be used. Unlike resolve(), it never consults the
+   * current configuration's defaults: a changed default model leaves the stored one in force, and a binding that
+   * can no longer be constructed is refused rather than replaced.
+   */
+  reconstruct(stored: ProviderBinding): BindingResolution {
+    const supported = SUPPORTED_PAIRS.some(
+      (pair) => pair.provider === stored.provider && pair.authMode === stored.authMode,
+    );
+    const integration = this.#integrations.get(stored.provider);
+    if (!supported || integration === undefined) return { ok: false, code: 'integration_unavailable' };
+    if (!integration.profiles.has(stored.profileId)) return { ok: false, code: 'profile_unsupported' };
+    return { ok: true, binding: Object.freeze({ ...stored }) };
+  }
+
   async readiness(provider: Provider): Promise<ProviderReadiness> {
     const resolution = this.resolve(provider);
     if (!resolution.ok) {

@@ -3,12 +3,12 @@
 A personal agent runtime: start a repository task from a browser, leave, return, answer the agent's
 questions, and collect the result using an existing Anthropic or OpenAI subscription.
 
-> **Status: foundation, durable persistence and authority boundaries.** The workspace, toolchain, checks, container
-> topology, the PostgreSQL persistence layer (runtime ownership, migrations, run records, the official
-> checkpointer), operator configuration, private credential storage, and the confined read/search tools and
-> secret-safe projections exist as tested components. They are **not yet connected to an agent**: agent execution,
-> provider login and inference, and the browser console are **not implemented yet**; they are delivered by the
-> remaining tasks in
+> **Status: controlled agent execution, not yet connected to a provider or the browser.** The workspace,
+> toolchain, checks, container topology, PostgreSQL persistence (ownership, migrations, run records, the official
+> checkpointer), operator configuration, credential storage, the confined read/search tools, secret-safe
+> projections and the agent execution lifecycle (see [Agent execution](#agent-execution)) exist and are tested with
+> scripted, provider-free models. **Provider login and inference, the REST/SSE API and the browser console are not
+> implemented yet**; they are delivered by the remaining tasks in
 > [`openspec/changes/mvp-01-interactive-agent-execution`](openspec/changes/mvp-01-interactive-agent-execution/tasks.md).
 > The runtime serves only health and readiness endpoints, and readiness always reports `ready: false`.
 
@@ -24,7 +24,7 @@ A Bun-workspace monorepo orchestrated by [Turborepo](https://turborepo.com), dep
 
 | Path | Contents |
 |---|---|
-| `packages/runtime` | The Bun server and sole deployable application: persistence, configuration, credentials, workspace tools and security boundaries today; execution, providers, REST/SSE and operator commands later. |
+| `packages/runtime` | The Bun server and sole deployable application: persistence, configuration, credentials, workspace tools, security boundaries and agent execution today; providers, REST/SSE and operator commands later. |
 | `packages/ui` | Browser console package. Currently an empty package boundary; the console arrives in its later block. |
 | `packages/contracts` | Not created yet. Browser-safe API schemas/types, extracted when the API is implemented. |
 | `scripts/` | Repository checks, fixture launchers and their tests. |
@@ -40,7 +40,8 @@ Boundaries enforced by tests:
 - Only the application database adapter opens Bun SQL connections, and it exposes transactions and reserved
   sessions but no plain pool (see [Persistence](#persistence)).
 - Only the application database adapter starts transactions with `begin()`.
-- Workspace tool source contains no process execution, dynamic evaluation or filesystem mutation.
+- Workspace tool and agent execution source contains no process execution, dynamic evaluation or filesystem
+  mutation.
 - Internal dependencies use `workspace:*`; root owns development tooling, packages own application dependencies.
 
 ## Setup
@@ -252,9 +253,64 @@ the buffered input and the redacted, serialized message are limited to 1 MiB. De
 this runtime's live credentials — through an opaque matcher from the credential boundary, which consumers cannot
 enumerate and which execution code must be given explicitly — with a small set of unambiguous formats
 (vendor-prefixed keys, private-key blocks, literal bearer tokens); it is not general secret scanning, and ordinary
-identifiers, hashes and example JWTs pass through. Keeping the matcher current as credentials rotate is part of
-connecting these components to the agent (not yet done).
+identifiers, hashes and example JWTs pass through. The execution layer's matcher follows credential rotation: a
+generation is added when it is resolved for a request, before that request is sent, and earlier generations stay
+screened (the 16 most recent), so a response to an older request is still covered. Complete model responses are
+sanitized inside the model call, before the graph checkpoints them, keeping the provider's full message (IDs, tool
+calls, reasoning and replay metadata); only displayable text is redacted, and a credential anywhere else withholds
+the response.
 Diagnostics are flat allowlisted fields only — no free text, errors, requests, headers or bodies.
+
+## Agent execution
+
+Each run is one stock LangChain `createAgent` (tool behavior `v2`) with the official PostgreSQL checkpointer,
+invoked at the root graph with the run ID as its thread, synchronous durability and a signal owned by the service
+— a browser connection can never stop a run. Invocation never passes a `checkpoint_id`. The framework runs the
+loop; the runtime only constrains what crosses into graph state and what is dispatched:
+
+- **Tools.** `mcp_Read`, `mcp_Search` and `mcp_AskUser`, with explicit JSON schemas. Every call is identified by its
+  run, issuing model message and provider call ID, and recorded before it runs and after. A call already completed
+  is answered from its record; the same provider call ID bound to different arguments is refused as invalid. A call
+  to any other tool (for example a file write or a command) is refused and recorded, never performed. A question
+  must be the only call in its response: in a mixed batch, every call is refused. Failures inside the graph carry
+  fixed text only, because the graph records exception text in its checkpoints.
+- **Model requests** pass one guarded terminal (the SDK's `fetch`): exact HTTPS endpoint and method, no redirects,
+  credentials resolved first (outside the budget), then durable admission under the run's short dispatch gate —
+  ownership re-verified, run still working, one step reserved within budget — and the request starts while that
+  gate is held. Dispatch is recorded before the response is used; completion before its body ends. The deadline
+  (default five minutes) covers the whole body. Hidden retries are not possible: every physical request is admitted
+  and counted. After a recoverable authorization rejection, one renewal retry is allowed, as another counted step.
+- **Budget.** The default is 50 model requests. The run reports `{ maximum, consumed, unconfirmed }`; an admission
+  whose dispatch was never confirmed stays charged as unconfirmed. Tool calls from the last permitted response still
+  run; only another model request fails the run with `step_limit`. An answer can be accepted with no steps left.
+- **Questions.** A question becomes answerable only after the invocation has settled, read-only inspection has
+  confirmed the saved interrupt, and one transaction has recorded it and moved the run to `waiting`. An answer
+  names its run and question; an already-answered question acknowledges an identical answer (even after the run
+  finished) and refuses a different one before anything else is checked. Before acceptance the runtime rebuilds
+  the run's stored provider binding (never current defaults), compares the execution definition and re-inspects
+  the saved state without running the graph: a temporary inability to look accepts nothing and changes nothing,
+  while confirmed missing, unusable or incompatible state closes the question and fails the run as
+  `continuation_unavailable`. `false`, `null`, `0` and permitted empty text are answers. The accepted answer is
+  delivered once, to the saved interrupt by its ID.
+- **Compatibility.** The execution definition covers the Bun version, the exact package versions and integrity
+  values used by the execution code, digests of that code's own import closure (line endings normalized), the
+  generated graph, middleware, tool schemas, the prompt, protocol versions and the run's binding. The code manifest
+  is written at build time beside the bundle (`dist/execution-manifest.json`). Browser code, documentation and
+  default settings are not inputs.
+- **Cancellation** is recorded before it is acknowledged and serialized with admissions, so nothing is dispatched
+  after it. A waiting run is cancelled at once; a working run is `cancelling` until its request bodies, tool calls
+  and checkpoint writes have actually settled. An answer accepted earlier stays accepted.
+- **Outcomes.** Success requires a new final assistant message from this invocation, recorded in history; a
+  continuation that does nothing is a `runtime_failure`. Failures are classified from typed evidence only (see the
+  categories in [`architecture/09`](architecture/09-data-model-and-lifecycle.md#phase-1-lifecycle-as-built)). If a
+  final commit's outcome cannot be established, the service stops rather than guess.
+- **Restart.** Before it reports ready, startup marks runs that were working as `interrupted` (their accepted answers
+  kept, admissions never confirmed as sent recorded unconfirmed) and runs whose cancellation was accepted as
+  `cancelled`. Waiting and finished runs are unchanged. Nothing is resumed, retried or dispatched.
+
+Not yet connected: provider bindings (Anthropic, OpenAI), and the API that starts runs, accepts answers and
+cancels. Verification with provider-free models, including every crash window, is recorded in
+[the G3 evidence (2026-09-30)](architecture/integration-evidence/mvp-01/g3-dispatch-lifecycle.md).
 
 ## Deployment
 
@@ -284,8 +340,8 @@ Health endpoints:
 
 ## Limitations
 
-- No agent runs, provider login or inference, or console yet. Run records, configuration, credential storage and
-  the workspace tools exist as components; nothing uses them to run an agent yet.
+- No provider login or inference, API or console yet: the execution lifecycle runs only with scripted test models,
+  so no real agent run can be started.
 - No backup, retention or restore tooling; ordinary restarts preserve the database volume, nothing more.
 - Read-only mounts and path checks are not a sandbox against hostile processes on the host; the workspace is
   assumed to be owner-controlled.

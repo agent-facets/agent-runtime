@@ -2,6 +2,7 @@ import type { RuntimeConfig } from './config.ts';
 import { PersistenceError } from './persistence/errors.ts';
 import type { OwnershipOptions } from './persistence/ownership.ts';
 import { openPersistence, type Persistence } from './persistence/persistence.ts';
+import { RunStore } from './records/run-store.ts';
 import { formatDiagnostic } from './security/diagnostics.ts';
 import { type PersistenceStatus, startServer } from './server.ts';
 
@@ -75,6 +76,24 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
               return;
             }
             persistence = opened;
+            // Former active work is classified before anything can be dispatched: interrupted, or cancelled if
+            // its cancellation had been accepted. Nothing is resumed or retried.
+            let reconciled: { interrupted: number; cancelled: number };
+            try {
+              reconciled = await new RunStore(opened.app, opened.ownership).reconcileAfterRestart();
+            } catch {
+              status = 'unavailable';
+              log(formatDiagnostic({ event: 'startup_reconciliation_failed', operation: 'startup' }));
+              void stop(1);
+              return;
+            }
+            log(
+              formatDiagnostic({
+                event: 'startup_reconciled',
+                operation: 'startup',
+                count: reconciled.interrupted + reconciled.cancelled,
+              }),
+            );
             if (opened.ownership.lost === undefined) status = 'ready';
           },
           (error: unknown) => {
