@@ -73,7 +73,10 @@ export class CredentialCoordinator {
    * value in the returned credential (token and account metadata) comes from one generation.
    */
   async current(signal?: AbortSignal): Promise<CredentialState> {
+    throwIfAborted(signal);
     const read = await this.options.store.read(this.options.provider, this.options.slot);
+    // A caller cancelled while the record was read gets nothing, and starts nothing.
+    throwIfAborted(signal);
     const state = this.#stateOf(read.kind === 'record' ? read.record : read.kind);
     if (state.kind !== 'ready' || !this.#expiring(state.credential)) return state;
     return this.refresh({ observedGeneration: state.credential.generation, signal });
@@ -85,6 +88,9 @@ export class CredentialCoordinator {
    * inference request was rejected with); omit it to refresh whatever is current.
    */
   refresh(request: { observedGeneration?: number; signal?: AbortSignal } = {}): Promise<CredentialState> {
+    // An already-cancelled caller must not start a refresh. It may still abandon one that is already running,
+    // but that shared refresh continues under its lock until the issuer and the write have settled.
+    if (request.signal?.aborted) return Promise.reject(request.signal.reason);
     let shared = inflight.get(this.#key);
     if (shared === undefined) {
       shared = this.#refreshUnderLock(request.observedGeneration).finally(() => inflight.delete(this.#key));
@@ -248,6 +254,10 @@ export class CredentialCoordinator {
     if (record.lifecycle === 'reauthorization_required') return { kind: 'reauthorization_required' };
     return { kind: 'ready', credential: Object.freeze(structuredClone(record)) };
   }
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw signal.reason;
 }
 
 /** Waits for a shared operation, or stops waiting when the caller's signal aborts; the operation continues. */

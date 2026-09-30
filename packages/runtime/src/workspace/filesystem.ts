@@ -4,7 +4,7 @@
 // `link/../x` cannot hide a symlink), as are absolute, drive, UNC, URL and backslash forms. Empty and `.`
 // components are dropped, so `.`, `src/` and `src/./a.ts` are accepted. Every existing component is examined with
 // lstat: a symlink anywhere is refused, and each identity is kept so the caller can confirm nothing changed.
-import { type BigIntStats, constants } from 'node:fs';
+import { type BigIntStats, constants, type Dir, type Dirent } from 'node:fs';
 import { type FileHandle, lstat, open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isStorableText, utf8Bytes } from '../domain/text.ts';
@@ -66,6 +66,19 @@ export interface ResolvedPath {
 }
 
 const errnoOf = (error: unknown) => (error as { code?: string } | null)?.code;
+
+/**
+ * The next entry of an open directory. Bun opens directories lazily, so permission and I/O errors surface on the
+ * first read rather than at opendir(); they become an `unreadable` error here instead of escaping raw.
+ */
+export async function nextEntry(directory: Dir): Promise<Dirent | null> {
+  try {
+    return await directory.read();
+  } catch (error) {
+    if (typeof errnoOf(error) === 'string') throw fail('unreadable', 'This directory cannot be read.');
+    throw error;
+  }
+}
 
 export function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
@@ -160,16 +173,26 @@ export async function openResolvedFile(
   }
 }
 
-/** Reads exactly the file's recorded size; a size or content-metadata change is reported as a changed target. */
-export async function readWholeFile(handle: FileHandle, stat: BigIntStats, signal?: AbortSignal): Promise<Uint8Array> {
+/**
+ * Reads exactly the file's recorded size; a size or content-metadata change is reported as a changed target.
+ * At most `maxBytes` (at least the recorded size; default one byte more, to notice growth) are read, and every
+ * byte read is reported to `onRead`, including bytes later discarded because the file changed.
+ */
+export async function readWholeFile(
+  handle: FileHandle,
+  stat: BigIntStats,
+  options: { signal?: AbortSignal; maxBytes?: number; onRead?: (bytes: number) => void } = {},
+): Promise<Uint8Array> {
   const size = Number(stat.size);
-  const buffer = new Uint8Array(size + 1);
+  const capacity = Math.max(size, Math.min(options.maxBytes ?? size + 1, size + 1));
+  const buffer = new Uint8Array(capacity);
   let length = 0;
-  while (length <= size) {
-    throwIfAborted(signal);
-    const { bytesRead } = await handle.read(buffer, length, Math.min(65_536, size + 1 - length), length);
+  while (length < capacity) {
+    throwIfAborted(options.signal);
+    const { bytesRead } = await handle.read(buffer, length, Math.min(65_536, capacity - length), length);
     if (bytesRead === 0) break;
     length += bytesRead;
+    options.onRead?.(bytesRead);
   }
   const after = await handle.stat({ bigint: true });
   if (

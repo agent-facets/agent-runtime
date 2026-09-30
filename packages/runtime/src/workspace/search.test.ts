@@ -1,17 +1,26 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { chmodSync, linkSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, linkSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createFixture } from '../../test-support/workspace.ts';
-import { type SearchResult, searchWorkspace } from './search.ts';
+import { exactSecretMatcher } from '../credentials/matcher.ts';
+import { createContentPolicy, REDACTION } from '../security/content-policy.ts';
+import { type SearchBarriers, type SearchResult, searchWorkspace } from './search.ts';
 
 const fixture = createFixture();
 afterAll(() => fixture.cleanup());
 const policy = fixture.policy();
 
-async function search(args: Record<string, unknown>, which = policy): Promise<SearchResult> {
-  const outcome = await searchWorkspace(which, args);
+const LIVE = 'oauth-live-synthetic-0123456789abcdefABCDEF';
+const screen = createContentPolicy(exactSecretMatcher([LIVE]));
+
+async function search(
+  args: Record<string, unknown>,
+  which = policy,
+  options: { screen?: typeof screen; barriers?: SearchBarriers } = {},
+): Promise<SearchResult> {
+  const outcome = await searchWorkspace(which, args, options);
   if (outcome.outcome !== 'ok') throw new Error(`${outcome.outcome} ${outcome.code}`);
-  expect(new TextEncoder().encode(JSON.stringify(outcome.result)).byteLength).toBeLessThanOrEqual(65_536);
+  expect(new TextEncoder().encode(JSON.stringify(outcome)).byteLength).toBeLessThanOrEqual(65_536);
   return outcome.result;
 }
 
@@ -160,21 +169,131 @@ describe('literal search', () => {
     expect(escaped.outcome === 'refused' && escaped.code).toBe('invalid_path');
   });
 
-  test('applies the secret filter to excerpts', async () => {
-    fixture.write('filtered/code.ts', 'token = "sk-live-synthetic" // FILTER-MARKER');
-    const outcome = await searchWorkspace(
-      policy,
-      { query: 'FILTER-MARKER', path: 'filtered' },
-      { filter: (text) => text.replaceAll('sk-live-synthetic', '[redacted]') },
-    );
-    expect(outcome.outcome === 'ok' && outcome.result.matches[0]?.text).toBe('token = "[redacted]" // FILTER-MARKER');
-  });
-
   test('cancellation propagates', async () => {
     const controller = new AbortController();
     controller.abort(new Error('run cancelled'));
     await expect(searchWorkspace(policy, { query: 'x' }, { signal: controller.signal })).rejects.toThrow(
       'run cancelled',
     );
+  });
+});
+
+describe('screened search', () => {
+  test('a credential crossing either excerpt edge is masked whole, never cut', async () => {
+    const long = LIVE.repeat(1).padEnd(LIVE.length, 'x');
+    fixture.write('screened/before.txt', `${'a'.repeat(300)}${long}${'b'.repeat(150)}EDGE-MARKER${'c'.repeat(600)}`);
+    fixture.write('screened/after.txt', `${'a'.repeat(600)}EDGE-MARKER${'b'.repeat(180)}${long}${'c'.repeat(600)}`);
+    const unscreened = await search({ query: 'EDGE-MARKER', path: 'screened' });
+    // Unscreened, each excerpt edge falls inside the credential, exposing part of it.
+    expect(
+      unscreened.matches.every(
+        (match) => match.text.includes(LIVE.slice(-10)) || match.text.includes(LIVE.slice(0, 10)),
+      ),
+    ).toBe(true);
+    const result = await search({ query: 'EDGE-MARKER', path: 'screened' }, policy, { screen });
+    expect(result.matches).toHaveLength(2);
+    for (const match of result.matches) {
+      expect(match.text).toContain('EDGE-MARKER');
+      for (let start = 0; start + 8 <= LIVE.length; start++)
+        expect(match.text).not.toContain(LIVE.slice(start, start + 8));
+    }
+  });
+
+  test('replacement before the match does not shift the excerpt', async () => {
+    fixture.write('screened/shift/code.ts', `token = "${LIVE}" // SHIFT-MARKER here`);
+    const result = await search({ query: 'SHIFT-MARKER', path: 'screened/shift' }, policy, { screen });
+    expect(result.matches).toEqual([
+      { path: 'screened/shift/code.ts', line: 1, text: `token = "${REDACTION}" // SHIFT-MARKER here` },
+    ]);
+    expect(result.complete).toBe(true);
+  });
+
+  test('a query found only inside protected material is withheld and makes the search incomplete', async () => {
+    fixture.write('screened/inside/a.txt', `prefix ${LIVE} suffix\n`);
+    const inside = LIVE.slice(5, 25);
+    const result = await search({ query: inside, path: 'screened/inside' }, policy, { screen });
+    expect(result).toMatchObject({ matches: [], complete: false, skipped: { withheld: 1 } });
+    expect(JSON.stringify(result.matches)).not.toContain(inside);
+  });
+
+  test('a line with a clean occurrence is still reported when another occurrence is protected', async () => {
+    const inside = LIVE.slice(5, 25);
+    fixture.write('screened/mixed/a.txt', `${LIVE} and plain ${inside}`);
+    const result = await search({ query: inside, path: 'screened/mixed' }, policy, { screen });
+    expect(result.matches).toEqual([
+      { path: 'screened/mixed/a.txt', line: 1, text: `${REDACTION} and plain ${inside}` },
+    ]);
+    expect(result.complete).toBe(true);
+  });
+
+  test('redaction markers never manufacture matches', async () => {
+    fixture.write('screened/markers/a.txt', `secret ${LIVE}\n`);
+    const result = await search({ query: 'redacted credential', path: 'screened/markers' }, policy, { screen });
+    expect(result).toMatchObject({ matches: [], complete: true });
+  });
+
+  test('a hit inside a private-key body is withheld, and later lines keep their numbers', async () => {
+    fixture.write(
+      'screened/pem/notes.md',
+      [
+        'KEYWORD before',
+        '-----BEGIN PRIVATE KEY-----',
+        'KEYWORDbody',
+        '-----END PRIVATE KEY-----',
+        'KEYWORD after',
+      ].join('\n'),
+    );
+    const result = await search({ query: 'KEYWORD', path: 'screened/pem' }, policy, { screen });
+    expect(result.matches.map((match) => [match.line, match.text])).toEqual([
+      [1, 'KEYWORD before'],
+      [5, 'KEYWORD after'],
+    ]);
+    expect(result).toMatchObject({ complete: false, skipped: { withheld: 1 } });
+  });
+
+  test('a query containing protected material is refused', async () => {
+    const outcome = await searchWorkspace(policy, { query: `x${LIVE}` }, { screen });
+    expect(outcome.outcome === 'refused' && outcome.code).toBe('invalid_argument');
+  });
+});
+
+describe('scan accounting under ordinary changes', () => {
+  test('a file that grows past the file bound between resolution and opening is not read', async () => {
+    const path = fixture.write('changes/grow/a.txt', 'small GROW-MARKER');
+    const result = await search({ query: 'GROW-MARKER', path: 'changes/grow' }, policy, {
+      barriers: { beforeOpen: () => appendFileSync(path, 'z'.repeat(1_048_577)) },
+    });
+    expect(result).toMatchObject({ matches: [], complete: false, scannedBytes: 0, skipped: { tooLarge: 1 } });
+  });
+
+  test('bytes read before a change is noticed still count toward the scan bound', async () => {
+    const path = fixture.write('changes/during/a.txt', 'x'.repeat(10_000));
+    const result = await search({ query: 'nothing-here', path: 'changes/during' }, policy, {
+      barriers: { afterOpen: () => appendFileSync(path, 'y'.repeat(100)) },
+    });
+    expect(result).toMatchObject({ complete: false, skipped: { changed: 1 } });
+    expect(result.scannedBytes).toBeGreaterThan(0);
+  });
+
+  test('a candidate that disappears after listing makes the search incomplete', async () => {
+    const path = fixture.write('changes/vanish/b.txt', 'VANISH-MARKER');
+    fixture.write('changes/vanish/a.txt', 'nothing');
+    const result = await search({ query: 'VANISH-MARKER', path: 'changes/vanish' }, policy, {
+      barriers: { beforeEntry: (entry) => (entry.endsWith('b.txt') ? rmSync(path) : undefined) },
+    });
+    expect(result).toMatchObject({ matches: [], complete: false, skipped: { changed: 1 } });
+  });
+
+  test('a subdirectory that becomes unreadable is reported, not silently skipped', async () => {
+    if (process.getuid?.() === 0) return;
+    const dir = join(fixture.root, 'changes', 'locked-dir');
+    fixture.write('changes/locked-dir/inner/a.txt', 'LOCKED-MARKER');
+    chmodSync(join(dir, 'inner'), 0o000);
+    try {
+      const result = await search({ query: 'LOCKED-MARKER', path: 'changes/locked-dir' });
+      expect(result).toMatchObject({ matches: [], complete: false, skipped: { unreadable: 1 } });
+    } finally {
+      chmodSync(join(dir, 'inner'), 0o700);
+    }
   });
 });

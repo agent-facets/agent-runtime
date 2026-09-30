@@ -20,7 +20,12 @@ What Phase 1 enforces:
   refused. Files are opened with `O_NOFOLLOW` and checked by descriptor, read whole, and the path is re-checked
   afterwards; an observed change is reported, not returned. Exclusions (`.git`, dependency trees, `.env*`, keys,
   common credential stores, operator additions) apply before anything — content, names or sizes — is revealed.
-  Limits and their meaning are listed in the [README](../README.md#authority-boundaries).
+  Admission requires the configured root to be its own canonical path (no symlinked ancestor), keeps private state
+  and configuration outside it by canonical path, and requires complete inode protection of the private locations;
+  otherwise workspace access stays unavailable. Search rechecks sizes on the opened file, counts every byte it
+  reads, and reports vanished or unreadable candidates as incomplete coverage. Every complete tool outcome,
+  serialized after sanitation, is bounded to 64 KiB. Limits and their meaning are listed in the
+  [README](../README.md#authority-boundaries).
 - **Supported environment.** Workspaces are owner-controlled volumes, mounted read-only. The read-only mount stops
   the runtime writing; it does not stop a host process from changing the tree. The path checks detect escapes and
   observed changes; they are **not** protection against a hostile process mutating the tree concurrently, and
@@ -28,17 +33,25 @@ What Phase 1 enforces:
   provider: this is not data-loss prevention.
 - **Secrets** (`packages/runtime/src/security/`, `packages/runtime/src/credentials/`). Provider credentials exist
   only in the private state volume, never in PostgreSQL, the workspace, run history, events, results, browser data
-  or logs. Goals and answers containing credentials are refused. Tool results and complete model messages are
-  checked before they reach graph state: displayable text is redacted visibly; a credential in tool arguments, IDs,
-  paths or names withholds that call or result. Streamed model output is assembled whole (after the successful
-  terminal event) before checking, so a credential split across fragments is caught. Diagnostics accept only flat,
+  or logs. Goals and answers containing credentials are refused. Screening locates credential material over a
+  complete file or message before anything is paged, clipped or excerpted; displayable text is redacted visibly
+  with line breaks kept, and private-key blocks are masked whole (through the end when malformed). Search matches
+  only original text outside credential material. A credential in tool arguments, IDs, paths or names withholds
+  that call or result, refusals and errors are checked too, and a redacted result that is still recognizable is
+  withheld. Streamed model output is assembled whole (after the successful terminal event) before checking, so a
+  credential split across fragments is caught; its redacted, serialized form is bounded to 1 MiB. Diagnostics accept only flat,
   allowlisted fields. Remote tracing, proxies, provider endpoint overrides, TLS overrides and request logging are
   refused at startup.
 - **Container.** Non-root, read-only root filesystem, all capabilities dropped, `no-new-privileges`, no Docker
   socket, no published ports; the runtime is reachable only through Tailscale Serve.
 
 Not yet connected: these components are wired to the agent in the controlled-execution block, and the complete
-protected-surface scan (history, events, console, logs) is repeated there and in the console block.
+protected-surface scan (history, events, console, logs) is repeated there and in the console block. That block
+also owns what these components cannot do by themselves: preserving provider replay metadata while sanitizing
+complete stock model messages, converting exceptions to safe typed errors before the graph records them, keeping
+the exact matcher current across credential rotation, and tracking actual in-flight work for cancellation.
+The screening corrections above were made on 2026-09-30, after the block-6 acceptance; earlier acceptance
+evidence did not cover them.
 
 ## Threat model
 

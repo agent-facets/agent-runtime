@@ -2,6 +2,8 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { linkSync, mkdirSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createFixture } from '../../test-support/workspace.ts';
+import { exactSecretMatcher } from '../credentials/matcher.ts';
+import { createContentPolicy } from '../security/content-policy.ts';
 import { readWorkspace } from './read.ts';
 import { compareNames, type DirectoryReadResult, readDirectory } from './read-directory.ts';
 
@@ -12,7 +14,7 @@ const policy = fixture.policy({ excludeNames: ['private.md'] });
 async function list(path: string, extra: Record<string, unknown> = {}, which = policy): Promise<DirectoryReadResult> {
   const outcome = await readDirectory(which, { path, ...extra });
   if (outcome.outcome !== 'ok') throw new Error(`${outcome.outcome} ${outcome.code}`);
-  expect(new TextEncoder().encode(JSON.stringify(outcome.result)).byteLength).toBeLessThanOrEqual(65_536);
+  expect(new TextEncoder().encode(JSON.stringify(outcome)).byteLength).toBeLessThanOrEqual(65_536);
   return outcome.result;
 }
 const names = (result: DirectoryReadResult) => result.entries.map((entry) => entry.name);
@@ -149,12 +151,25 @@ describe('directory listings', () => {
     expect(await codes('../outside')).toBe('refused:invalid_path');
   });
 
-  test('omits names the secret filter would change, rather than returning them rewritten', async () => {
+  test('omits names containing protected material, rather than returning them rewritten', async () => {
     fixture.write('filtered/plain.txt', '');
-    fixture.write('filtered/sk-live-synthetic.txt', '');
-    const filter = (text: string) => text.replaceAll('sk-live-synthetic', '[redacted]');
-    const outcome = await readDirectory(policy, { path: 'filtered' }, { filter });
+    fixture.write('filtered/sk-live-synthetic-name-0000.txt', '');
+    const screen = createContentPolicy(exactSecretMatcher(['sk-live-synthetic-name-0000']));
+    const outcome = await readDirectory(policy, { path: 'filtered' }, { screen });
     expect(outcome.outcome === 'ok' && names(outcome.result)).toEqual(['plain.txt']);
+  });
+
+  test('a directory whose entries cannot be read is an unreadable error, not an escaping exception', async () => {
+    if (process.getuid?.() === 0) return;
+    fixture.write('locked/inside.txt', 'x');
+    const { chmodSync } = await import('node:fs');
+    chmodSync(join(fixture.root, 'locked'), 0o000);
+    try {
+      const outcome = await readDirectory(policy, { path: 'locked' });
+      expect(outcome).toMatchObject({ outcome: 'error', code: 'unreadable' });
+    } finally {
+      chmodSync(join(fixture.root, 'locked'), 0o700);
+    }
   });
 
   test('mcp_Read dispatches by mode and refuses unknown arguments', async () => {

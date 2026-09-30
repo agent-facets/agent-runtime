@@ -18,7 +18,11 @@ Implemented so far (`packages/runtime/src/providers/`, `packages/runtime/src/cre
 - **Credential records.** Versioned, strictly decoded, per provider and slot: generation, lifecycle
   (`usable` or `reauthorization_required`), access/refresh tokens, expiry in epoch **milliseconds**, and required
   account metadata (OpenAI: account ID; Anthropic: whatever the maintained library's contract requires, currently
-  none). A rejected credential is stored without token material.
+  none). A rejected credential is stored without token material. Access and refresh tokens must have at least
+  16 printable, non-space ASCII characters: a runtime safety floor (exact-match screening cannot safely recognize
+  shorter values), not a provider format. A stored record with a shorter token is invalid and is left untouched;
+  a shorter issued token is never written. Live values are exposed to screening only through an opaque exact
+  matcher that cannot enumerate them.
 - **Durable replacement.** Same-directory exclusive temporary file (`0600`), complete write, fsync, rename, fsync
   of the directory; acknowledged only afterwards. Records and directories must be private to the runtime user and
   single-linked. A crash at any write boundary leaves the old or new complete record (verified by killing a writer
@@ -28,7 +32,10 @@ Implemented so far (`packages/runtime/src/providers/`, `packages/runtime/src/cre
   login. The lock covers reread → issuer refresh → partial merge → durable replacement, and login holds it for its
   whole flow. Verified with two Bun processes: 64 concurrent callers produce one refresh; a refresh waiting behind a
   login adopts it; a login waiting behind a refresh is written after it; a dead holder releases the lock; a paused
-  one keeps it. A negative control without the lock produced two refreshes.
+  one keeps it. A negative control without the lock produced two refreshes. A caller that is already cancelled
+  (including one cancelled while the record is read, or during lock setup) starts no issuer call and launches no
+  lock helper; a caller that abandons a refresh already in progress does not cancel it, and that refresh keeps
+  the lock until the issuer and the write have settled (corrective block, 2026-09-30).
 - **Rotation rules.** Refresh begins five minutes before expiry. An omitted refresh token or account keeps the
   stored value; an invalid supplied one is not written. A definitive refresh rejection records
   `reauthorization_required`; a temporary failure keeps the credential and is not retried automatically. A delayed

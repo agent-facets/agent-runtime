@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test';
+import { exactSecretMatcher, NO_KNOWN_CREDENTIALS } from '../credentials/matcher.ts';
 import { createContentPolicy, REDACTION, screenOwnerInput } from './content-policy.ts';
 
 // Synthetic credentials only. The "live" value stands in for a token held by the credential boundary.
 const LIVE = 'oauth-live-synthetic-0123456789abcdefABCDEF';
-const policy = createContentPolicy({ values: () => [LIVE, 'short'] });
+const policy = createContentPolicy(exactSecretMatcher([LIVE]));
 
 const SAMPLES: Record<string, string> = {
   anthropic_key: 'sk-ant-oat01-SyntheticSyntheticSynthetic0123456789_-AA',
@@ -48,8 +49,68 @@ describe('credential detection', () => {
     }
   });
 
-  test('ignores known values too short to match safely', () => {
-    expect(policy.detect('a short word')).toBeUndefined();
+  test('the exact matcher refuses values it could not safely recognize, rather than ignoring them', () => {
+    for (const value of ['', 'short', 'x'.repeat(15), 'has a space in it here', 'x'.repeat(16_385)]) {
+      expect(() => exactSecretMatcher([value])).toThrow(TypeError);
+    }
+    expect(exactSecretMatcher(['x'.repeat(16)]).spans(`a ${'x'.repeat(16)} b`)).toEqual([[2, 18]]);
+  });
+
+  test('requires a matcher from the credential boundary; there is no silent pattern-only default', () => {
+    const forged = { spans: () => [] };
+    expect(() => createContentPolicy(forged)).toThrow(TypeError);
+    expect(() => createContentPolicy(undefined as never)).toThrow(TypeError);
+    expect(createContentPolicy(NO_KNOWN_CREDENTIALS).detect(SAMPLES.github_token as string)).toBe('github_token');
+  });
+
+  test('the matcher exposes no way to enumerate its values', () => {
+    const matcher = exactSecretMatcher([LIVE]);
+    expect(Object.keys(matcher)).toEqual(['spans']);
+    expect(JSON.stringify(matcher)).not.toContain('synthetic');
+    expect(Object.isFrozen(matcher)).toBe(true);
+  });
+
+  test('masks a whole private-key block, and withholds a malformed one through the end', () => {
+    const body = 'MIIEvSYNTHETICBODYLINE1\nMIIEvSYNTHETICBODYLINE2';
+    const closed = `before\n-----BEGIN RSA PRIVATE KEY-----\n${body}\n-----END RSA PRIVATE KEY-----\nafter`;
+    const redacted = policy.redact(closed);
+    expect(redacted).toBe(`before\n${REDACTION}\n${REDACTION}\n${REDACTION}\n${REDACTION}\nafter`);
+    expect(redacted.split('\n')).toHaveLength(closed.split('\n').length);
+    const crlf = closed.replaceAll('\n', '\r\n');
+    expect(policy.redact(crlf)).toBe(redacted.replaceAll('\n', '\r\n'));
+
+    for (const malformed of [
+      `a\n-----BEGIN PRIVATE KEY-----\n${body}\nstill secret`,
+      `a\n-----BEGIN PRIVATE KEY-----\n${body}\n-----END RSA PRIVATE KEY-----\nstill secret`,
+      `a\n-----BEGIN PRIVATE KEY-----\n${body}\n-----BEGIN CERTIFICATE-----\nx\n-----END PRIVATE KEY-----\nstill secret`,
+    ]) {
+      const result = policy.redact(malformed);
+      expect(result.startsWith('a\n')).toBe(true);
+      expect(result).not.toContain('SYNTHETIC');
+      expect(result).not.toContain('still secret');
+    }
+
+    const two = `-----BEGIN PRIVATE KEY-----\nONE\n-----END PRIVATE KEY-----\nmid\n-----BEGIN EC PRIVATE KEY-----\nTWO\n-----END EC PRIVATE KEY-----`;
+    expect(policy.redact(two)).toBe(
+      [REDACTION, REDACTION, REDACTION, 'mid', REDACTION, REDACTION, REDACTION].join('\n'),
+    );
+  });
+
+  test('overlapping credentials become one span, and redaction of separated credentials is idempotent', () => {
+    const overlapping = createContentPolicy(exactSecretMatcher([LIVE, LIVE.slice(10)]));
+    expect(overlapping.redact(`x ${LIVE} y`)).toBe(`x ${REDACTION} y`);
+    for (const text of Object.values(SAMPLES)) {
+      const once = policy.redact(text);
+      expect(policy.detect(once)).toBeUndefined();
+      expect(policy.redact(once)).toBe(once);
+    }
+  });
+
+  test('a boundary-anchored format can become recognizable only after its neighbour is replaced', () => {
+    // No word boundary precedes "ghp_" until the adjacent live credential becomes "]". Redaction is one pass;
+    // callers must check the rendered result (sanitizeToolOutcome does) instead of redacting repeatedly.
+    const adjacent = `${LIVE}${SAMPLES.github_token}`;
+    expect(policy.detect(policy.redact(adjacent))).toBe('github_token');
   });
 
   test('redacts visibly, replacing every occurrence', () => {
