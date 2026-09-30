@@ -9,7 +9,7 @@ this document where they differ. The `runtime` schema holds:
 |---|---|
 | `runs` | UUID; unique creation request ID; goal, workspace and provider-binding snapshots; execution-definition digest; budget maximum with confirmed and unconfirmed counts; state; revision; last event sequence |
 | `invocations` | `(run, invocation)`; owner epoch at start; `initial` or `answer` (with its question); `active`, `settled` or `interrupted` |
-| `questions` | `(run, question)`, where the question ID equals its tool-operation ID; exact prompt and input; saved-state binding; disposition `pending`, `answered` (the answer may be `false`, `null`, `0` or empty) or `closed` |
+| `questions` | `(run, question)`, where the question ID equals its tool-operation ID; exact prompt (at most 16 KiB of UTF-8) and input (prompt, labels and string values together at most 64 KiB, migration 3); saved-state binding; disposition `pending`, `answered` (the answer may be `false`, `null`, `0` or empty) or `closed` |
 | `model_attempts` | `(run, attempt)`; unique per-run ordinal; `reserved`, `dispatched`, `completed`, `abandoned` or `unconfirmed` |
 | `tool_operations` | `(run, operation)` with operation ID = SHA-256 of run, model-message and provider-call IDs; a provider call ID is unique per run |
 | `events` | `(run, seq)`; immutable; unique per-run source key |
@@ -26,7 +26,10 @@ and new invocations under a stale owner epoch.
 
 Mutations run in owner-fenced transactions (owner row share-locked, then the run row locked for update). Event
 sequences are allocated under the run lock, so sequence order is commit order, and are carried as decimal strings.
-Replaying a source key with the same event returns the original; different content is refused. Run creation is
+Replaying a source key with the same event returns the original; different content is refused. Answers are validated against their question before acceptance
+(`packages/runtime/src/domain/questions.ts`): text is kept exactly and bounded in code points and 8 KiB of UTF-8;
+choices compare by JSON type (`false` is not `"false"`); multiple selections are returned in the question's
+option order and duplicates are refused. Run creation is
 idempotent per request ID, and an uncertain commit is resolved by same-owner readback before anything is dispatched.
 
 Not in Phase 1: tasks, approvals as a separate entity, schedules, artifacts, memory records, ULIDs, the general

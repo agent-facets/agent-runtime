@@ -199,79 +199,79 @@ Present the durable-record and G1 findings. Do not claim host reboot or active c
 ## 5. Workspace, credential and input boundaries — Research
 
 ### Step 26 - Pause: Switch model for exploration
-- [ ] 5.1 Pause: Switch model for exploration
+- [x] 5.1 Pause: Switch model for exploration
 
 ### Step 27 - Explore: Inspect workspace enforcement; verify the bounded tool test plan
-- [ ] 5.2 Explore: Inspect workspace enforcement; verify the bounded tool test plan
+- [x] 5.2 Explore: Inspect workspace enforcement; verify the bounded tool test plan
 
 Inspect file APIs and mount assumptions against Decision 12. Cover file/directory reads, literal search, credential exclusions, static escapes, aliases, changed targets and the declared non-hostile-volume assumption.
 
 ### Step 28 - Explore: Inspect credential and input contracts; verify the coordination plan
-- [ ] 5.3 Explore: Inspect credential and input contracts; verify the coordination plan
+- [x] 5.3 Explore: Inspect credential and input contracts; verify the coordination plan
 
 Inspect reuse evidence and provider/question/failure types. Report cross-process coordination, partial rotation, safe projection and future auth-mode boundaries without implementing API-key access.
 
 ### Step 29 - Propose: Present authority-boundary work; obtain owner approval
-- [ ] 5.4 Propose: Present authority-boundary work; obtain owner approval
+- [x] 5.4 Propose: Present authority-boundary work; obtain owner approval
 
 Present the next implementation block and its tests. Provider-network access remains disabled.
 
 ## 6. Workspace, credential and input boundaries — Implementation
 
 ### Step 30 - Pause: Switch model for implementation
-- [ ] 6.1 Pause: Switch model for implementation
+- [x] 6.1 Pause: Switch model for implementation
 
 ### Step 31 - Implement: Add configuration and input contracts; verify typed validation tests
-- [ ] 6.2 Implement: Add configuration and input contracts; verify typed validation tests
+- [x] 6.2 Implement: Add configuration and input contracts; verify typed validation tests
 
 Implement validated operator configuration, immutable workspace/provider snapshots, question/failure DTOs, readiness states and tracing/environment guards. Test unsupported modes/endpoints/authority fields and distinctions among scalar false, strings, null, permitted empty text and canonical multi-choice answers.
 
 Add table-driven failure-mapping tests for every category and operation context, including device-poll 403/404 versus inference rejection. Test explicit tracing refusal and prove ambient API keys cannot select a billed mode or reach a subscription request.
 
 ### Step 32 - Implement: Add private credential storage; verify permissions and atomic replacement
-- [ ] 6.3 Implement: Add private credential storage; verify permissions and atomic replacement
+- [x] 6.3 Implement: Add private credential storage; verify permissions and atomic replacement
 
 Implement versioned records, generations, strict decoding, `0700` directories, `0600` records and complete atomic replacement. Test truncated/invalid files, interrupted writes, preserved-storage restart and newer-generation selection using synthetic credentials.
 
 ### Step 33 - Implement: Add shared refresh coordination; verify two-process rotation exclusion
-- [ ] 6.4 Implement: Add shared refresh coordination; verify two-process rotation exclusion
+- [x] 6.4 Implement: Add shared refresh coordination; verify two-process rotation exclusion
 
 Implement provider-scoped single-flight and the runtime/operator lock covering reread, injected refresh, partial merge and durable replacement. Test two processes contending for the same credential: exactly one refresh occurs, an omitted refresh token preserves the existing value, and reauthorization cannot be overwritten by a stale refresh. Test temporary failure separately from definitive rejection.
 
 ### Step 34 - Implement: Add confinement and file reads; verify path and byte-limit fixtures
-- [ ] 6.5 Implement: Add confinement and file reads; verify path and byte-limit fixtures
+- [x] 6.5 Implement: Add confinement and file reads; verify path and byte-limit fixtures
 
 Implement the common workspace policy and `mcp_Read` file mode. Test traversal, absolute paths, symlink components/leaves, special files, changed targets, credential locations and known hard-link aliases. Assert the one-MiB file bound, 200 default/2,000 maximum lines and 64-KiB result bound, with typed missing/unreadable errors and visible truncation.
 
 ### Step 35 - Implement: Add directory reads; verify filtered discovery and pagination
-- [ ] 6.6 Implement: Add directory reads; verify filtered discovery and pagination
+- [x] 6.6 Implement: Add directory reads; verify filtered discovery and pagination
 
 Implement directory mode with `.` discovery, name ordering, 200 default/2,000 maximum entries, the 64-KiB result bound and the same exclusions before returning metadata. Test excluded entries, unchanged-tree cursor continuation and visible truncation; document that pagination is not a filesystem snapshot.
 
 ### Step 36 - Implement: Add literal search; verify scan limits and nonfatal refusals
-- [ ] 6.7 Implement: Add literal search; verify scan limits and nonfatal refusals
+- [x] 6.7 Implement: Add literal search; verify scan limits and nonfatal refusals
 
 Implement literal search with 100 matches, 2,000 examined files, 16 MiB scanned text and the common file/result limits. Test excluded directories, binary files, an escaping symlinked subtree and incomplete-result reporting rather than false negative results. Verify tool code has no arbitrary process-execution path.
 
 ### Step 37 - Implement: Add secret-safe projections; verify seeded-secret and permission tests
-- [ ] 6.8 Implement: Add secret-safe projections; verify seeded-secret and permission tests
+- [x] 6.8 Implement: Add secret-safe projections; verify seeded-secret and permission tests
 
 Implement safe logging/projections, input credential rejection and pre-graph tool/model sanitation interfaces. Test goals, answers, results, nested errors and fragmented model content. Forbidden mutations and inspected instructions SHALL NOT expand permissions.
 
 Include a secret split across three stream fragments and an ordinary-code false-positive corpus. Reject raw request/body objects at the diagnostic boundary. Preserve the test proving inspected instructions cannot widen tool permissions.
 
 ### Step 38 - Implement: Document authority boundaries; verify implemented scope and limitations
-- [ ] 6.9 Implement: Document authority boundaries; verify implemented scope and limitations
+- [x] 6.9 Implement: Document authority boundaries; verify implemented scope and limitations
 
 Update README, `architecture/08-execution-security.md` and `architecture/05-model-authentication.md`. Do not describe read-only mounts as complete confinement; retain subscription-only scope and clearly mark unfinished provider login paths.
 
 ### Step 39 - Verify: Run authority-boundary suites; require passing isolation and rotation checks
-- [ ] 6.10 Verify: Run authority-boundary suites; require passing isolation and rotation checks
+- [x] 6.10 Verify: Run authority-boundary suites; require passing isolation and rotation checks
 
 Run block checks and isolated filesystem/credential suites. Require passing typed-input, confinement, exclusion and multi-process rotation tests without touching protected application directories.
 
 ### Step 40 - Review: Assess boundary evidence; obtain owner acceptance
-- [ ] 6.11 Review: Assess boundary evidence; obtain owner acceptance
+- [x] 6.11 Review: Assess boundary evidence; obtain owner acceptance
 
 Review implementation, tests and documentation before connecting these boundaries to the agent harness.
 

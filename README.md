@@ -3,9 +3,11 @@
 A personal agent runtime: start a repository task from a browser, leave, return, answer the agent's
 questions, and collect the result using an existing Anthropic or OpenAI subscription.
 
-> **Status: foundation and durable persistence.** The workspace, toolchain, checks, container topology and the
-> PostgreSQL persistence layer (runtime ownership, migrations, run records, the official checkpointer) exist.
-> Agent execution, provider access and the browser console are **not implemented yet**; they are delivered by the
+> **Status: foundation, durable persistence and authority boundaries.** The workspace, toolchain, checks, container
+> topology, the PostgreSQL persistence layer (runtime ownership, migrations, run records, the official
+> checkpointer), operator configuration, private credential storage, and the confined read/search tools and
+> secret-safe projections exist as tested components. They are **not yet connected to an agent**: agent execution,
+> provider login and inference, and the browser console are **not implemented yet**; they are delivered by the
 > remaining tasks in
 > [`openspec/changes/mvp-01-interactive-agent-execution`](openspec/changes/mvp-01-interactive-agent-execution/tasks.md).
 > The runtime serves only health and readiness endpoints, and readiness always reports `ready: false`.
@@ -22,7 +24,7 @@ A Bun-workspace monorepo orchestrated by [Turborepo](https://turborepo.com), dep
 
 | Path | Contents |
 |---|---|
-| `packages/runtime` | The Bun server and sole deployable application. Will own execution, persistence, providers, REST/SSE and operator commands. |
+| `packages/runtime` | The Bun server and sole deployable application: persistence, configuration, credentials, workspace tools and security boundaries today; execution, providers, REST/SSE and operator commands later. |
 | `packages/ui` | Browser console package. Currently an empty package boundary; the console arrives in its later block. |
 | `packages/contracts` | Not created yet. Browser-safe API schemas/types, extracted when the API is implemented. |
 | `scripts/` | Repository checks, fixture launchers and their tests. |
@@ -37,6 +39,8 @@ Boundaries enforced by tests:
 - node-postgres (`pg`) is imported only by the official checkpointer adapter; application SQL uses Bun SQL.
 - Only the application database adapter opens Bun SQL connections, and it exposes transactions and reserved
   sessions but no plain pool (see [Persistence](#persistence)).
+- Only the application database adapter starts transactions with `begin()`.
+- Workspace tool source contains no process execution, dynamic evaluation or filesystem mutation.
 - Internal dependencies use `workspace:*`; root owns development tooling, packages own application dependencies.
 
 ## Setup
@@ -117,15 +121,116 @@ An incompatible schema keeps the process up but unready for the operator. Postgr
 keepalives so sessions orphaned by a replaced network namespace end in about 25 seconds and ownership can move to
 the replacement.
 
-**Bun SQL rule.** On Bun 1.3.14, a plain pool query can run inside another caller's transaction when the pool is
-busy. Application code therefore issues every statement in `transaction()`/`readOnly()` or on a reserved session;
-the adapter does not expose the pool, and a test forbids opening Bun SQL elsewhere.
-`tests/repro/bun-sql-pool-misrouting.ts` reproduces the defect; details are in
-[the G1 evidence](architecture/integration-evidence/mvp-01/g1-bun-persistence.md).
+**Bun SQL rules.** Two Bun 1.3.14 defects shape database access:
+
+- A plain pool query can run inside another caller's transaction when the pool is busy. Application code therefore
+  issues every statement in `transaction()`/`readOnly()` or on a reserved session; the adapter does not expose the
+  pool, and a test forbids opening Bun SQL elsewhere. `tests/repro/bun-sql-pool-misrouting.ts` reproduces it.
+- A failed `begin()` on a reserved session also raises an unhandled rejection, which would crash the process.
+  Reserved sessions (migrations) use `sessionTransaction()` — explicit `BEGIN`/`COMMIT`/`ROLLBACK` — instead.
+
+Details are in [the G1 evidence](architecture/integration-evidence/mvp-01/g1-bun-persistence.md).
+
+Migration 3 limits question prompts to 16 KiB of UTF-8 (migration 2 counted characters). A database already
+holding a longer prompt fails that migration and startup, rather than having its history rewritten.
 
 Run records (runs, questions, invocations, model attempts, tool operations, events and execution definitions) are
 validated both by runtime decoders and by database constraints; see
 [`architecture/09-data-model-and-lifecycle.md`](architecture/09-data-model-and-lifecycle.md).
+
+## Configuration
+
+Environment variables (deployment wiring):
+
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection; unset leaves persistence `unconfigured`. |
+| `RUNTIME_PORT` | Loopback listener port, default `3000`. |
+| `RUNTIME_STATE_DIR` | Private runtime state, default `/var/lib/agent-runtime`. Credentials live beneath it. |
+| `RUNTIME_CONFIG_FILE` | Absolute path of the operator configuration file. Unset leaves agent execution unconfigured. |
+
+The operator configuration is a non-secret JSON file (at most 64 KiB). Unknown settings are refused, so an
+endpoint, API key or other unsupported option can never be silently ignored:
+
+```json
+{
+  "version": 1,
+  "workspace": { "id": "main", "label": "My repository", "root": "/workspace",
+                 "excludeNames": ["secrets.yaml"], "excludePaths": ["ops/keys"] },
+  "providers": {
+    "anthropic": { "authMode": "subscription", "model": "your-model-id", "profileId": "your-profile-id" }
+  },
+  "defaultProvider": "anthropic",
+  "stepBudget": 50,
+  "modelRequestDeadlineSeconds": 300
+}
+```
+
+- Replace `your-model-id` and `your-profile-id`: models and request profiles are the owner's explicit choice, and
+  there are no built-in defaults. Only
+  `authMode: "subscription"` exists — there is no API-key mode and no billed fallback. A configured provider
+  reports `integration_unavailable` until its integration is delivered (later blocks).
+- The workspace root must be a normalized absolute path that neither contains nor lies inside the runtime state
+  directory, and does not contain the configuration file.
+- `stepBudget` defaults to 50 model requests per run; `modelRequestDeadlineSeconds` to 300.
+- The Compose file does not mount a configuration file yet; that wiring arrives with agent execution.
+
+The runtime refuses to start, before loading any framework or provider code, if the environment enables
+LangSmith/LangChain tracing, sets an HTTP(S)/ALL proxy, overrides a provider base URL, disables or replaces TLS
+verification (`NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_*`), or turns on request logging
+(`ANTHROPIC_LOG`/`OPENAI_LOG` below `warn`, `BUN_CONFIG_VERBOSE_FETCH`, `DEBUG`). Ambient API keys such as
+`ANTHROPIC_API_KEY` are ignored: nothing reads them, and providers are selected only from this configuration.
+
+## Authority boundaries
+
+These components are implemented and tested, and are connected to the agent in the execution block.
+
+**Workspace tools** (`mcp_Read` file and directory modes, `mcp_Search`) read only inside the configured root:
+
+- Paths are relative. Absolute, `~`, drive, URL and backslash forms and any `..` component are refused; empty and
+  `.` components are ignored, so `.` lists the root.
+- Symlinks anywhere along a path, special files (FIFOs, sockets, devices), files with more than one hard link and
+  runtime-private files (identified by inode) are refused. Each path component is re-checked after reading, and a
+  file that changes while read is reported as changed rather than returned.
+- Excluded wherever they appear, case-insensitively, before anything is revealed: `.git`, dependency trees
+  (`node_modules`, `bower_components`, `jspm_packages`, `.venv`), `.env` and `.env.*` (templates included),
+  private-key and keystore files (`*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `*.ppk`, `id_rsa` …),
+  credential stores (`.ssh`, `.aws`, `.netrc`, `.npmrc`, `.docker`, `credentials.json`, `auth.json` …) and
+  Terraform state, plus the configured `excludeNames`/`excludePaths`. Excluded paths are refused identically
+  whether or not they exist, and never appear in listings or search.
+- Only UTF-8 text without NUL is read, and the whole file is checked, not just the lines returned.
+- Limits: 1 MiB per file; 200 lines by default and 2,000 at most; 200 directory entries by default and 2,000 at
+  most; search stops at 100 matching lines, 2,000 examined files or 16 MiB read; one call examines at most 20,000
+  directory entries, 2,000 directories and 64 levels. Every result, serialized, is at most 64 KiB. A bound that is
+  reached is reported; a search that skipped a readable file (too large, unreadable, changed) is reported as
+  incomplete, never as "no matches".
+- Directory pages are in Unicode code-point order and continue after the last returned name. Pagination is not a
+  snapshot: edits between calls can change later pages. A directory with more than 20,000 entries returns no page
+  rather than one that could skip names.
+- Search is case-sensitive literal matching (no regular expressions or globs), one result per matching line, with
+  long lines clipped around the match.
+
+These checks detect escapes and observed changes on **owner-controlled** volumes. They are not protection against a
+hostile process changing the tree concurrently, and the read-only mount is not a sandbox.
+
+**Credentials** live only under `RUNTIME_STATE_DIR/credentials/<provider>/<slot>.json`: versioned, strictly
+decoded records with a generation number and millisecond expiry, in `0700` directories and `0600`, single-linked
+files owned by the runtime user. Anything else (loose permissions, symlinks, hard links, FIFOs, invalid records)
+fails closed. Records are replaced atomically and durably (exclusive temporary file, fsync, rename, directory
+fsync). Refresh begins five minutes before expiry; one process refreshes while others wait for, or adopt, its
+result. A provider-scoped kernel lock (via the image's `/usr/bin/flock`) is shared by the runtime and operator
+login, so a stale refresh can never overwrite a newer login. A definitive rejection records
+"reauthorization required" and keeps no token material. Provider login and refresh protocols are not implemented
+yet; the lifecycle is tested with synthetic credentials.
+
+**Secret-safe projections.** Goals and answers containing credential material are refused, not rewritten.
+Credential values in tool output and model text are replaced by `[redacted credential]`; a credential in a tool
+call's arguments or in a result's non-text field withholds that call or result instead. Model output is assembled
+completely (at most 1 MiB, and only after the provider's successful end-of-response) before any of it is used, so
+a credential split across stream fragments is still caught. Detection combines exact matches of this runtime's live
+credentials with a small set of unambiguous formats (vendor-prefixed keys, private-key blocks, literal bearer
+tokens); it is not general secret scanning, and ordinary identifiers, hashes and example JWTs pass through.
+Diagnostics are flat allowlisted fields only — no free text, errors, requests, headers or bodies.
 
 ## Deployment
 
@@ -155,7 +260,8 @@ Health endpoints:
 
 ## Limitations
 
-- No agent runs, provider authentication or console yet. Run records exist, but nothing creates runs yet.
+- No agent runs, provider login or inference, or console yet. Run records, configuration, credential storage and
+  the workspace tools exist as components; nothing uses them to run an agent yet.
 - No backup, retention or restore tooling; ordinary restarts preserve the database volume, nothing more.
 - Read-only mounts and path checks are not a sandbox against hostile processes on the host; the workspace is
   assumed to be owner-controlled.

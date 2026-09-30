@@ -14,6 +14,8 @@ Phase 1 actually stores:
   transactions-only: on Bun 1.3.14 a plain pool query can run inside another caller's transaction under contention
   ([G1 evidence](./integration-evidence/mvp-01/g1-bun-persistence.md)), so every statement runs in an explicit
   transaction or on a reserved session. The application pool is capped at 5 connections.
+  Reserved sessions never use `begin()`: a failed reserved-session `begin()` also raises an unhandled rejection
+  on Bun 1.3.14, so migrations use explicit `BEGIN`/`COMMIT`/`ROLLBACK` (`sessionTransaction()`).
 - **Separate commits.** Saver writes and application transactions never share a transaction. The run lifecycle
   (later blocks) defines what each crash window means; no atomicity across the two is claimed.
 - **Startup.** A runtime first takes a session-level advisory lock on a dedicated reserved connection (a second
