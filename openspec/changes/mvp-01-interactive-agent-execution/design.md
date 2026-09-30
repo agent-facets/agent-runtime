@@ -2,7 +2,7 @@
 
 ## Context
 
-See [proposal.md](proposal.md) for motivation and [the execution spec](specs/execution/spec.md) for the behavior contract. The repository currently contains a minimal Bun scaffold and reference spikes, not an application runtime. The reconciled spec has 30 requirements and 65 scenarios. This document designs those requirements; it does not claim their implementation or integration tests have passed.
+See [proposal.md](proposal.md) for motivation and [the execution spec](specs/execution/spec.md) for the behavior contract. At initial authoring the repository contained a minimal Bun scaffold and reference spikes; current implementation progress is recorded in [tasks.md](tasks.md). The reconciled spec has 30 requirements and 65 scenarios. This document designs those requirements; it does not itself establish implementation or integration-test acceptance.
 
 The [MVP roadmap](../../roadmaps/framework-mvp.md) selects LangChain `createAgent`, LangGraph, the official PostgreSQL checkpointer, a browser console, and Anthropic followed by OpenAI subscription access. Historical architecture documents describe a larger system and are superseded where this design identifies a Phase-1 difference.
 
@@ -10,11 +10,13 @@ Owner clarifications on 2026-09-29:
 
 - Services SHALL run in Docker Compose, with Tailscale Serve providing private HTTPS access.
 - Workspaces are owner-controlled volumes; hostile concurrent filesystem mutation is outside the supported environment. Read-only mounts do not replace path confinement or credential exclusions.
-- The owner-maintained `@ex-machina/opencode-anthropic-auth` library SHALL be the primary Anthropic subscription integration. Its maintenance status is not in question; integration into this harness is new.
+- The owner selected the maintained `@ex-machina/opencode-anthropic-auth` code as the Anthropic subscription basis. The original direct-consumption/public-release prerequisite is superseded by the internal-extraction decision below; the library's maintenance status is not in question.
 - API-key support remains deferred. Provider identity and authentication mode SHALL be separate so a later explicitly selected API-key mode does not require another execution architecture. No API-key path or automatic billing fallback is enabled now.
 - `Bun.sql` SHALL serve application-owned database queries. The official checkpointer integration is the narrow exception permitting `pg`, including construction and error handling of its pool; application records SHALL NOT use that driver.
 
 Owner-requested refinement on 2026-09-29, after the original adversarial reconciliation: the repository SHALL use a Bun-workspace monorepo orchestrated by Turborepo, with separate runtime and UI packages but one application deployment. The retained adversarial artifacts/reviews describe the earlier revision; this refinement does not claim a new adversarial review.
+
+Owner-approved refinement on 2026-09-30, during provider research: retain LangChain/LangGraph and stock ChatAnthropic, but replace the upstream public-release dependency with a minimal, explicitly maintained internal extraction of the plugin's v2 subscription auth/profile code. This changes implementation ownership, not the execution specification, provider order or safety gates. It does not authorize upstream edits, implementation before the block proposal is approved, or live provider operations. Historical evidence and adversarial artifacts remain records of their original revisions.
 
 ## Goals / Non-Goals
 
@@ -22,13 +24,14 @@ Owner-requested refinement on 2026-09-29, after the original adversarial reconci
 
 - Keep model/tool scheduling in the framework while giving the application enforceable authority over dispatch, accepted human input, and visible outcomes.
 - Specify records, identities, wire contracts, and commit boundaries sufficient to implement the durability and concurrency requirements without pretending graph and application writes share a transaction.
-- Reuse maintained provider code through explicit integration boundaries and verify it under Bun before building out the console.
+- Reuse reviewed provider code through explicit integration boundaries, keeping the Anthropic derivative minimal and internally maintained, and verify it under Bun before building out the console.
 
 **Non-Goals:**
 
 - A custom agent loop, replacement checkpointer, OpenCode host, complete Agent Server implementation, general effect ledger, distributed worker system, or crash-recovery queue.
 - Token-by-token browser rendering, arbitrary question schemas, regex search, or configurable agent-supplied endpoints.
 - Automatic compatibility migration of paused runs. Conservative refusal is preferable to replaying a human answer into changed work.
+- Forking LangChain or a provider SDK, hosting OpenCode, publishing a new auth library, or automatically synchronizing the internal derivative with upstream.
 
 ## Decisions
 
@@ -54,11 +57,14 @@ Scaffolding SHALL remove the unused floating `node = "latest"` entry from mise.t
 
 | Package | Responsibility | Permitted first-party dependencies |
 |---|---|---|
-| `packages/runtime` | Bun server, agent/controller, persistence, provider/credential adapters, REST/SSE and operator commands; sole deployable application | Contracts; UI's public HTML entry solely for application assembly |
+| `packages/runtime` | Bun server, agent/controller, persistence, provider/credential adapters, REST/SSE and operator commands; sole deployable application | Contracts; Anthropic subscription package; UI's public HTML entry solely for application assembly |
 | `packages/ui` | React console, browser API client, browser-only dependencies and unit tests | Contracts; never runtime internals |
 | `packages/contracts` | Pure browser-safe API schemas/types shared by server and client | Neither runtime nor UI; no database drivers, provider SDKs, Bun/Node APIs or credential handling |
+| `packages/anthropic-subscription` | Private server-only subscription auth primitives and deterministic Anthropic request-profile adaptation; introduced in the provider block | No first-party dependencies; injected contracts SHALL NOT depend on runtime, UI or browser contracts |
 
 The contracts package SHALL be introduced with the API block by extracting shared wire definitions, not duplicating schemas or moving server authority into the browser. Persistence, graph state and credential records SHALL remain runtime-private. Packages SHALL expose explicit public entry points; private shared TypeScript source exports are sufficient without a publication/declaration pipeline. Foundation work SHALL establish the runtime and UI package/configuration boundaries without implementing the console or creating a speculative contracts package. A package shell SHALL NOT be counted as delivered UI functionality or passing feature tests. Functional browser work remains after the real G2 and offline G4/G5 gates.
+
+The private Anthropic package SHALL be consumed by the runtime through `workspace:*` and explicit public entry points, with its own Bun tests and typecheck included in the root check graph. It SHALL NOT depend on an OpenCode host/plugin package, LangChain or a provider SDK. Runtime-owned application assembly SHALL include its execution-used source/resources in the single image; UI and browser contracts SHALL NOT import it. It adds no service, standalone operational process or package-publication pipeline.
 
 `Bun.serve` SHALL import the UI package's public HTML entry and serve its React/CSS assets alongside the API. The runtime's application build SHALL own the complete deployable output under `packages/runtime/dist/`, including the browser assets; the UI is a source package, not a second deployed server or a prerequisite standalone bundle. Docker SHALL build from the repository root with the frozen root lockfile and required workspace manifests/sources, preserving resolution of any dependencies not bundled into the output. Initial workspace pruning is deferred. The production image SHALL require neither Turbo nor a UI development server to serve requests. Runtime auth commands SHALL also run inside the runtime image. Development HMR/log forwarding SHALL NOT be enabled in operational serving. No Vite, Express, separate frontend server, ORM or package-publication tooling is needed.
 
@@ -246,7 +252,7 @@ The execution-definition digest SHALL cover canonical JSON containing:
 
 The execution-code manifest SHALL be generated from explicit execution roots and their owned import/resource closure. Dynamic dependencies SHALL be declared. Digests SHALL use source/resource content with normalized line endings, not Git revision, deployment time or whole-image identity. Browser-only assets, unrelated development dependencies, credentials, expiry, default settings for future runs and workspace contents SHALL be excluded. Changes to a tool body or resume-critical helper SHALL change the manifest even when names and schemas do not.
 
-Monorepo package boundaries SHALL NOT replace that execution closure. UI sources/dependencies used only for application asset assembly SHALL remain excluded; shared contract modules used by execution and their relevant dependencies SHALL be included. Changes confined to browser code, browser-only dependencies or development tooling SHALL NOT invalidate a waiting run merely because the root lockfile, application bundle or Turbo cache key changed. Turbo task hashes SHALL NOT serve as execution-definition digests.
+Monorepo package boundaries SHALL NOT replace that execution closure. The selected provider's execution-used source/resources in `packages/anthropic-subscription` and their relevant dependency closure SHALL be included through workspace-aware resolution; the closure SHALL NOT stop at the runtime package directory. UI sources/dependencies used only for application asset assembly SHALL remain excluded; shared contract modules used by execution and their relevant dependencies SHALL be included. Changes confined to browser code, browser-only dependencies or development tooling SHALL NOT invalidate a waiting run merely because the root lockfile, application bundle or Turbo cache key changed. Turbo task hashes SHALL NOT serve as execution-definition digests.
 
 The current manifest SHALL be constructed for the stored run binding and compared with the saved manifest. Exact equality remains the conservative policy: some harmless execution-code changes can refuse continuation, but redeploying identical execution content or changing only browser assets SHALL NOT do so.
 
@@ -294,27 +300,35 @@ Auth is an operator setup action inside the container, not an agent tool or a ru
 
 **Alternative:** a single “provider token” string conflates provider, billing route, principal metadata and lifecycle. Importing whatever ambient credential a stock SDK discovers would permit unintended billing.
 
-### 10. Reuse the maintained Anthropic library through an owned integration prerequisite
+### 10. Maintain a minimal internal Anthropic subscription package
 
-The owner-maintained `@ex-machina/opencode-anthropic-auth` SHALL remain the primary Anthropic subscription implementation. The inspected 1.8.1 release exposes an OpenCode plugin; the spike's reference shim deliberately bypassed refresh and intercepted global fetch. That evidence does not establish a production credential, cancellation, or request-accounting boundary.
+The runtime SHALL use `packages/anthropic-subscription`, a private source-level derivative of the owner-maintained plugin's v2 auth/profile code, behind stock ChatAnthropic's injected transport. LangChain/LangGraph SHALL remain the execution engine. Neither OpenCode hosting nor a fork/subclass replacement of the stock model or SDK is part of this decision.
 
-The selected integration SHALL use a documented public boundary providing the following contracts. It MAY be delivered as additive core exports or supported plugin options; a general library redesign is not required.
+**Provenance and ownership.** The reviewed extraction baseline is `@ex-machina/opencode-anthropic-auth@2.0.0-next.5`, upstream revision `156cb66c6889e1be3ad2b839345ea409942ab40f`, whose published tarball integrity is `sha512-EBnFXXBCbd1rl496OydEBqMRqcuqAgpjFH1vhWio0Lw+hZHzzwFWoabrRDSKE3gC09Knd7Q6+lp4DvAOt0qjWw==`. Research verified those package bytes, not their integration or live operation. Implementation SHALL retain applicable MIT/copyright notices and record the upstream source paths, selected material and intentional differences. This is an explicit internal derivative, not an installed plugin, runtime deep import or claim of an upstream-supported standalone API.
 
-| Operation | Required boundary |
+The project SHALL own maintenance of the derivative. Upstream changes SHALL be reviewed and selectively incorporated, with updated provenance and regression evidence; moving tags, automated synchronization and silent profile updates SHALL NOT change deployed behavior. No new upstream release is required. Editing the separate upstream repository remains outside this change's authorization.
+
+**Package boundary.** The package SHALL provide a small documented public surface with independently testable auth and request-profile operations:
+
+| Operation | Required contract |
 |---|---|
-| Subscription login | Library-owned PKCE/state/exchange, injected auth transport/signal, validated subscription credentials; no API-key-creation path |
-| Subscription refresh | Independently callable library refresh, injected transport/signal, explicit expiry units, partial credential updates and safe typed errors |
-| Subscription request adaptation | Library-maintained request profile, injected credential resolution and terminal transport, native tool-name/no-response-rewrite mode, fail-closed handling of non-subscription credentials |
+| Begin subscription login | Produce the authorization URL and private flow state needed for PKCE/state validation. No browser launch, credential-file access, API-key creation or OpenCode interaction. |
+| Exchange subscription authorization | Require the matching login state and verifier; use injected auth transport and signal; return validated access/refresh material and absolute epoch-millisecond expiry, or a safe typed failure. No automatic exchange retry. |
+| Refresh subscription authorization | Independently callable through injected auth transport and signal; return validated access material/expiry and optional replacement refresh/account fields. Omission SHALL remain distinguishable from an invalid supplied value so the runtime can merge safely. No automatic retry of an ambiguous rotation. |
+| Adapt an inference request | Apply the explicitly selected, immutable profile's required headers, URL/query and body transformations using injected credential resolution and a guarded terminal. Native tool names and tool-call/result relationships SHALL remain unchanged; response bytes SHALL NOT be rewritten. Non-subscription credentials SHALL fail closed. |
+| Report failures | Return an allowlisted operation/reason and safe status metadata sufficient to distinguish invalid input/state, definitive authorization rejection, temporary transport/issuer failure, cancellation and unsupported response/profile behavior. Raw bodies, credentials and arbitrary upstream exception text SHALL NOT be exposed. |
 
-The owner, as library maintainer, SHALL own the upstream delivery. The task plan SHALL include an explicit owner handoff for the required release and a runtime-side contract-test gate. An existing release satisfying these contracts SHALL be preferred over new changes. If none exists, the dependency SHALL be tracked as blocked until the owner supplies a reviewed release; independent scaffolding and mock-backed runtime work can proceed meanwhile.
+The extracted surface SHALL be limited to the auth/PKCE primitives, profile constants and necessary header, system/billing-body and bounded parsing helpers. OpenCode hooks, connection/session management, credential-store integration, alias tables, response-name rewriting, automatic version recovery, API-key modes and unrelated plugin features SHALL NOT be carried over. Profile data SHALL be explicit rather than read from ambient environment overrides. Request-profile behavior includes the declared client version, required beta headers/query and leading-user-text-dependent billing metadata; unsupported model/profile combinations SHALL be refused before dispatch.
 
-Approval of this design records that dependency and ownership, not permission for an agent to edit the separate library repository. Such edits require their own implementation authorization. The runtime SHALL NOT silently substitute copied OAuth/profile code, private deep imports, a fabricated OpenCode host, or global-fetch interception.
+The runtime SHALL continue to own credential storage, provider-scoped locking, refresh coordination, generation selection, durable replacement, safe diagnostics, admission, request budgets and the sole permitted renewal retry. All auth and inference I/O SHALL use their separately injected policy-enforcing transports and honor their signals/deadlines. The package SHALL have no autonomous persistence, retry loop, global-fetch interception or network fallback. Shared refresh settlement remains governed by Decision 9: an abandoning waiter does not cancel another caller's already-started rotation.
 
-Native `mcp_Read`, `mcp_Search`, and `mcp_AskUser` names SHALL be used only with the verified no-rewrite mode. The unchanged prefixing loader SHALL NOT be combined with those names. Runtime tool-name normalization is not a substitute for a correct transport.
+Native `mcp_Read`, `mcp_Search`, and `mcp_AskUser` names SHALL be verified unchanged on request, fragmented response and replay paths. Removing upstream aliases/response transformations is an intentional divergence, not byte-for-byte parity with the full plugin. Offline golden fixtures SHALL independently establish unchanged profile behavior and explicitly enumerate approved differences; expected outputs SHALL NOT be generated solely by the implementation under test. Bounds, parsing, partial-refresh support and injection adaptations SHALL likewise be recorded as deliberate differences rather than silently inherited assumptions.
 
-Stock `ChatAnthropic` SHALL use an explicit non-secret sentinel API key, disabled SDK/LangChain retries, and `clientOptions.dangerouslyAllowBrowser: false`. The injected transport SHALL supply subscription credentials and enforce endpoint, cancellation and physical-request-budget policy. Conversation replay SHALL preserve the leading user text and tool-call/result relationships required by the pinned profile.
+Stock `ChatAnthropic` SHALL use an explicit non-secret sentinel API key, disabled SDK/LangChain retries including call-level overrides, and `clientOptions.dangerouslyAllowBrowser: false`. The existing guarded terminal SHALL remain the final inference-I/O authority. Conversation replay SHALL preserve complete provider metadata, the leading user text and tool-call/result relationships. Provider-stream validation SHALL refuse truncated or unsuccessfully terminated responses before any partial message becomes graph state; this validation does not authorize response rewriting.
 
-**Alternative:** the shipped loader shim proves basic reuse but lacks the inspected injection and refresh contracts. Moving accounting above its asynchronous work would change the meaning of a step and weaken cancellation enforcement. The supported boundary is therefore an acceptance prerequisite, not an optional later cleanup.
+**Acceptance.** G2 SHALL exercise the actual internal package's public surface using synthetic issuer/transport fixtures, including cancellation, exact endpoint/redirect restrictions, partial rotation, safe errors and independent request counters. Test doubles MAY exercise consumer failure paths but SHALL NOT substitute for package acceptance. G2 and actual-package offline G4/G5 remain mandatory before console work; live journeys retain their separate fresh-authorization gates. New-package source/resources SHALL participate in the execution definition and runtime-owned image as required by Decisions 1 and 7.
+
+**Alternatives:** waiting for upstream public exports adds delivery work the owner chose to avoid; a full plugin fork retains unnecessary host machinery; forking LangChain or the provider SDK increases maintenance without removing a demonstrated limitation of their public transport seam. A narrow internal derivative removes the release dependency while making its provenance, intentional divergence and maintenance responsibility explicit. It does not weaken dispatch, credential or replay guarantees.
 
 ### 11. OpenAI extraction retains Responses semantics and independent auth
 
@@ -349,6 +363,8 @@ Directory mode SHALL accept `.` for workspace discovery, return entries in name 
 Read-only mounts prevent container writes but do not prevent a host process from changing a mounted tree. The supported threat model excludes hostile concurrent mutation; stronger root-relative OS file-opening enforcement is deferred explicitly, not claimed by the path checks. The system is not general secret discovery or data-loss prevention: permitted repository content is sent to the selected provider.
 
 Provider credential values SHALL remain only in the credential/transport boundary. Goal/answer inputs containing recognized live credential material SHALL be rejected rather than silently changed. Tool outputs and model responses SHALL be checked before entering graph state, events or results. The model wrapper SHALL return only sanitized complete messages; tool results SHALL be sanitized before their wrapper returns. SDK/error paths SHALL use allowlisted codes and safe metadata, not raw request/response objects or arbitrary exception text. Raw tracing and browser token streaming remain disabled. Synthetic-secret checks SHALL include split streaming fragments and failure paths, not just completed console text.
+
+Exact matching SHALL cover credentials from each generation before its request is dispatched and retain coverage until all responses using that generation have been sanitized or safely discarded, including after cancellation and rotation. Bounded retention SHALL NOT evict a still-referenced generation merely because newer generations arrive. At capacity the implementation SHALL preserve existing protection and fail closed before admitting work it cannot screen. Provider integration SHALL verify this under rotation pressure; a fixed recent-generation cache alone is not evidence of in-flight coverage.
 
 **Alternative:** `.gitignore`, read-only Docker mounts, UI-only redaction, or a prompt telling the model not to access secrets does not enforce this contract.
 
@@ -415,21 +431,22 @@ Failure mapping SHALL consider operation context and typed provider codes, not H
 
 If finalization cannot be persisted, the console SHALL receive an unsequenced, unstored availability notice when possible, not confirmed success or a fabricated durable failure. Readback can confirm an already-committed outcome; otherwise fail-stop and startup reconciliation apply. Raw provider error bodies SHALL NOT be logged.
 
-No `docs/` directory exists and the root README remains Bun-init boilerplate. Implementation SHALL replace it with the actual monorepo/package ownership, setup, pinning, Turbo command/cache behavior, single-application build, Compose/Tailscale, auth, model configuration, workspace restrictions, browser, budget, cancellation, restart, and troubleshooting instructions. Existing architecture reconciliation SHALL explicitly separate delivered MVP behavior from historical future intent:
+No `docs/` directory exists. The root README now documents the completed foundation and mock-backed lifecycle; provider integration SHALL update it with the internal subscription-package ownership, provenance/update policy, workspace checks/build, auth commands, model/profile configuration and current acceptance limits. Its recent-generation screening description SHALL be reconciled with the in-flight guarantee in Decision 12. `architecture/05-model-authentication.md` still describes the superseded upstream-release prerequisite and SHALL be updated in the provider block. Existing architecture reconciliation SHALL explicitly separate delivered MVP behavior from historical future intent:
 
 | Document | Required reconciliation |
 |---|---|
 | `architecture/README.md` | Separate runtime/UI packages in a Bun/Turbo monorepo, one application deployment; `createAgent` owns the loop; browser first; question-only continuation; roadmap supersedes old knowledge canonicality without implementing memory now |
 | `architecture/02-control-plane.md` | Thin controller, exact questions, seven states, guarded dispatch and REST/SSE; defer manager/subgraphs/scheduling and active recovery |
-| `architecture/05-model-authentication.md` | Maintained Anthropic facade, explicit provider/auth-mode split, durable credentials, no current API-key fallback, evidence limits |
+| `architecture/05-model-authentication.md` | Minimal internal v2-derived Anthropic package, provenance and intentional differences, explicit provider/auth-mode split, durable credentials, no current API-key fallback, evidence limits |
 | `architecture/06-storage-and-backup.md` | Two PostgreSQL ownership schemas, Bun SQL/checkpointer exception, separate commits and preserved volumes; defer retention, backup tooling and host-reboot promises |
 | `architecture/07-network-and-protocols.md` | Compose namespace + Serve, owner-restricted tailnet trust and origin controls; real replay storage rather than replay “for free”; broader protocol/auth machinery deferred |
 | `architecture/08-execution-security.md` | Actual read-only tools, volume assumptions, path/secret enforcement; no Phase-1 allowlisted network tool or executor sandbox claims |
 | `architecture/09-data-model-and-lifecycle.md` | This run/question/event model, request budget and compatibility contract; no general effect-key dependency on private graph fields |
 | `architecture/10-delivery-phases.md` | Prominent notice that the four-phase OpenSpec roadmap supersedes its MVP order |
 | `architecture/spike-reports/README.md` | Separately dated pointers to new MVP integration evidence, clearly distinguished from the original spike results |
+| `packages/anthropic-subscription/README.md` and `THIRD_PARTY_NOTICES.md` | Public package boundary, exact upstream provenance/license, retained and excluded behavior, deliberate adaptations and manual update/check procedure |
 
-The architecture overview SHALL identify related older crash-survival/knowledge descriptions as historical rather than silently importing them into current guarantees. Historical spike reports and disposable harnesses SHALL remain unchanged. The report index SHALL distinguish new MVP integration evidence from original spike results. The maintained auth library's public-facade documentation is an upstream prerequisite, not generated runtime documentation.
+The architecture overview SHALL identify related older crash-survival/knowledge descriptions as historical rather than silently importing them into current guarantees. Historical spike reports and disposable harnesses SHALL remain unchanged. The report index SHALL distinguish new MVP integration evidence from original spike results. Documentation of the internal subscription package is project-owned; no upstream documentation or release change is required. The planned `upstream-handoff.md` evidence path SHALL record the decision to own the derivative, its provenance and maintenance boundary rather than claim an upstream delivery occurred.
 
 ### 15. Staged integration gates precede dependent implementation
 
@@ -438,12 +455,12 @@ The task plan SHALL make these gates explicit. Common and offline provider check
 | Gate | Required evidence | Pass condition |
 |---|---|---|
 | G1 — Bun persistence and ownership | Exact dependency matrix; official saver; Bun SQL; singleton/epoch behavior; root-level question pause, fresh-process resume and negative answer | Saved question survives; answer is applied once; lost ownership disables dispatch; no silent runtime substitution |
-| G2 — Maintained Anthropic boundary | Pinned library release, owner handoff completed, injected auth/inference transport, native/no-rewrite names, refresh coordination and safe errors | Contract fixtures pass without private imports, global-fetch replacement or unchanged-loader fallback |
+| G2 — Internal Anthropic subscription boundary | Reviewed extraction provenance/license and deviations; actual internal package; injected auth/inference transport, native/no-rewrite names, refresh coordination and safe errors | Actual-package contract fixtures pass under Bun with independent I/O witnesses, no OpenCode dependency, private upstream imports, global-fetch replacement or plugin-loader fallback |
 | G3 — Harness dispatch and lifecycle | Independent physical-request/tool counters; cancellation during credential awaits; no hidden retries; budget exhaustion; checkpoint/application crash windows | No model dispatch after accepted cancellation or beyond capacity; auth-only failure consumes no model request; specified restart outcomes hold |
 | G4 — Anthropic transport and journey | Bun request-profile fixtures, fragmented responses and browser-header check; separately authorized login/refresh and tool/question/result journey | Profile matches, tool names survive chunk boundaries, credentials persist safely, and the full journey works through createAgent |
 | G5 — OpenAI transport and journey | Bun fetch versus Bun node:http golden captures; complete terminal-event checks; separately authorized device login, renewal, restart and two-turn tool-result journey | Selected terminal passes parity/abort checks and the previously unproven tool-result round trip succeeds |
 
-Every live check SHALL have fresh owner authorization and a declared request limit. The OpenAI implementation-cost checkpoint remains before its delivery block. Missing upstream delivery or failed integration SHALL NOT be papered over by moving the budget gate, enabling billed access, copying a provider implementation, or silently choosing Node.
+Every live check SHALL have fresh owner authorization and a declared request limit. The OpenAI implementation-cost checkpoint remains before its delivery block. Failed extraction/contract/parity checks SHALL stop dependent work, not be papered over by moving the budget gate, enabling billed access, installing the full plugin, widening the approved extraction or silently choosing Node. The specific reviewed internal extraction in Decision 10 is authorized planning scope, not blanket permission to copy other provider implementations.
 
 Verification results SHALL identify package/image versions, test commands, observed request counts and unresolved failures. Historical spike evidence SHALL not be relabelled as an integrated Bun result.
 
@@ -451,8 +468,8 @@ Verification results SHALL identify package/image versions, test commands, obser
 
 - **Unproven combined Bun/harness/provider matrix** → verify the selected exact package bytes before console buildout; incompatibility stops for explicit replanning, not a custom saver or Node fallback.
 - **Monorepo cache or package-boundary mistakes** → verify shared-source invalidation, restoration of actual build outputs, uncached acceptance and browser/server dependency guards; do not confuse a deployment cache key with continuation compatibility.
-- **Maintained Anthropic package lacks the inspected public integration seam** → deliver or select a supported facade release first; do not quietly deep-import or copy protocol internals.
-- **Provider-controlled subscription support/policy and profile changes** → record the owner's selected maintained-transport basis, pin/test profiles, surface failures and never reinterpret that choice as permission for automatic billed access.
+- **Internal derivative adds protocol maintenance** → keep the extraction small, retain provenance/license and an explicit deviation list, review upstream changes manually and rerun package/transport gates for updates; do not fork the host or model framework.
+- **Provider-controlled subscription support/policy and profile changes** → record the reviewed transport basis, pin/test profiles, surface failures without automatic version recovery and never reinterpret the selection as permission for billed access.
 - **Separate checkpoint/application commits** → explicit crash-window behavior; pending-question durability only after settlement; no recovery of active work or reconstruction of uncommitted success.
 - **Database/HTTP admission gap** → bounded reservation and honest unconfirmed-attempt reporting; no exact claim that the provider received a request after process death.
 - **Conservative compatibility fingerprints** → harmless upgrades can make old questions non-continuable; preserve history and explain the refusal rather than risk misrouting an answer.
@@ -465,12 +482,13 @@ Verification results SHALL identify package/image versions, test commands, obser
 
 There is no existing application data to migrate. Scaffolding SHALL establish the Bun/Turbo workspace, runtime/UI package boundaries, shared configuration and container/toolchain/check commands before runtime features. The root Bun-init entrypoint SHALL be replaced by the runtime package entrypoint, leaving root scripts as the documented interface. The API block SHALL introduce contracts and the console block SHALL implement the UI only after the pre-console gates; no package split authorizes an additional deployment. The official saver setup and application schema migrations SHALL be serialized under ownership/migration locks before readiness; schema incompatibility SHALL fail startup. Spike databases and credentials SHALL NOT be implicitly imported.
 
-Delivery SHALL track the owner-maintained library release as an explicit prerequisite and satisfy the integration gates in Decision 15 before accepting the Anthropic interactive slice. That slice includes the actual pause/restart/answer and browser reconnect journey. OpenAI then closes the phase using the same application contracts; its integration cost SHALL be assessed before that block and explicitly replanned if disproportionate, never silently omitted. Auth commands and live tests require fresh owner authorization; no spent spike request allowance carries forward.
+Provider delivery SHALL add the private Anthropic package and its production runtime wiring, satisfy the provenance and actual-package integration gates in Decision 15, and update the shipped execution manifest before console buildout. It no longer waits for an upstream public release. The accepted run/credential records and lifecycle contracts remain unchanged; no database or credential migration is introduced by this package split. The Anthropic interactive slice still includes the actual pause/restart/answer and browser reconnect journey. OpenAI then closes the phase using the same application contracts; its integration cost SHALL be assessed before that block and explicitly replanned if disproportionate, never silently omitted. Auth commands and live tests require fresh owner authorization; no spent spike request allowance carries forward.
 
 The required verification matrix SHALL include:
 
 - Workspace/import-boundary checks; safe direct and Turbo test discovery; cold/forced execution, shared-input cache invalidation and warm-cache build-output restoration; a single image containing the runtime and, once implemented, the UI.
 - Mocked model requests with independent dispatch counters, hidden-retry checks, fragmented/truncated SSE, deadlines and pre-aborted signals.
+- Actual internal Anthropic package contracts with synthetic issuers/transports, reviewed-source provenance and approved-difference golden fixtures; workspace-package fingerprint invalidation and in-flight credential screening under rotation pressure.
 - Official saver plus `createAgent` on Bun: tool-result rounds, sole/mixed questions, typed negative answers, saved-state inspection and generated-definition changes.
 - Failures at interrupt emission, saver settlement, app waiting/answer/final commits, cancellation acceptance, and model admission; verify each documented crash window.
 - Duplicate/conflicting answers, stale IDs, replayed tools, missing checkpoint blobs, temporary inspection outage and no-op continuation.

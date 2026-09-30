@@ -31,6 +31,7 @@ the original spike results above, which were measured on Node and are left uncha
 | Gate | Record | Outcome |
 |---|---|---|
 | G1 — Bun persistence and ownership | [g1-bun-persistence.md](../integration-evidence/mvp-01/g1-bun-persistence.md) | **Pass** (early gate), with a Bun SQL pool defect found and mitigated |
+| G3 — Harness dispatch and lifecycle (added 2026-09-30) | [g3-dispatch-lifecycle.md](../integration-evidence/mvp-01/g3-dispatch-lifecycle.md) | **Pass** with provider-free models; real-provider gates outstanding |
 
 ## Working records
 

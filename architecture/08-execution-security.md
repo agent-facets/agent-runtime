@@ -45,13 +45,19 @@ What Phase 1 enforces:
 - **Container.** Non-root, read-only root filesystem, all capabilities dropped, `no-new-privileges`, no Docker
   socket, no published ports; the runtime is reachable only through Tailscale Serve.
 
-Not yet connected: these components are wired to the agent in the controlled-execution block, and the complete
-protected-surface scan (history, events, console, logs) is repeated there and in the console block. That block
-also owns what these components cannot do by themselves: preserving provider replay metadata while sanitizing
-complete stock model messages, converting exceptions to safe typed errors before the graph records them, keeping
-the exact matcher current across credential rotation, and tracking actual in-flight work for cancellation.
-The screening corrections above were made on 2026-09-30, after the block-6 acceptance; earlier acceptance
-evidence did not cover them.
+- **Connected to the agent** (`packages/runtime/src/execution/`, controlled-execution block). A boundary middleware
+  inside the model and tool nodes sanitizes complete stock model messages before they are checkpointed, keeping
+  provider replay metadata (IDs, tool calls, reasoning, response metadata) intact and redacting only displayable
+  text; converts every non-control-flow failure into a fixed-text error before the graph records exception text;
+  and refuses unavailable tools (writes, commands) as recorded outcomes. The exact matcher follows credential
+  rotation (`credentials/screening.ts`): a generation is screened from the moment it is resolved for a request,
+  and earlier generations stay screened. Model requests leave only through a guarded terminal (exact endpoint, no
+  redirects, durable admission, full-body deadline), and cancellation waits for tracked request bodies, tool calls
+  and checkpoint writes to settle. Tests scan the persisted checkpoint tables for synthetic credentials.
+
+Not yet covered: the complete protected-surface scan over the API, console and logs belongs to the console block,
+and provider bindings (with their credential resolution) arrive in the provider block. The screening corrections
+above were made on 2026-09-30, after the block-6 acceptance; earlier acceptance evidence did not cover them.
 
 ## Threat model
 

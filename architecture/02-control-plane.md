@@ -1,5 +1,31 @@
 # Control Plane
 
+## Phase 1 as built (MVP 01)
+
+The [MVP 01 design](../openspec/changes/mvp-01-interactive-agent-execution/design.md) (Decisions 2, 4–8) supersedes
+the sections below where they differ. There is no manager agent, subagent, scheduler or approval service: a run is
+one root-level `createAgent` graph, and a thin controller (`packages/runtime/src/execution/`) owns its invocation
+lifetime, state inspection, application transactions and history projection — not the choice of the next step.
+
+- **One agent definition.** Stock `createAgent` (tool behavior `v2`), a configured model, three tools (`mcp_Read`,
+  `mcp_Search`, `mcp_AskUser`), one boundary middleware and the official checkpointer. Invocations use the run as
+  thread, `durability: "sync"`, a service-owned signal and no `checkpoint_id`.
+- **Boundary middleware.** Inside the model and tool nodes, before anything is checkpointed: complete model responses
+  are sanitized with their replay metadata intact; tool calls are identified, recorded and checked (unavailable
+  tools and mixed question batches refused); failures become fixed-text errors while graph control flow passes
+  through.
+- **Guarded dispatch.** Every physical model request goes through one terminal: endpoint policy, credentials,
+  durable admission under a short per-run dispatch gate (ownership, state, budget), dispatch evidence before the
+  response is used, full-body deadline. Cancellation takes the same gate, so no admission can slip past it.
+- **Exact questions.** Published only after settlement and read-only inspection; answered once, by ID, after
+  continuation is verified against the stored binding; delivered to the saved interrupt by its ID.
+- **Seven states** (`working`, `waiting`, `cancelling`, `succeeded`, `failed`, `cancelled`, `interrupted`) with the
+  transitions and crash windows in [09](09-data-model-and-lifecycle.md#phase-1-lifecycle-as-built). Active work is
+  never resumed after a restart.
+- **Not yet built:** provider bindings, the REST/SSE API and the browser console (later blocks of MVP 01).
+
+The historical design follows.
+
 The control plane owns orchestration. It decides what runs, tracks what
 happened, holds credentials, and mediates every privileged action.
 
