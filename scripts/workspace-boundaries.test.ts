@@ -14,6 +14,14 @@ const packages = await listWorkspacePackages();
 const spikesDir = join(repoRoot, 'spikes');
 const runtimeDir = join(repoRoot, 'packages', 'runtime');
 const uiDir = join(repoRoot, 'packages', 'ui');
+const subscriptionDir = join(repoRoot, 'packages', 'anthropic-subscription');
+const subscriptionPackage = '@agent-runtime/anthropic-subscription';
+// The subscription package reaches the network only through its injected transport and has no ambient configuration.
+const ambientIo: [string, RegExp][] = [
+  ['global fetch', /(?<![.\w])fetch\s*\(|globalThis\s*\.\s*fetch/],
+  ['environment', /\bprocess\s*\.\s*env\b|\bBun\s*\.\s*env\b|import\.meta\.env/],
+  ['console output', /\bconsole\s*\./],
+];
 // The official PostgreSQL checkpointer is the only approved user of node-postgres.
 const saverAdapterDir = join(runtimeDir, 'src', 'persistence', 'saver');
 const saverOnlyModules = [/^pg(?:\/|$)/, /^pg-/, /^@langchain\/langgraph-checkpoint-postgres(?:\/|$)/];
@@ -58,9 +66,59 @@ describe('workspace import boundaries', () => {
     expect(isWithin(uiDir, resolveRelative(file, '../../runtime/src/server.ts') ?? '')).toBe(false);
   });
 
-  test('the expected runtime and UI packages exist', () => {
-    expect(packages.map((pkg) => pkg.manifest.name)).toEqual(['@agent-runtime/runtime', '@agent-runtime/ui']);
+  test('the expected runtime, UI and subscription packages exist', () => {
+    expect(packages.map((pkg) => pkg.manifest.name)).toEqual([
+      subscriptionPackage,
+      '@agent-runtime/runtime',
+      '@agent-runtime/ui',
+    ]);
     expect(packages.every((pkg) => pkg.manifest.private === true)).toBe(true);
+  });
+
+  test('no package imports the upstream plugin, an OpenCode host or its private files', async () => {
+    const violations = (await importsOf(join(repoRoot, 'packages'))).filter((record) =>
+      /^@(?:ex-machina|opencode|opencode-ai)\/|(^|\/)opencode-anthropic-auth(\/|$)/.test(record.specifier),
+    );
+    expect(violations.map(describeImport)).toEqual([]);
+  });
+
+  test('the subscription package imports only its own modules and platform built-ins', async () => {
+    const violations = (await importsOf(subscriptionDir)).filter((record) => {
+      if (record.specifier.startsWith('.')) return false;
+      if (/^node:(?:crypto|buffer)$/.test(record.specifier)) return false;
+      const isTest = /\.test\.ts$/.test(record.file) || isWithin(join(subscriptionDir, 'test-support'), record.file);
+      return !(isTest && /^(?:bun:test|node:[a-z_]+)$/.test(record.specifier));
+    });
+    expect(violations.map(describeImport)).toEqual([]);
+  });
+
+  test('the ambient-I/O detector recognizes each forbidden access', () => {
+    const samples = ['await fetch(url)', 'globalThis.fetch', 'process.env.X', 'Bun.env.X', "console.warn('x')"];
+    for (const sample of samples) {
+      expect(ambientIo.some(([, pattern]) => pattern.test(sample))).toBe(true);
+    }
+    expect(ambientIo.some(([, pattern]) => pattern.test('await context.transport(request)'))).toBe(false);
+  });
+
+  test('the subscription package performs no I/O of its own and reads no environment', async () => {
+    const violations: string[] = [];
+    for (const file of listSourceFiles(join(subscriptionDir, 'src'))) {
+      if (/\.test\.ts$/.test(file)) continue;
+      const source = await Bun.file(file).text();
+      for (const [label, pattern] of ambientIo) {
+        if (pattern.test(source)) violations.push(`${relative(repoRoot, file)}: ${label}`);
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  test('only the runtime imports the subscription package, through its public entry', async () => {
+    const violations = (await importsOf(join(repoRoot, 'packages'))).filter(
+      (record) =>
+        record.specifier.startsWith(subscriptionPackage) &&
+        (!isWithin(runtimeDir, record.file) || record.specifier !== subscriptionPackage),
+    );
+    expect(violations.map(describeImport)).toEqual([]);
   });
 
   test('no package imports historical spike code', async () => {
@@ -202,9 +260,13 @@ describe('workspace tools cannot execute or mutate', () => {
     ).toBe(false);
   });
 
-  test('workspace tool and execution source contains none of them', async () => {
+  test('workspace tool, execution and subscription-package source contains none of them', async () => {
     const violations: string[] = [];
-    for (const file of [...listSourceFiles(workspaceToolsDir), ...listSourceFiles(executionDir)]) {
+    for (const file of [
+      ...listSourceFiles(workspaceToolsDir),
+      ...listSourceFiles(executionDir),
+      ...listSourceFiles(join(subscriptionDir, 'src')),
+    ]) {
       if (/\.test\.ts$/.test(file)) continue;
       const source = await Bun.file(file).text();
       for (const [label, pattern] of forbiddenInWorkspaceTools) {
@@ -229,6 +291,20 @@ describe('workspace dependency boundaries', () => {
             violations.push(`${pkg.manifest.name} depends on the runtime`);
           }
         }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  test('the subscription package declares no dependencies and only the runtime depends on it', () => {
+    const violations: string[] = [];
+    for (const pkg of packages) {
+      for (const field of dependencyFields) {
+        const declared = Object.keys(pkg.manifest[field] ?? {});
+        if (pkg.manifest.name === subscriptionPackage && declared.length > 0)
+          violations.push(`${subscriptionPackage} ${field}: ${declared.join(', ')}`);
+        if (pkg.manifest.name !== '@agent-runtime/runtime' && declared.includes(subscriptionPackage))
+          violations.push(`${pkg.manifest.name} depends on ${subscriptionPackage}`);
       }
     }
     expect(violations).toEqual([]);

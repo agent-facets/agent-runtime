@@ -16,7 +16,7 @@ import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
 import { createAgent, createMiddleware, ToolInvocationError } from 'langchain';
 import type { ContentPolicy } from '../security/content-policy.ts';
 import type { ToolOutcome } from '../workspace/results.ts';
-import { ExecutionFailure, type ModelFailureEvidence } from './failures.ts';
+import { ExecutionFailure, type ModelCallReports, type ModelFailureEvidence } from './failures.ts';
 import { sanitizeModelMessage } from './model-message.ts';
 import {
   identityFor,
@@ -26,7 +26,7 @@ import {
   ToolCallConflict,
   type ToolCallIdentity,
 } from './operations.ts';
-import { TerminalError } from './terminal.ts';
+import { type FailedResponse, TerminalError } from './terminal.ts';
 import { ASK_TOOL, createExecutionTools, TOOL_NAMES, type ToolContext } from './tools.ts';
 
 export const SYSTEM_PROMPT = [
@@ -47,13 +47,46 @@ export interface ExecutionAgentOptions extends ToolContext {
   track?: (work: Promise<unknown>) => void;
   /** Assigns an ID to a model message that has none, before the graph persists it. */
   newMessageId?: () => string;
+  /**
+   * Called when a model call ends, after its response has been sanitized or discarded (on success, failure or
+   * cancellation). Credential screening releases the generations the call leased (ScreenScope.release).
+   */
+  modelCallSettled?: () => void;
+  /** Where the terminal reports classified unsuccessful responses (its `failures.report`). */
+  reports?: ModelCallReports;
 }
 
-function modelFailureEvidence(error: unknown): ModelFailureEvidence {
-  if (error instanceof TerminalError) {
-    return { kind: 'terminal', code: error.code, ...(error.reason === undefined ? {} : { reason: error.reason }) };
+/** The TerminalError behind an error: provider SDKs wrap what their `fetch` throws (as `cause`). */
+function terminalErrorOf(error: unknown): TerminalError | undefined {
+  let current = error;
+  for (let depth = 0; depth < 8 && current instanceof Error; depth++) {
+    if (current instanceof TerminalError) return current;
+    current = current.cause;
   }
-  // Provider SDK errors carry an HTTP status; nothing else about them is kept.
+  return undefined;
+}
+
+function modelFailureEvidence(error: unknown, report: FailedResponse | undefined): ModelFailureEvidence {
+  const terminal = terminalErrorOf(error);
+  if (terminal !== undefined) {
+    return {
+      kind: 'terminal',
+      code: terminal.code,
+      ...(terminal.reason === undefined ? {} : { reason: terminal.reason }),
+      ...(terminal.attemptId === undefined ? {} : { attemptId: terminal.attemptId }),
+    };
+  }
+  // The SDK failed on an unsuccessful response the terminal already classified: use that, never the SDK's text.
+  if (report !== undefined) {
+    return {
+      kind: 'provider',
+      attemptId: report.attemptId,
+      status: report.status,
+      code: report.code,
+      ...(report.retryAfter === undefined ? {} : { retryAfter: report.retryAfter }),
+    };
+  }
+  // Otherwise a provider SDK error carries an HTTP status; nothing else about it is kept.
   const status = (error as { status?: unknown } | null)?.status;
   if (typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599) {
     return { kind: 'http', status };
@@ -68,30 +101,40 @@ export function boundaryMiddleware(options: {
   newMessageId: () => string;
   operations: OperationLedger;
   track?: (work: Promise<unknown>) => void;
+  modelCallSettled?: () => void;
+  reports?: ModelCallReports;
 }) {
   return createMiddleware({
     name: 'ExecutionBoundary',
     wrapModelCall: async (request, handler) => {
-      let response: AIMessage | unknown;
+      options.reports?.callStarted();
       try {
-        response = await handler(request);
-      } catch (error) {
-        if (isGraphBubbleUp(error)) throw error;
-        if (error instanceof ExecutionFailure) throw error;
-        throw new ExecutionFailure('model_request_failed', modelFailureEvidence(error));
+        let response: AIMessage | unknown;
+        try {
+          // Framework retries stay off whatever call options arrive: a retry is a new physical request, and only
+          // the terminal's one explicit renewal retry is permitted.
+          response = await handler({ ...request, modelSettings: { ...request.modelSettings, maxRetries: 0 } });
+        } catch (error) {
+          if (isGraphBubbleUp(error)) throw error;
+          if (error instanceof ExecutionFailure) throw error;
+          throw new ExecutionFailure('model_request_failed', modelFailureEvidence(error, options.reports?.last()));
+        }
+        if (isCommand(response)) throw new ExecutionFailure('invariant_violation');
+        const sanitized = sanitizeModelMessage(options.contentPolicy(), response as AIMessage, {
+          assignId: options.newMessageId,
+        });
+        if (sanitized.kind === 'message') return sanitized.message;
+        const codes = {
+          unsafe: 'unsafe_model_output',
+          unstorable: 'model_output_unstorable',
+          too_large: 'model_output_too_large',
+          malformed: 'invariant_violation',
+        } as const;
+        throw new ExecutionFailure(codes[sanitized.reason]);
+      } finally {
+        // The response has been sanitized or discarded: credentials leased for it no longer need screening.
+        options.modelCallSettled?.();
       }
-      if (isCommand(response)) throw new ExecutionFailure('invariant_violation');
-      const sanitized = sanitizeModelMessage(options.contentPolicy(), response as AIMessage, {
-        assignId: options.newMessageId,
-      });
-      if (sanitized.kind === 'message') return sanitized.message;
-      const codes = {
-        unsafe: 'unsafe_model_output',
-        unstorable: 'model_output_unstorable',
-        too_large: 'model_output_too_large',
-        malformed: 'invariant_violation',
-      } as const;
-      throw new ExecutionFailure(codes[sanitized.reason]);
     },
     wrapToolCall: (request, handler) => {
       const work = handleToolCall(request, handler);
@@ -234,6 +277,8 @@ export function executionAgentParams(options: ExecutionAgentOptions) {
         contentPolicy: options.contentPolicy,
         newMessageId: options.newMessageId ?? (() => `msg_${crypto.randomUUID()}`),
         ...(options.track === undefined ? {} : { track: options.track }),
+        ...(options.modelCallSettled === undefined ? {} : { modelCallSettled: options.modelCallSettled }),
+        ...(options.reports === undefined ? {} : { reports: options.reports }),
       }),
     ],
     version: 'v2' as const,

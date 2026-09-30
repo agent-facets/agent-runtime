@@ -36,6 +36,25 @@ describe('environment guard', () => {
     expect(JSON.stringify(problems)).not.toContain('invalid');
   });
 
+  test('refuses gateway routing and request identity overrides, but not a disabled gateway', () => {
+    const env = {
+      LANGSMITH_GATEWAY: 'true',
+      OPENAI_ORGANIZATION: 'org-invalid',
+      OPENAI_ORG_ID: 'org-invalid',
+      OPENAI_PROJECT: 'proj-invalid',
+      openai_project_id: 'proj-invalid',
+    };
+    expect(environmentProblems(env)).toEqual([
+      { variable: 'LANGSMITH_GATEWAY', reason: 'endpoint_override' },
+      { variable: 'OPENAI_ORGANIZATION', reason: 'request_override' },
+      { variable: 'OPENAI_ORG_ID', reason: 'request_override' },
+      { variable: 'OPENAI_PROJECT', reason: 'request_override' },
+      { variable: 'openai_project_id', reason: 'request_override' },
+    ]);
+    for (const value of ['', 'false', '0', 'no']) expect(environmentProblems({ LANGSMITH_GATEWAY: value })).toEqual([]);
+    expect(environmentProblems({ LANGSMITH_GATEWAY: 'https://gateway.invalid' })).toHaveLength(1);
+  });
+
   test('permits harmless settings, and ignores ambient API keys', () => {
     expect(
       environmentProblems({

@@ -8,21 +8,24 @@ transport, no API fallback and no transport switching.** A later, explicitly sel
 by keeping provider identity separate from authentication mode, but it is not implemented or enabled. The
 configuration and fallback examples below are historical.
 
-Implemented so far (`packages/runtime/src/providers/`, `packages/runtime/src/credentials/`):
+Implemented so far (`packages/runtime/src/providers/`, `packages/runtime/src/credentials/`,
+`packages/anthropic-subscription/`):
 
 - **Provider bindings.** A small registry knows exactly `(anthropic, subscription)` and `(openai, subscription)`.
   Models and request profiles are required operator configuration, never inferred from spike IDs. Readiness is one
-  of `unconfigured`, `integration_unavailable`, `reauthorization_required`, `temporarily_unavailable` or `ready`;
-  both providers currently report `integration_unavailable` because neither integration is connected. Ambient API
-  keys are ignored.
+  of `unconfigured`, `integration_unavailable`, `reauthorization_required`, `temporarily_unavailable` or `ready`,
+  computed from stored credentials only (readiness never refreshes) and logged at startup. The service's provider
+  assembly (`providers/assembly.ts`) registers Anthropic and builds each invocation's model from the run's stored
+  binding, refusing an unknown profile; OpenAI stays `integration_unavailable` until its authorization exists.
+  Ambient API keys are ignored, and the LangSmith gateway and OpenAI organization/project variables are refused at
+  startup.
 - **Credential records.** Versioned, strictly decoded, per provider and slot: generation, lifecycle
   (`usable` or `reauthorization_required`), access/refresh tokens, expiry in epoch **milliseconds**, and required
-  account metadata (OpenAI: account ID; Anthropic: whatever the maintained library's contract requires, currently
-  none). A rejected credential is stored without token material. Access and refresh tokens must have at least
-  16 printable, non-space ASCII characters: a runtime safety floor (exact-match screening cannot safely recognize
-  shorter values), not a provider format. A stored record with a shorter token is invalid and is left untouched;
-  a shorter issued token is never written. Live values are exposed to screening only through an opaque exact
-  matcher that cannot enumerate them.
+  account metadata (OpenAI: account ID; Anthropic: none). A rejected credential is stored without token material.
+  Access and refresh tokens must have at least 16 printable, non-space ASCII characters: a runtime safety floor
+  (exact-match screening cannot safely recognize shorter values), not a provider format. A stored record with a
+  shorter token is invalid and is left untouched; a shorter issued token is never written. Live values are exposed
+  to screening only through an opaque exact matcher that cannot enumerate them.
 - **Durable replacement.** Same-directory exclusive temporary file (`0600`), complete write, fsync, rename, fsync
   of the directory; acknowledged only afterwards. Records and directories must be private to the runtime user and
   single-linked. A crash at any write boundary leaves the old or new complete record (verified by killing a writer
@@ -35,19 +38,63 @@ Implemented so far (`packages/runtime/src/providers/`, `packages/runtime/src/cre
   one keeps it. A negative control without the lock produced two refreshes. A caller that is already cancelled
   (including one cancelled while the record is read, or during lock setup) starts no issuer call and launches no
   lock helper; a caller that abandons a refresh already in progress does not cancel it, and that refresh keeps
-  the lock until the issuer and the write have settled (corrective block, 2026-09-30).
+  the lock until the issuer and the write have settled.
 - **Rotation rules.** Refresh begins five minutes before expiry. An omitted refresh token or account keeps the
-  stored value; an invalid supplied one is not written. A definitive refresh rejection records
-  `reauthorization_required`; a temporary failure keeps the credential and is not retried automatically. A delayed
-  rejection of an older generation cannot revoke a newer login.
+  stored value. A definitive refresh rejection records `reauthorization_required`. **A refresh token is never
+  replayed after an uncertain refresh** — any outcome where the request may have reached the issuer without a
+  usable answer (timeout or loss after sending, 5xx, an unreadable or invalid success, an issuer adapter that
+  threw), and a rotation to a value this runtime cannot store: the issuer may have spent the token, and reusing a
+  spent refresh token can revoke the grant. The slot is durably marked `reauthorization_required`
+  (`refresh_outcome_unknown` or `refresh_result_invalid`) for every process. Only a refresh that certainly consumed
+  nothing (never sent, or throttled) keeps the credential, and it is not retried automatically. A delayed rejection
+  of an older generation cannot revoke a newer login.
+- **Screening leases.** A model request leases its credential generation in a bounded screen (64 generations)
+  when the credential is resolved, before admission; the model boundary releases the lease once that call's
+  response has been sanitized or discarded (success, failure or cancellation). A leased generation is never
+  evicted by rotation; when every slot is leased, the new generation is refused and its request is not sent. This
+  replaces the earlier count-only retention of the 16 most recent generations, which a delayed response could
+  outlive; a negative-control test reproduces that loss under the same rotation pressure.
 - **Failure mapping** considers the operation: device-login polling 403/404 means "keep polling", while the same
   statuses on inference are failures; typed provider codes take precedence over HTTP status; `Retry-After` is
-  clamped to a week.
+  clamped to a week. Provider adapters classify unsuccessful responses into those codes inside the terminal, and
+  the model boundary carries them — with the real model-attempt reference — to the run's failure, including
+  errors the provider SDK wraps.
 
-Not yet implemented: the Anthropic integration through the owner-maintained `@ex-machina/opencode-anthropic-auth`
-release (blocked on its public contract, Decision 10), the OpenAI device flow, refresh and Responses transport,
-the operator `auth` commands, and any live verification. Issuer rotation and local persistence cannot be one
-transaction: a crash between them can require reauthorization.
+**Anthropic.** Decision 10 now uses a private workspace package, `packages/anthropic-subscription`: a minimal,
+project-maintained derivative of `@ex-machina/opencode-anthropic-auth` 2.0.0-next.5 (revision
+`156cb66c6889e1be3ad2b839345ea409942ab40f`, MIT). It supersedes the earlier plan to wait for an upstream public
+release. It keeps the PKCE login URL, pasted-code exchange, refresh with bounded validation, and the request profile
+`claude-cli-2.1.280` (bearer authorization, required betas first, the reported user agent, `?beta=true`, and the
+`[billing, identity, …system]` blocks), all with injected transport and signals. It does not carry the plugin's
+hooks, connection tracking, tool-name aliasing, response rewriting, refresh caches, automatic client-version
+recovery or environment overrides. Its intentional differences (native tool names, delivery-aware failure
+outcomes, optional refresh rotation, the runtime's token floor on top of upstream bounds, version rejection
+classified rather than recovered, explicit immutable profiles, a required leading user text, subscription-only
+login with unchanged scopes, and the runtime-owned no-replay rule) are listed as D1–D9 in its
+[PROVENANCE.md](../packages/anthropic-subscription/PROVENANCE.md). Adapted
+requests match the upstream implementation byte for byte on golden fixtures generated from upstream itself, apart
+from the recorded tool-name difference. The runtime connects it to stock `ChatAnthropic` (sentinel key, explicit
+endpoint, streaming, retries off at every layer, browser header removed) through the terminal's preparation,
+completion and failure hooks, and to the credential coordinator through an exact-endpoint auth transport; the
+operator command is `auth anthropic login|status`. A streamed response is used only after `message_stop` without an
+`error` event.
+
+**OpenAI.** The inference transport follows the spike's measured Codex backend profile (`codex-0.151.0`):
+stock `ChatOpenAI` in streaming Responses mode, headers rebuilt from an allowlist (no SDK fingerprint headers,
+organization or project), the reference's body settings completed, stateless replay of encrypted reasoning and
+function calls with matching IDs, token and account from one credential generation, and a response used only after
+`response.completed`. Retries are off in the constructor and absent from `configuration` (where the request path
+would honor them). The spike measured Node's `fetch` adding headers no caller can remove and chose `node:http`;
+Bun's `fetch` does not add them (a loopback capture test pins this), so the runtime uses Bun's `fetch` and the
+`node:http` path is not used.
+
+The operator command is bundled into the application image (`bun dist/auth.js anthropic login|status`). A 401
+right after a renewal is treated as definitive: the renewed generation is durably marked as needing
+reauthorization, so later runs fail with authorization guidance without dispatching.
+
+Not yet implemented: the API that starts runs through the assembly, the OpenAI device flow and refresh, and any
+live verification. Issuer rotation and local persistence cannot be one transaction: a crash between them can
+require reauthorization.
 
 ## Historical design
 

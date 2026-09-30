@@ -486,29 +486,29 @@ Inspect the owner-supplied release against Decision 10: version/integrity, injec
 Inspect stock model construction and OpenAI Responses/terminal fixtures. Cover configured model/profile, replay metadata, terminal events and the OpenAI cost estimate before its transport implementation.
 
 ### Step 63 - Review: Confirm internal extraction ownership and scope; obtain owner agreement
-- [ ] 9.4 Review: Confirm internal extraction ownership and scope; obtain owner agreement
+- [x] 9.4 Review: Confirm internal extraction ownership and scope; obtain owner agreement
 
 Confirm the revised Decision 10 boundary: a project-owned private package derived from the reviewed v2 source, with no OpenCode host or LangChain/SDK fork. Present exact source provenance and the retained auth/PKCE, profile/constants and necessary bounded parsing/header/system-billing helpers; distinguish the excluded plugin hooks, credential store, alias/response rewriting, API-key paths and automatic retry/version recovery. Confirm internal maintenance ownership, applicable license notices, intentional-difference tracking and the absence of an upstream-delivery blocker. Include the identified in-flight credential-generation retention prerequisite. This review is not G2 acceptance or permission to edit upstream or contact providers.
 
 ### Step 64 - Propose: Present the internal package and provider plan; obtain scope and cost approval
-- [ ] 9.5 Propose: Present the internal package and provider plan; obtain scope and cost approval
+- [x] 9.5 Propose: Present the internal package and provider plan; obtain scope and cost approval
 
 Present the complete next implementation block for approval: the minimal internal package and its contracts, actual auth/profile extraction, runtime credential/operator wiring, the bounded in-flight screening correction, stock-model construction and exact dependency candidates, offline OpenAI transport, production registration and workspace-aware build/fingerprints, documentation and acceptance fixtures. Distinguish synthetic issuer/HTTP fixtures exercising real package code from a fake package that cannot establish G2. Give the early OpenAI effort/risk assessment and explicit stop/replan conditions. No upstream release is required, but actual-package G2 and offline G4/G5 must pass before console work. No live model/auth allowance or upstream-edit authority is requested or inferred.
 
 ## 10. Internal subscription boundary and offline provider parity — Implementation
 
 ### Step 65 - Pause: Switch model for implementation
-- [ ] 10.1 Pause: Switch model for implementation
+- [x] 10.1 Pause: Switch model for implementation
 
 ### Step 66 - Implement: Establish the private subscription package; verify provenance and boundary fixtures
-- [ ] 10.2 Implement: Establish the private subscription package; verify provenance and boundary fixtures
+- [x] 10.2 Implement: Establish the private subscription package; verify provenance and boundary fixtures
 
 Add private server-only `packages/anthropic-subscription` with explicit public entry points, package-local Bun tests/typecheck, runtime `workspace:*` linkage and root/Turbo/build-context integration. Define independent injected contracts for login/exchange, partial refresh, immutable request profiles and safe typed errors without dependencies on runtime internals, OpenCode, LangChain or a provider SDK. Establish consumer fixtures for signals, partial updates, native names and refusal behavior; test doubles at this stage are preparation, not a G2 pass.
 
 Verify the selected v2 release's source revision and tarball integrity against Decision 10; inventory the exact upstream source material and retained/excluded behavior before extraction. Retain applicable license/copyright material and add provenance plus intentional-difference documentation and third-party notices. Preserve historical spikes. Package import/isolation tests SHALL reject UI/contracts imports of the server-only package and runtime imports of upstream private files or spike code. Verify workspace resolution, discovery of the new package's tests and inclusion of its inputs in the application build/cache graph. Actual auth/profile implementations follow in 10.3–10.4.
 
 ### Step 67 - Implement: Extract Anthropic auth and connect credentials; verify synthetic lifecycle and screening tests
-- [ ] 10.3 Implement: Extract Anthropic auth and connect credentials; verify synthetic lifecycle and screening tests
+- [x] 10.3 Implement: Extract Anthropic auth and connect credentials; verify synthetic lifecycle and screening tests
 
 Extract and adapt only the reviewed subscription auth/PKCE and necessary validation/bounded parsing helpers into the private package. Connect its actual public auth operations to the runtime's existing credential adapter, provider-scoped coordination, private storage and operator commands; do not introduce another credential store or refresh lock. Require state/verifier matching, explicit millisecond expiry, validated token fields, preservation of omitted refresh/account fields, safe typed errors, separate exact auth endpoint policy and injected transport/signal. No API-key creation, ambient credential discovery or automatic ambiguous exchange/refresh retry is permitted.
 
@@ -517,33 +517,33 @@ Use synthetic issuer responses to exercise the actual package: valid/invalid PKC
 Correct credential-screen generation retention and its execution-boundary lifecycle so a generation used by a request remains screened until its responses are sanitized or safely discarded, not merely until HTTP completion. Keep retention bounded and fail closed rather than evict an in-use generation. Add deterministic rotation-pressure fixtures exceeding the old 16-generation cache, delayed responses, concurrent requests, cancellation/error cleanup and observation of newly loaded/rotated credentials before dispatch. Assert synthetic access/refresh material is absent from model/tool projections and checkpoint/error records; recheck the shared-rotation and credential-store regressions. Record this as new verification, not retroactive block-8 evidence.
 
 ### Step 68 - Implement: Connect stock Anthropic inference; verify offline G4 parity and replay
-- [ ] 10.4 Implement: Connect stock Anthropic inference; verify offline G4 parity and replay
+- [x] 10.4 Implement: Connect stock Anthropic inference; verify offline G4 parity and replay
 
 Extract the reviewed profile constants and necessary header/query/system-billing transformations into the private package, with explicit immutable configuration and documented intentional differences. Exclude upstream alias tables, response rewriting, plugin hooks, environment overrides and automatic version recovery. Connect the actual package to stock ChatAnthropic using the existing guarded terminal, a non-secret sentinel key, `dangerouslyAllowBrowser: false`, and disabled SDK/LangChain retries including per-call overrides. Pin the reviewed model-client/SDK versions and verify compatibility with the existing runtime matrix; package metadata alone is not a Bun pass.
 
 Test actual-package output against independently defined golden requests for the selected profile, including approved native-name/no-rewrite differences rather than pretending to reproduce the entire plugin. Cover exact endpoint/query/header policy, beta-query idempotence, unchanged native names over fragmented responses, bounded complete response assembly and successful terminal markers, leading-user text, complete provider metadata, tool-result and question-resume replay, cancellation/deadline settlement, one explicit renewal retry and secret-free checkpoints. Preserve safe typed provider codes, real attempt references and temporary-versus-definitive auth outcomes through the model boundary; do not collapse them into raw SDK exception text or status-only guesses. Independent terminal counters SHALL prove no hidden retries, no inference request for auth-only failure and no dispatch past cancellation or budget.
 
 ### Step 69 - Implement: Add the offline OpenAI transport; verify G5 wire and stream fixtures
-- [ ] 10.5 Implement: Add the offline OpenAI transport; verify G5 wire and stream fixtures
+- [x] 10.5 Implement: Add the offline OpenAI transport; verify G5 wire and stream fixtures
 
 Implement stock Responses transport with injected synthetic credential resolution and coherent account generations. Compare Bun fetch/node:http captures and test two-turn encoding, reasoning/call-ID replay, missing terminal events, redirects and abort/deadline behavior without ambient API fallback. OpenAI operational readiness remains disabled until its later auth block.
 
 Use exact reviewed model-client/SDK pins with explicit streaming Responses selection, stateless replay and sentinel credentials. Test constructor, SDK and per-call retry overrides rather than assuming one `maxRetries: 0` disables every layer. Prefer Bun-native fetch if independent wire captures pass; the historical Node-fetch header mismatch alone SHALL NOT select the compatibility transport. A Bun `node:http` path is permitted only with fresh parity, pre-abort, full-body deadline and settlement evidence under the same guarded terminal. Include complete tool arguments followed by missing/failed terminal events, cross-generation account/token consistency, and safe normalized provider failures. No device login, real refresh or provider traffic belongs in this task.
 
 ### Step 70 - Implement: Document internal provider ownership; verify provenance and acceptance distinctions
-- [ ] 10.6 Implement: Document internal provider ownership; verify provenance and acceptance distinctions
+- [x] 10.6 Implement: Document internal provider ownership; verify provenance and acceptance distinctions
 
 Update README, `architecture/05-model-authentication.md`, applicable package/security architecture sections, the private package's public-boundary/provenance/update documentation and third-party notices. Describe the actual stock-model/internal-package split, injected I/O, runtime-owned credentials, in-flight screening guarantee, explicit model/profile configuration and manual upstream-update policy. Distinguish implemented components from production registration still pending at 10.8, and offline checks from future live acceptance and OpenAI device-auth work. Do not rewrite historical acceptance reports.
 
 Record internal ownership, exact upstream provenance/license and intentional extraction differences in `upstream-handoff.md`, retaining that planned path without claiming an upstream standalone release was delivered. Record the early OpenAI effort/risk decision in `openai-cost-checkpoint.md`. Add dated index pointers, but claim only checks already observed; the following Verify steps remain pending.
 
 ### Step 71 - Verify: Check actual provider components; require package and offline regressions to pass
-- [ ] 10.7 Verify: Check actual provider components; require package and offline regressions to pass
+- [x] 10.7 Verify: Check actual provider components; require package and offline regressions to pass
 
 Run forced block checks including the new package, actual-package synthetic issuer/consumer suites, independent Anthropic profile and offline OpenAI transport fixtures, rotation-pressure screening tests and G1/G3 regressions. Check source provenance/license, intentional-difference records, package boundaries and the handoff/cost documentation against observed results. Require all checks to pass before production registration; any failure stops dependent work. Test doubles cannot substitute for the actual extraction, and an available source tarball is not a G2/G4 pass. Distinguish this component checkpoint from the final packaged pre-console gates after 10.8. No live credentials or provider requests are permitted.
 
 ### Step 72 - Implement: Wire production provider assembly; verify registration, image and execution fingerprints
-- [ ] 10.8 Implement: Wire production provider assembly; verify registration, image and execution fingerprints
+- [x] 10.8 Implement: Wire production provider assembly; verify registration, image and execution fingerprints
 
 After 10.7 passes, connect the tested internal Anthropic package, stock-model factory, credential/operator adapter, guarded terminal and safe failure mapping to production runtime assembly and configured provider readiness. Missing configuration or usable authorization SHALL keep the provider unavailable; OpenAI operational readiness remains disabled until its auth block. Use per-run stored model/profile/slot bindings without exposing caller-controlled SDK overrides. This is production wiring of the actual implementation, not an upstream release pin/bind or test-only replacement.
 
@@ -552,24 +552,24 @@ Extend execution-manifest construction to resolve the selected adapter's owned w
 Exercise the production construction path with synthetic credentials and issuer/model transports, independent request witnesses and the official saver. Retest auth-only failures, account/generation coherence, credential-safe messages/errors, cancellation, the one counted renewal retry, tool/question/result replay and immutable stored-binding reconstruction. Update registration, image/command and current-status documentation affected by this step. No REST/SSE or console feature work is included. No new upstream release, live provider request or database migration is required by this integration; completion still requires the following Verify to pass the packaged pre-console gates.
 
 ### Step 73 - Verify: Run the pre-console gates; require G2 and offline G4/G5 with regressions
-- [ ] 10.9 Verify: Run the pre-console gates; require G2 and offline G4/G5 with regressions
+- [x] 10.9 Verify: Run the pre-console gates; require G2 and offline G4/G5 with regressions
 
 Run forced block checks, actual-internal-package G2, offline G4/G5 and G1/G3 against the exact resulting source/dependency matrix and packaged production wiring. Require independent request witnesses, source/provenance and approved-difference checks, cross-package execution fingerprints, the in-flight screening regressions and single-image integration with no skipped mandatory cases before console buildout. Missing upstream public exports are no longer a blocker; any failing package, safety or parity check remains one. Do not perform live provider operations.
 
 ### Step 74 - Implement: Record pre-console evidence; verify correspondence to observed results
-- [ ] 10.10 Implement: Record pre-console evidence; verify correspondence to observed results
+- [x] 10.10 Implement: Record pre-console evidence; verify correspondence to observed results
 
 Write `g2-anthropic-boundary.md`, `g4-anthropic-offline.md` and `g5-openai-offline.md` from the preceding verification results and relevant owner reports/authorization. Include exact tested versions, source identity, commands, outcomes, request counts, unresolved issues and skips. Update the separately dated spike-index pointer. Do not rerun providers or infer a pass from missing evidence.
 
 G2 SHALL name the actual internal package source identity, the upstream extraction baseline and approved differences. Keep synthetic issuer/transport execution distinct from fake-package preparation and from later live acceptance. Update the ownership/provenance and OpenAI cost records only with decisions and results actually observed; preserve the earlier G1/G3 and historical spike/adversarial records.
 
 ### Step 75 - Verify: Check pre-console evidence; require accurate, safe and complete records
-- [ ] 10.11 Verify: Check pre-console evidence; require accurate, safe and complete records
+- [x] 10.11 Verify: Check pre-console evidence; require accurate, safe and complete records
 
 Check `g2-anthropic-boundary.md`, `g4-anthropic-offline.md`, `g5-openai-offline.md`, ownership/provenance and OpenAI cost records and index links against observed results, including actual-package and upstream source identities, deliberate differences, packaged-build identity and request allowance/counts. Reject unsupported pass claims, missing mandatory cases or sensitive content. This step checks records only and performs no new live provider requests.
 
 ### Step 76 - Review: Assess offline provider readiness; obtain owner acceptance
-- [ ] 10.12 Review: Assess offline provider readiness; obtain owner acceptance
+- [x] 10.12 Review: Assess offline provider readiness; obtain owner acceptance
 
 Review evidence that console work is unblocked while both live-provider journeys remain outstanding.
 

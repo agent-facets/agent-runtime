@@ -56,8 +56,16 @@ const errno = (error: unknown) => (error as { code?: string } | null)?.code;
 const uid = () => process.getuid?.() ?? -1;
 const isPrivate = (mode: number | bigint) => (Number(mode) & 0o077) === 0;
 
+/** Credentials live in this directory of the private runtime state (RUNTIME_STATE_DIR). */
+export const CREDENTIALS_DIRECTORY = 'credentials';
+
 export class CredentialStore {
   constructor(readonly root: string) {}
+
+  /** The store for a runtime state directory, shared by the service and operator commands. */
+  static forStateDir(stateDir: string): CredentialStore {
+    return new CredentialStore(join(stateDir, CREDENTIALS_DIRECTORY));
+  }
 
   directoryFor(provider: Provider): string {
     return join(this.root, provider);

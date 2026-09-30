@@ -44,7 +44,7 @@ async function definition(
 ) {
   const { agent, params } = agentFor(crypto.randomUUID());
   return executionDefinition({
-    code: changes.code ?? (await currentCodeManifest()),
+    code: changes.code ?? (await currentCodeManifest((changes.binding ?? binding).provider)),
     agent,
     params,
     binding: changes.binding ?? binding,
@@ -74,7 +74,7 @@ describe('execution definition', () => {
 
   test('the stored binding, workspace policy, runtime, packages and execution code all change it', async () => {
     const base = await definition();
-    const code = await currentCodeManifest();
+    const code = await currentCodeManifest(binding.provider);
     const changedHelper: CodeManifest = {
       ...code,
       executionCode: code.executionCode.map((entry) =>
@@ -97,6 +97,50 @@ describe('execution definition', () => {
     ]) {
       expect(changed.digest).not.toBe(base.digest);
     }
+  });
+
+  test('a change to an execution-used subscription-package helper or provider SDK refuses an Anthropic run', async () => {
+    const base = await definition();
+    const code = await currentCodeManifest('anthropic');
+    const changeFile = (path: string): CodeManifest => {
+      expect(code.executionCode.map((entry) => entry.path)).toContain(path);
+      return {
+        ...code,
+        executionCode: code.executionCode.map((entry) =>
+          entry.path === path ? { ...entry, digest: '0'.repeat(64) } : entry,
+        ),
+      };
+    };
+    const changePackage = (name: string): CodeManifest => {
+      expect(code.packages.map((entry) => entry.name)).toContain(name);
+      return {
+        ...code,
+        packages: code.packages.map((entry) => (entry.name === name ? { ...entry, integrity: 'sha512-other' } : entry)),
+      };
+    };
+    for (const changed of [
+      changeFile('../anthropic-subscription/src/request.ts'),
+      changeFile('../anthropic-subscription/src/billing.ts'),
+      changeFile('src/providers/anthropic/inference.ts'),
+      changePackage('@langchain/anthropic'),
+      changePackage('@anthropic-ai/sdk'),
+    ]) {
+      expect((await definition({ code: changed })).digest).not.toBe(base.digest);
+    }
+  });
+
+  test('a change confined to the other provider’s adapter leaves an Anthropic run continuable', async () => {
+    const anthropic = await currentCodeManifest('anthropic');
+    const openai = await currentCodeManifest('openai');
+    const openaiOnly = openai.executionCode
+      .map((entry) => entry.path)
+      .filter((path) => !anthropic.executionCode.some((entry) => entry.path === path));
+    expect(openaiOnly).toEqual(
+      expect.arrayContaining(['src/providers/openai/inference.ts', 'src/providers/openai/profile.ts']),
+    );
+    expect(openaiOnly.every((path) => path.startsWith('src/providers/openai/'))).toBe(true);
+    // The Anthropic definition is built from the Anthropic manifest alone, so these files are not inputs to it.
+    expect((await definition()).digest).toBe((await definition({ code: anthropic })).digest);
   });
 });
 
