@@ -1,5 +1,12 @@
 # Delivery Phases
 
+> **Superseded ordering (2026-09-29).** The P0–P9 sequence below is historical.
+> Delivery now follows the four-phase
+> [framework MVP roadmap](../openspec/roadmaps/framework-mvp.md): interactive
+> agent execution, facet-backed capabilities, cross-run memory, then
+> PR-feedback-to-plan. This document is retained for its reasoning and exit
+> criteria, not as the current build order.
+
 The system is built piecewise. Each phase produces something that works and can
 be used, not a layer waiting on the next layer.
 

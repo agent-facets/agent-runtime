@@ -1,0 +1,47 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "ui": "stream",
+  "remoteCache": { "enabled": false },
+  "globalDependencies": ["bun.lock", "bunfig.toml", "mise.toml", "package.json", "tsconfig.base.json"],
+  "tasks": {
+    "transit": {
+      "dependsOn": ["^transit"]
+    },
+    "build": {
+      "dependsOn": ["^build", "transit"],
+      "outputs": ["dist/**"]
+    },
+    "typecheck": {
+      "dependsOn": ["transit"]
+    },
+    "test": {
+      "dependsOn": ["transit"]
+    },
+    "typecheck:all": {
+      "dependsOn": ["typecheck", "//#typecheck:scripts"]
+    },
+    "test:all": {
+      "dependsOn": ["test", "//#test:scripts"]
+    },
+    "check": {
+      "dependsOn": ["//#lint", "//#typecheck:scripts", "//#test:scripts", "typecheck", "test", "build"]
+    },
+    "//#lint": {
+      "inputs": ["$TURBO_DEFAULT$", "packages/**", "!packages/*/dist/**", "!packages/*/.turbo/**"]
+    },
+    "//#typecheck:scripts": {
+      "inputs": ["$TURBO_DEFAULT$", "packages/**", "!packages/*/dist/**", "!packages/*/.turbo/**"]
+    },
+    "//#test:scripts": {
+      "inputs": ["$TURBO_DEFAULT$", "packages/**", "!packages/*/dist/**", "!packages/*/.turbo/**"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "start": {
+      "cache": false,
+      "persistent": true
+    }
+  }
+}

@@ -1,0 +1,19 @@
+[install]
+exact = true
+
+[test]
+# Bare `bun test` from the repository root runs only deterministic offline suites.
+# Historical spikes reset real databases; integration, container and live suites
+# have explicit launchers that provision isolated fixtures.
+pathIgnorePatterns = [
+  "spikes/**",
+  "tmp/**",
+  "openspec/**",
+  "architecture/**",
+  ".opencode/**",
+  "**/dist/**",
+  "**/.turbo/**",
+  "tests/**",
+  "**/*.integration.test.ts",
+  "**/*.live.test.ts",
+]
