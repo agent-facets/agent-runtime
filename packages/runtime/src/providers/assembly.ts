@@ -4,12 +4,12 @@
 // service makes, so the content policy it supplies screens all generations in use.
 import { PROFILE_IDS } from '@agent-runtime/anthropic-subscription';
 import type { OperatorConfig } from '../config/operator.ts';
-import { DEFAULT_MODEL_REQUEST_DEADLINE_SECONDS } from '../config/operator.ts';
+import { DEFAULT_MODEL_REQUEST_DEADLINE_SECONDS, providerSettingsFor } from '../config/operator.ts';
 import { CredentialCoordinator } from '../credentials/coordinator.ts';
-import { CredentialScreen } from '../credentials/screening.ts';
+import { CredentialScreen, ownerInputMatcher } from '../credentials/screening.ts';
 import { CredentialStore } from '../credentials/store.ts';
 import type { RequestAdmission } from '../execution/terminal.ts';
-import type { ProviderBinding } from '../records/schemas.ts';
+import type { Provider, ProviderBinding } from '../records/schemas.ts';
 import { type ContentPolicy, createContentPolicy } from '../security/content-policy.ts';
 import { type WiredModel, wireAnthropicInvocation } from './anthropic/binding.ts';
 import { anthropicIssuer, createAnthropicAuthTransport } from './anthropic/credentials.ts';
@@ -37,6 +37,11 @@ export type Unwired = { unavailable: 'integration_unavailable' | 'profile_unsupp
 export interface ProviderAssembly {
   registry: ProviderRegistry;
   contentPolicy(): ContentPolicy;
+  /**
+   * The content policy owner input is screened with: every generation in use, plus the usable credentials stored
+   * for each configured provider and the given bindings. Undefined when screening cannot be completed.
+   */
+  ownerInputPolicy(bindings?: readonly ProviderBinding[]): Promise<ContentPolicy | undefined>;
   wire(request: InvocationRequest): WiredModel | Unwired;
 }
 
@@ -78,6 +83,22 @@ export function createProviderAssembly(options: ProviderAssemblyOptions): Provid
   return {
     registry,
     contentPolicy: () => createContentPolicy(screen.matcher()),
+    async ownerInputPolicy(bindings = []) {
+      const slots = new Map<string, { provider: Provider; slot: string }>();
+      for (const provider of ['anthropic', 'openai'] as const) {
+        const settings = options.config === undefined ? undefined : providerSettingsFor(options.config, provider);
+        if (settings !== undefined)
+          slots.set(`${provider}/${settings.credentialSlot}`, { provider, slot: settings.credentialSlot });
+      }
+      for (const binding of bindings) {
+        slots.set(`${binding.provider}/${binding.credentialSlot}`, {
+          provider: binding.provider,
+          slot: binding.credentialSlot,
+        });
+      }
+      const result = await ownerInputMatcher(screen, store, [...slots.values()]);
+      return result.ok ? createContentPolicy(result.matcher) : undefined;
+    },
     wire(request) {
       const resolved = registry.reconstruct(request.binding);
       if (!resolved.ok) {

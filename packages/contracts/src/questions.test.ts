@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import type { QuestionInput } from '../records/schemas.ts';
-import { canonicalAnswer } from './questions.ts';
+import { canonicalAnswer, type QuestionInput } from './questions.ts';
 import { codePoints, isStorableText, utf8Bytes } from './text.ts';
+
+test('UTF-8 byte counts agree with the platform encoder, including lone surrogates', () => {
+  for (const text of ['', 'a', 'é', '€', '😀', 'a\uD800b', '\uDC00', 'mixed é€😀 text']) {
+    expect(utf8Bytes(text)).toBe(new TextEncoder().encode(text).byteLength);
+  }
+});
 
 const text = (minLength: number, maxLength: number): QuestionInput => ({ kind: 'text', minLength, maxLength });
 const typedOptions = [

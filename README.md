@@ -3,17 +3,14 @@
 A personal agent runtime: start a repository task from a browser, leave, return, answer the agent's
 questions, and collect the result using an existing Anthropic or OpenAI subscription.
 
-> **Status: controlled agent execution with Anthropic subscription access assembled, not yet reachable from the
-> browser.** The workspace, toolchain, checks, container topology, PostgreSQL persistence (ownership, migrations,
-> run records, the official checkpointer), operator configuration, credential storage, the confined read/search
-> tools, secret-safe projections and the agent execution lifecycle (see [Agent execution](#agent-execution))
-> exist. So do the [providers](#providers): Anthropic subscription login and inference, registered in the service's
-> provider assembly, and the OpenAI inference transport (not yet usable: no OpenAI login). They are verified
-> offline against synthetic issuers and networks. **Nothing has been verified against a real provider, and the
-> REST/SSE API and browser console — the only way to start a run — are not implemented**; they are delivered by
-> the remaining tasks in
+> **Status: the Anthropic browser slice is built and verified offline; nothing has run against a real provider
+> yet.** The [browser console](#browser-console-and-api), its REST/SSE API, controlled agent execution (see
+> [Agent execution](#agent-execution)), PostgreSQL persistence, the confined read/search tools, credential storage
+> and the [providers](#providers) exist: Anthropic subscription login and inference, and the OpenAI inference
+> transport (not yet usable: no OpenAI login). They are verified against scripted provider networks, including
+> real-browser journeys. The live Anthropic trial (gate G4), OpenAI login and the remaining acceptance work are
+> delivered by the remaining tasks in
 > [`openspec/changes/mvp-01-interactive-agent-execution`](openspec/changes/mvp-01-interactive-agent-execution/tasks.md).
-> The runtime serves only health and readiness endpoints, and readiness always reports `ready: false`.
 
 Further reading:
 
@@ -27,13 +24,13 @@ A Bun-workspace monorepo orchestrated by [Turborepo](https://turborepo.com), dep
 
 | Path | Contents |
 |---|---|
-| `packages/runtime` | The Bun server and sole deployable application: persistence, configuration, credentials, workspace tools, security boundaries, agent execution, provider adapters and the operator `auth` command; REST/SSE later. |
+| `packages/runtime` | The Bun server and sole deployable application: persistence, configuration, credentials, workspace tools, security boundaries, agent execution, provider adapters, the run service and REST/SSE API, serving the console, and the operator `auth` command. |
+| `packages/contracts` | Browser-safe API schemas, the public run-state and event unions, command envelopes and answer validation, shared by the runtime and the console. Pure validation (`zod` only). |
+| `packages/ui` | The React browser console: API client, replaying event store, run views and question/cancellation controls. Its public entry is the HTML page the runtime bundles. |
 | `packages/anthropic-subscription` | Private, server-only Anthropic subscription authorization and request profile: a minimal, project-maintained derivative of `@ex-machina/opencode-anthropic-auth` ([provenance](packages/anthropic-subscription/PROVENANCE.md)). No I/O of its own. |
-| `packages/ui` | Browser console package. Currently an empty package boundary; the console arrives in its later block. |
-| `packages/contracts` | Not created yet. Browser-safe API schemas/types, extracted when the API is implemented. |
-| `scripts/` | Repository checks, fixture launchers and their tests. |
-| `tests/` | Explicitly launched integration and container fixtures (never run by ordinary checks). |
-| `deploy/` | Deployment configuration (Tailscale Serve). |
+| `scripts/` | Repository checks, fixture launchers, the acceptance-trial tool and their tests. |
+| `tests/` | Explicitly launched integration, browser and container fixtures and the shared acceptance-trial fixture (never run by ordinary checks). |
+| `deploy/` | Deployment configuration: Tailscale Serve, an example operator configuration and the [Anthropic acceptance checklist](deploy/runtime/anthropic-acceptance.md). |
 | `spikes/`, `architecture/` | Historical evidence and design intent. Not application dependencies. |
 
 Boundaries enforced by tests:
@@ -50,6 +47,10 @@ Boundaries enforced by tests:
 - The subscription package declares no dependencies, imports only its own modules and platform built-ins, never
   calls global `fetch` or reads the environment, and is imported only by the runtime through its public entry. No
   package imports the upstream plugin or an OpenCode host.
+- The contracts package depends only on `zod`, imports nothing else, and uses no platform, server or browser API.
+  Other packages import it only through its public entry. Server records, saved-graph bindings and credential
+  references stay in the runtime; the API sends explicit projections.
+- The console depends only on the contracts and React; its bundle contains no server code (a test checks it).
 
 ## Setup
 
@@ -66,7 +67,9 @@ Pinned tools: Bun 1.3.14 (`mise.toml` and `packageManager`), Turbo 2.10.4, TypeS
 Bun is configured to add exact versions. The runtime pins LangChain 1.5.14, `@langchain/core` 1.2.13, LangGraph
 1.4.13 with its PostgreSQL checkpointer, and the provider models `@langchain/anthropic` 1.5.11 (with
 `@anthropic-ai/sdk` 0.122.0) and `@langchain/openai` 1.6.0 (with `openai` 7.25.0), all in
-`packages/runtime/package.json`. Their Bun compatibility is verified by the offline suites, not by live use.
+`packages/runtime/package.json`. Their Bun compatibility is verified by the offline suites, not by live use. The
+console pins React and React DOM 19.3.0 (`packages/ui`); browser journeys use Playwright 1.63.0 (root development
+dependency) with its headless Chromium, installed once with `bun run browser:install`.
 
 Each spike harness has its own README with separate requirements. `facets.json` configures optional agent
 tooling; neither is needed to build or run the runtime.
@@ -96,14 +99,20 @@ Run from the repository root (prefix with `mise exec --` if mise is not activate
 | `bun run test` / `typecheck` | Package and repository-script tests / typechecks through Turbo. |
 | `bun run lint` | Biome lint and format check (read-only). `bun run format` applies fixes. |
 | `bun test` | Direct Bun discovery of unit suites; excludes spikes, `tests/**`, generated output and `*.integration`/`*.live` suites. |
-| `bun run test:integration` | Starts a disposable PostgreSQL fixture and runs `tests/integration` (persistence, ownership, run records and the G1 gate). Requires Docker. |
-| `bun run test:container` | Builds the image and smoke-tests the isolated Compose topology. Requires Docker. |
+| `bun run test:integration` | Starts a disposable PostgreSQL fixture and runs `tests/integration` (persistence, ownership, run records, lifecycle, provider assembly and the API). Requires Docker. |
+| `bun run test:browser` | Starts a disposable PostgreSQL fixture and runs `tests/browser`: the built console in headless Chromium against the run service, with scripted providers, including the acceptance-trial rehearsal. Requires Docker and `bun run browser:install`. |
+| `bun run browser:install` | Downloads the pinned Playwright headless Chromium (once, into Playwright's user cache). |
+| `bun run test:container` | Builds the image and smoke-tests the isolated Compose topology, including the served console and the Host/Origin checks. Requires Docker. |
+| `bun run acceptance:anthropic` | The live Anthropic trial's operator tool; use only as the [checklist](deploy/runtime/anthropic-acceptance.md) describes, after fresh authorization. |
 | `bun run provenance:anthropic` | Maintenance only, uses the network: re-verifies the subscription package's recorded upstream baseline, or lists what differs at a candidate revision (see [PROVENANCE.md](packages/anthropic-subscription/PROVENANCE.md)). Never part of `check`. |
 
 Turbo caching is **local only** (remote caching and telemetry disabled). Package tasks are invalidated by
 changes to their workspace dependencies' sources and to shared configuration (`bun.lock`, `bunfig.toml`,
-`mise.toml`, root `package.json`, `tsconfig.base.json`). A cache hit restores `dist/`. Because cached results
-are replayed logs, acceptance evidence uses `check:verify`.
+`mise.toml`, root `package.json`, `tsconfig.base.json`). A cache hit restores `dist/` — server bundle, console page
+and assets, operator command and execution manifest. Because cached results are replayed logs, acceptance evidence
+uses `check:verify`. Build caching and run continuation are separate: a console-only change rebuilds the image but
+does not change any execution manifest, so paused runs stay answerable; a change to execution code — including a
+contracts module the server's execution uses — does change it.
 
 The integration and container launchers accept no arguments, never read `.env`, forward only an allowlisted
 environment, and refuse to start if storage, Compose, credential or provider variables (for example
@@ -159,6 +168,7 @@ Environment variables (deployment wiring):
 | `RUNTIME_PORT` | Loopback listener port, default `3000`. |
 | `RUNTIME_STATE_DIR` | Private runtime state, default `/var/lib/agent-runtime`. Credentials live beneath it. |
 | `RUNTIME_CONFIG_FILE` | Absolute path of the operator configuration file. Unset leaves agent execution unconfigured. |
+| `RUNTIME_PUBLIC_ORIGIN` | The console's browser-visible HTTPS origin behind Tailscale Serve (for example `https://agent-runtime.your-tailnet.ts.net`). Requests naming any other host are refused; unset, only loopback requests are accepted. |
 
 The operator configuration is a non-secret JSON file (at most 64 KiB). Unknown settings are refused, so an
 endpoint, API key or other unsupported option can never be silently ignored:
@@ -192,7 +202,11 @@ endpoint, API key or other unsupported option can never be silently ignored:
   outside it. The state directory must exist and every private entry beneath it must be inspectable; if the
   private locations cannot be protected completely, workspace access stays unavailable.
 - `stepBudget` defaults to 50 model requests per run; `modelRequestDeadlineSeconds` to 300.
-- The Compose file does not mount a configuration file yet; that wiring arrives with agent execution.
+- `modelRequestCeiling` (optional) limits model requests across **every** run of the deployment, durably and across
+  restarts; admission stops at the ceiling and the run fails as `step_limit` (`request_ceiling_reached`). Unset,
+  only each run's budget applies. The bounded acceptance trial uses it.
+- Compose mounts the file named by `AGENT_RUNTIME_CONFIG` read-only at `/etc/agent-runtime/config.json`;
+  [`deploy/runtime/config.example.json`](deploy/runtime/config.example.json) is a starting point.
 
 The runtime (and the `auth` command) refuses to start, before loading any framework or provider code, if the
 environment enables LangSmith/LangChain tracing, sets an HTTP(S)/ALL proxy, overrides a provider base URL or
@@ -261,7 +275,10 @@ answer): the issuer may already have rotated it, so the slot is durably marked a
 throttled — keeps the credential for a later attempt. Anthropic login and refresh are implemented (see
 [Providers](#providers)); OpenAI's are not yet.
 
-**Secret-safe projections.** Goals and answers containing credential material are refused, not rewritten.
+**Secret-safe projections.** Goals and answers containing credential material are refused, not rewritten, before
+anything is stored or sent: they are screened against every generation in use and the usable credentials stored
+for the configured providers (and, for an answer, the run's own credential slot). If a stored record cannot be
+read, input is refused as unscreenable rather than accepted.
 Credential material is located over the complete text — a whole file, or a whole assembled model message — and
 each occurrence is replaced by `[redacted credential]`, keeping line breaks so line numbers are unchanged. A
 private-key block is masked whole, delimiters and body; one without its matching `END` line (or with another
@@ -339,10 +356,58 @@ loop; the runtime only constrains what crosses into graph state and what is disp
   kept, admissions never confirmed as sent recorded unconfirmed) and runs whose cancellation was accepted as
   `cancelled`. Waiting and finished runs are unchanged. Nothing is resumed, retried or dispatched.
 
-Not yet connected: the API that starts runs, accepts answers and cancels. The service composes the provider
-assembly (`src/providers/assembly.ts`) that the API will use to build each invocation from a run's stored binding;
-until then it only reports provider readiness. Verification with provider-free models, including every crash window, is recorded in
+The run service (`src/service/runs.ts`) composes all of this for the API: it admits the workspace afresh for each
+start and continuation, builds each invocation from the run's stored binding through the provider assembly
+(`src/providers/assembly.ts`), and dispatches work in the background, so it never depends on the request — or any
+browser — that caused it. Verification with provider-free models, including every crash window, is recorded in
 [the G3 evidence (2026-09-30)](architecture/integration-evidence/mvp-01/g3-dispatch-lifecycle.md).
+
+## Browser console and API
+
+Open the console at the `RUNTIME_PUBLIC_ORIGIN` address from any device on your tailnet. It lists runs (goal,
+provider, status, start and last-activity times), starts a run, and shows one run: its status, budget
+(`consumed` of `maximum`, plus any `unconfirmed` admissions), provider and workspace, history with recorded times,
+the pending question, the final result or failure with its category and guidance, and a cancel button. Text from
+the model, tools and workspace is rendered as plain text; nothing from a run is interpreted as markup or loads
+external resources.
+
+You can close the page at any time — the run continues — and reopen it later: the console reads a snapshot,
+fills in history up to it, then follows the run's event stream from there. Whether the page is connected is shown
+separately from the run's status; a dropped connection never shows a run as finished or failed. Questions accept
+exactly the declared answer types: choices keep their JSON type (`false` is not `"false"`), text is sent as typed,
+and multiple choices as the selected values.
+
+The API (`/api/v1`, JSON only):
+
+| Route | Purpose |
+|---|---|
+| `GET /options` | Workspace label and availability, configured providers with their readiness, the default budget and any ceiling |
+| `GET`, `POST /runs` | List runs (newest first, paginated); start one with `{ requestId, goal, provider }` |
+| `GET /runs/:runId` | A consistent snapshot of one run and the last history event it includes (`throughSeq`) |
+| `GET /runs/:runId/events` | Committed history after a cursor, optionally up to a fixed bound |
+| `GET /runs/:runId/stream` | Server-sent events: replay after the cursor (`after`, or the browser's `Last-Event-ID`), then the live tail; a comment heartbeat every 15 seconds |
+| `POST /runs/:runId/questions/:questionId/answer` | `{ answer }` for that exact question |
+| `POST /runs/:runId/cancel` | `{ requestId }` |
+
+- **Idempotency.** Repeating a start with the same `requestId` and content returns the original run (`200`)
+  before any prerequisite is checked again, so a lost reply can always be retried; different content is a
+  conflict. An identical answer to an answered question is acknowledged (`200`) even after the run finished; a
+  different one is a conflict. Only the request that actually started a run, or had an answer accepted, dispatches
+  work. When a commit's outcome is unknown it is read back first; if that is impossible the reply is
+  `503 acceptance_unknown`, and repeating the same request is safe. The console keeps a start's or cancellation's
+  request ID until it gets a definite answer.
+- **Errors** are `{ error: { code, message, runId?, questionId?, retryable, acceptance } }`, where `acceptance` says
+  whether anything was recorded (`not_accepted`, `unknown`, `already_accepted`). Shape errors are `400`, Host/Origin
+  refusals `403`, unknown runs or questions `404`, conflicts, closed questions, unavailable providers or workspace and
+  confirmed continuation refusals `409`, and temporary unavailability `503` (which never records a failure).
+- **Replay** reads committed history from the database after the client's cursor, so a reconnect, or an event
+  recorded between a snapshot and its stream, is delivered exactly once. A cursor beyond recorded history is
+  `409 cursor_ahead`. If storage fails mid-stream, the stream sends an unsequenced `availability` notice and
+  closes without advancing the cursor. The stream is produced only as fast as it is read.
+- **Requests from elsewhere** are refused: a request must name the configured address (or loopback, for health
+  checks and in-container tools), and anything that changes state must also carry that same `Origin` (not `null`,
+  not another site). Forwarding headers are ignored, and no response grants cross-origin access. Responses carry a
+  restrictive content security policy and framing, referrer and sniffing protections.
 
 ## Providers
 
@@ -392,32 +457,52 @@ against a real provider in this runtime yet; live checks happen only with the ow
 
 `compose.yaml` defines three services:
 
-- **runtime** — the single application image (non-root, read-only root filesystem, all capabilities dropped).
-  It shares the Tailscale container's network namespace and listens only on `127.0.0.1:3000`. Writable
-  locations are the private `runtime-state` volume (`/var/lib/agent-runtime`, mode `0700`) and a bounded `/tmp`.
-  The owner workspace is mounted read-only at `/workspace`.
+- **runtime** — the single application image (non-root, read-only root filesystem, all capabilities dropped),
+  serving the console, the API and health endpoints. It shares the Tailscale container's network namespace and
+  listens only on `127.0.0.1:3000`. Writable locations are the private `runtime-state` volume
+  (`/var/lib/agent-runtime`, mode `0700`) and a bounded `/tmp`. The owner workspace is mounted read-only at
+  `/workspace`, and the operator configuration read-only at `/etc/agent-runtime/config.json`.
 - **tailscale** — Tailscale Serve proxies HTTPS to the runtime's loopback listener. Funnel is disabled and
   no ports are published. Userspace networking; state in its own volume.
 - **postgres** — PostgreSQL 17.11 on an internal network with no published port.
 
 All images are pinned by digest. The Docker build uses the repository root as context with an allowlisting
-`.dockerignore`, installs from the frozen lockfile, and copies only the built output into the runtime image.
+`.dockerignore`, installs from the frozen lockfile, bundles the server, operator command and console into
+`packages/runtime/dist/` (the console is bundled ahead of time from the UI package's HTML entry), and copies only
+that output into the runtime image. There is no separate frontend server.
 
 ```bash
-cp .env.example .env   # then set AGENT_RUNTIME_WORKSPACE and a generated, URL-safe POSTGRES_PASSWORD
+cp .env.example .env   # set the workspace, configuration path, tailnet name and a generated POSTGRES_PASSWORD
+cp deploy/runtime/config.example.json /path/to/config.json   # then choose the model; see Configuration
 docker compose up -d --build
 docker compose logs tailscale   # first start: open the printed login URL to join your tailnet
+docker compose exec -it runtime bun dist/auth.js anthropic login
 ```
 
-The real tailnet login and Serve HTTPS path have not yet been exercised; they are verified during the
-Anthropic acceptance block. Restrict the machine to your own devices with your tailnet access policy.
-Health endpoints:
-`/healthz` (liveness) and `/readyz` (persistence status; agent execution is reported as `not_implemented`).
+`AGENT_RUNTIME_PUBLIC_HOST` must be the full tailnet name Serve publishes (`<TS_HOSTNAME>.<your-tailnet>.ts.net`);
+the console only answers requests addressed to it. Restrict the machine to your own devices with your tailnet access
+policy. The real tailnet login, Serve HTTPS and access from a second device are verified in the live Anthropic trial.
+
+Health endpoints: `/healthz` (liveness) and `/readyz` — ready (`200`) only when persistence is ready, agent execution
+is configured and composed, and the console is loaded; each is reported in `checks`. Provider authorization is not
+part of readiness: an unauthorized provider is shown in the console and refuses starts.
+
+### Troubleshooting
+
+| Symptom | Cause and remedy |
+|---|---|
+| The console answers `403` | The address is not `RUNTIME_PUBLIC_ORIGIN`, or a change came from another page. Use exactly the configured tailnet name. |
+| Starting a run reports the provider unavailable | No usable authorization: run the `auth … login` command; `auth … status` shows the slot's state. |
+| Input is refused as unscreenable | A credential record cannot be read or is invalid. Check `auth … status`, and log in again. |
+| The page shows “Reconnecting” | The connection dropped; the run is unaffected and the page catches up when it reconnects. |
+| `503 acceptance_unknown` | Storage could not confirm a change. Repeat the same action; it cannot be applied twice. |
+| `/readyz` stays `503` | `checks` names the part that is not ready; persistence states are described under Persistence. |
 
 ## Limitations
 
-- There is no API or console yet, so no agent run can be started. Provider integrations are verified offline
-  only; OpenAI login is not implemented.
+- Nothing has been verified against a real provider yet: the Anthropic slice is verified with scripted
+  providers, and its live trial is pending. OpenAI login is not implemented, so OpenAI runs cannot be started.
+- No application accounts: anyone your tailnet policy admits to the machine can use the console.
 - No backup, retention or restore tooling; ordinary restarts preserve the database volume, nothing more.
 - Read-only mounts and path checks are not a sandbox against hostile processes on the host; the workspace is
   assumed to be owner-controlled.

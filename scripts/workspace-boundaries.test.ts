@@ -16,6 +16,14 @@ const runtimeDir = join(repoRoot, 'packages', 'runtime');
 const uiDir = join(repoRoot, 'packages', 'ui');
 const subscriptionDir = join(repoRoot, 'packages', 'anthropic-subscription');
 const subscriptionPackage = '@agent-runtime/anthropic-subscription';
+const contractsDir = join(repoRoot, 'packages', 'contracts');
+const contractsPackage = '@agent-runtime/contracts';
+// The contracts package is shared with the browser: pure schemas and validation, no platform or server access.
+const platformAccess: [string, RegExp][] = [
+  ['Bun API', /\bBun\s*\./],
+  ['process', /\bprocess\s*\./],
+  ['browser globals', /\b(?:window|document|localStorage|sessionStorage)\s*\./],
+];
 // The subscription package reaches the network only through its injected transport and has no ambient configuration.
 const ambientIo: [string, RegExp][] = [
   ['global fetch', /(?<![.\w])fetch\s*\(|globalThis\s*\.\s*fetch/],
@@ -69,6 +77,7 @@ describe('workspace import boundaries', () => {
   test('the expected runtime, UI and subscription packages exist', () => {
     expect(packages.map((pkg) => pkg.manifest.name)).toEqual([
       subscriptionPackage,
+      contractsPackage,
       '@agent-runtime/runtime',
       '@agent-runtime/ui',
     ]);
@@ -117,6 +126,35 @@ describe('workspace import boundaries', () => {
       (record) =>
         record.specifier.startsWith(subscriptionPackage) &&
         (!isWithin(runtimeDir, record.file) || record.specifier !== subscriptionPackage),
+    );
+    expect(violations.map(describeImport)).toEqual([]);
+  });
+
+  test('the contracts package imports only its own modules and its schema library', async () => {
+    const violations = (await importsOf(contractsDir)).filter((record) => {
+      if (record.specifier.startsWith('.') || record.specifier === 'zod') return false;
+      return !(/\.test\.ts$/.test(record.file) && record.specifier === 'bun:test');
+    });
+    expect(violations.map(describeImport)).toEqual([]);
+  });
+
+  test('the contracts package source uses no platform, server or browser API', async () => {
+    expect(platformAccess.some(([, pattern]) => pattern.test('Bun.file(path)'))).toBe(true);
+    expect(platformAccess.some(([, pattern]) => pattern.test('document.title'))).toBe(true);
+    const violations: string[] = [];
+    for (const file of listSourceFiles(join(contractsDir, 'src'))) {
+      if (/\.test\.ts$/.test(file)) continue;
+      const source = await Bun.file(file).text();
+      for (const [label, pattern] of [...ambientIo, ...platformAccess]) {
+        if (pattern.test(source)) violations.push(`${relative(repoRoot, file)}: ${label}`);
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  test('other packages import the contracts only through their public entry', async () => {
+    const violations = (await importsOf(join(repoRoot, 'packages'))).filter((record) =>
+      record.specifier.startsWith(`${contractsPackage}/`),
     );
     expect(violations.map(describeImport)).toEqual([]);
   });
@@ -308,6 +346,18 @@ describe('workspace dependency boundaries', () => {
       }
     }
     expect(violations).toEqual([]);
+  });
+
+  test('the contracts package depends on nothing but its schema library and nothing internal', () => {
+    const contracts = packages.find((pkg) => pkg.manifest.name === contractsPackage);
+    const declared = dependencyFields.flatMap((field) => Object.keys(contracts?.manifest[field] ?? {}));
+    expect(declared).toEqual(['zod']);
+  });
+
+  test('the console depends only on the contracts and React', () => {
+    const ui = packages.find((pkg) => pkg.manifest.name === '@agent-runtime/ui');
+    expect(Object.keys(ui?.manifest.dependencies ?? {}).sort()).toEqual([contractsPackage, 'react', 'react-dom']);
+    expect(Object.keys(ui?.manifest.devDependencies ?? {}).every((name) => name.startsWith('@types/'))).toBe(true);
   });
 
   test('only the runtime declares node-postgres', () => {

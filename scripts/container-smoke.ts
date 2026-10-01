@@ -15,11 +15,24 @@ const image = `agent-runtime/runtime:smoke-${id}`;
 const fixtureDir = mkdtempSync(join(tmpdir(), `${project}-`));
 const workspaceDir = join(fixtureDir, 'workspace');
 const envFile = join(fixtureDir, 'empty.env');
+const configFile = join(fixtureDir, 'config.json');
+const PUBLIC_HOST = 'agent-runtime.smoke.invalid';
 await Bun.write(join(workspaceDir, 'README.md'), 'synthetic workspace fixture\n');
 await Bun.write(envFile, '');
+await Bun.write(
+  configFile,
+  JSON.stringify({
+    version: 1,
+    workspace: { id: 'smoke', label: 'Smoke workspace', root: '/workspace' },
+    providers: { anthropic: { authMode: 'subscription', model: 'smoke-model', profileId: 'claude-cli-2.1.280' } },
+    defaultProvider: 'anthropic',
+  }),
+);
 
 const env = fixtureEnv(process.env, {
   AGENT_RUNTIME_WORKSPACE: workspaceDir,
+  AGENT_RUNTIME_CONFIG: configFile,
+  AGENT_RUNTIME_PUBLIC_HOST: PUBLIC_HOST,
   AGENT_RUNTIME_IMAGE: image,
   POSTGRES_PASSWORD: Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('hex'),
 });
@@ -58,11 +71,12 @@ const inspect = async (serviceName: string) =>
 const exec = (serviceName: string, ...cmd: string[]) => run([...composeSmoke, 'exec', '-T', serviceName, ...cmd], true);
 const netNamespace = async (serviceName: string) =>
   (await exec(serviceName, 'readlink', '/proc/self/ns/net')).stdout.trim();
-const fetchScript = (url: string) =>
-  `fetch(${JSON.stringify(url)}).then(async (r) => { console.log(r.status, await r.text()); }, () => process.exit(1))`;
+const fetchScript = (url: string, init: RequestInit = {}) =>
+  `fetch(${JSON.stringify(url)}, ${JSON.stringify(init)}).then(async (r) => { console.log(r.status, await r.text()); }, () => process.exit(1))`;
 
 interface ReadinessBody {
-  checks: { persistence: string; agentExecution: string };
+  ready: boolean;
+  checks: { persistence: string; agentExecution: string; console: string };
 }
 
 /** Polls readiness until persistence is ready, tolerating restarts; persistence starts after the listener. */
@@ -71,16 +85,21 @@ async function awaitPersistenceReady(timeoutMs: number): Promise<ReadinessBody> 
   let last = 'no response';
   while (Date.now() < deadline) {
     const ready = await exec('runtime', 'bun', '-e', fetchScript('http://127.0.0.1:3000/readyz'));
-    if (ready.stdout.startsWith('503 ')) {
+    if (ready.stdout.startsWith('503 ') || ready.stdout.startsWith('200 ')) {
       const body = JSON.parse(ready.stdout.slice(4)) as ReadinessBody;
       if (body.checks.persistence === 'ready') return body;
       last = body.checks.persistence;
-    } else if (ready.stdout.startsWith('200 ')) {
-      throw new Error('readiness reported ready before agent execution exists');
     }
     await Bun.sleep(1_000);
   }
   throw new Error(`persistence did not become ready (last: ${last})`);
+}
+
+/** One request from inside the runtime's namespace, as Serve would forward it: status and body. */
+async function request(path: string, init: RequestInit = {}) {
+  const result = await exec('runtime', 'bun', '-e', fetchScript(`http://127.0.0.1:3000${path}`, init));
+  const status = Number(result.stdout.slice(0, 3));
+  return { status, body: result.stdout.slice(4) };
 }
 
 const ownerEpoch = async () =>
@@ -149,20 +168,64 @@ try {
   await check('service state is not cross-mounted', async () => {
     const runtime = await inspect('runtime');
     const destinations = runtime.Mounts.map((mount) => mount.Destination).sort();
+    const expected = ['/etc/agent-runtime/config.json', '/var/lib/agent-runtime', '/workspace'];
     assert(
-      JSON.stringify(destinations) === JSON.stringify(['/tmp', '/var/lib/agent-runtime', '/workspace'].sort()) ||
-        JSON.stringify(destinations) === JSON.stringify(['/var/lib/agent-runtime', '/workspace'].sort()),
+      JSON.stringify(destinations) === JSON.stringify([...expected, '/tmp'].sort()) ||
+        JSON.stringify(destinations) === JSON.stringify(expected.sort()),
       `unexpected runtime mounts: ${destinations.join(', ')}`,
     );
     assert(runtime.Mounts.find((m) => m.Destination === '/workspace')?.RW === false, 'workspace mount is writable');
+    const config = runtime.Mounts.find((m) => m.Destination === '/etc/agent-runtime/config.json');
+    assert(config?.RW === false, 'configuration mount is writable');
   });
 
-  await check('loopback health and foundation readiness respond inside the namespace', async () => {
+  await check('loopback health and readiness respond inside the namespace', async () => {
     const health = await exec('runtime', 'bun', '-e', fetchScript('http://127.0.0.1:3000/healthz'));
     assert(health.stdout.startsWith('200 '), `healthz: ${health.stdout || health.stderr}`);
     const body = await awaitPersistenceReady(60_000);
-    assert(body.checks.agentExecution === 'not_implemented', 'readiness overstates agent execution');
+    assert(body.checks.agentExecution === 'ready' && body.checks.console === 'ready', 'execution or console not ready');
+    assert(body.ready, 'readiness does not report ready');
     assert((await ownerEpoch()) === '1', 'unexpected initial owner epoch');
+  });
+
+  await check('the console and API answer only the configured address and same-origin changes', async () => {
+    const publicHost = { host: PUBLIC_HOST };
+    const origin = `https://${PUBLIC_HOST}`;
+    const page = await request('/', { headers: publicHost });
+    assert(page.status === 200 && page.body.includes('<div id="root"></div>'), `console page: ${page.status}`);
+    assert((await request('/', { headers: { host: 'evil.example' } })).status === 403, 'forged Host accepted');
+    assert((await request('/api/v1/options', { headers: publicHost })).status === 200, 'options unavailable');
+    const start = (headers: Record<string, string>) =>
+      request('/api/v1/runs', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), goal: 'Smoke.', provider: 'anthropic' }),
+      });
+    for (const headers of [
+      publicHost,
+      { ...publicHost, origin: 'null' },
+      { ...publicHost, origin: 'https://evil.example' },
+    ]) {
+      assert((await start(headers)).status === 403, `a change was accepted from ${JSON.stringify(headers)}`);
+    }
+    // Same-origin and well-formed, but the provider has no authorization here: refused before any work.
+    const refused = await start({ ...publicHost, origin });
+    assert(refused.status === 409 && refused.body.includes('provider_unavailable'), `start: ${refused.status}`);
+  });
+
+  await check('only the console’s own files are served, never workspace, state or application files', async () => {
+    for (const path of [
+      '/README.md',
+      '/workspace/README.md',
+      '/var/lib/agent-runtime/credentials',
+      '/main.js',
+      '/execution-manifest.json',
+      '/../etc/passwd',
+    ]) {
+      const response = await request(path, { headers: { host: PUBLIC_HOST } });
+      assert(response.status === 404, `${path} answered ${response.status}`);
+      assert(!response.body.includes('synthetic workspace fixture'), `${path} exposed workspace content`);
+    }
   });
 
   await check('ordinary network peers cannot reach the runtime listener', async () => {

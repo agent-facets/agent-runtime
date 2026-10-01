@@ -85,6 +85,25 @@ describe('deployment topology', () => {
   });
 });
 
+describe('private browser access', () => {
+  test('the runtime accepts only the Serve address, configured from the same tailnet name', () => {
+    expect(runtime.environment?.RUNTIME_PUBLIC_ORIGIN).toBe(
+      ['https://', '$', '{AGENT_RUNTIME_PUBLIC_HOST:?set AGENT_RUNTIME_PUBLIC_HOST}'].join(''),
+    );
+    expect(runtime.environment?.RUNTIME_CONFIG_FILE).toBe('/etc/agent-runtime/config.json');
+  });
+
+  test('the example operator configuration is valid for the container paths', async () => {
+    const { parseOperatorConfig } = await import('../packages/runtime/src/config/operator.ts');
+    const source = await Bun.file(join(repoRoot, 'deploy', 'runtime', 'config.example.json')).text();
+    const config = parseOperatorConfig(source, {
+      stateDir: '/var/lib/agent-runtime',
+      configFile: '/etc/agent-runtime/config.json',
+    });
+    expect(config.workspace.root).toBe('/workspace');
+  });
+});
+
 describe('runtime container restrictions', () => {
   test('runs non-root with a read-only root filesystem and no added privileges', () => {
     expect(dockerfile).toMatch(/^USER bun$/m);
@@ -95,7 +114,11 @@ describe('runtime container restrictions', () => {
 
   test('writes only to private state and bounded scratch space', () => {
     const workspaceMount = ['$', '{AGENT_RUNTIME_WORKSPACE:?set AGENT_RUNTIME_WORKSPACE}:/workspace:ro'].join('');
-    expect(runtime.volumes).toEqual(['runtime-state:/var/lib/agent-runtime', workspaceMount]);
+    const configMount = [
+      '$',
+      '{AGENT_RUNTIME_CONFIG:?set AGENT_RUNTIME_CONFIG}:/etc/agent-runtime/config.json:ro',
+    ].join('');
+    expect(runtime.volumes).toEqual(['runtime-state:/var/lib/agent-runtime', workspaceMount, configMount]);
     expect(runtime.tmpfs).toEqual(['/tmp:rw,noexec,nosuid,size=64m']);
   });
 
@@ -122,6 +145,8 @@ describe('environment example', () => {
     for (const name of new Set(required)) expect(Object.keys(entries)).toContain(name as string);
     expect(entries).toEqual({
       AGENT_RUNTIME_WORKSPACE: '/absolute/path/to/workspace',
+      AGENT_RUNTIME_CONFIG: '/absolute/path/to/config.json',
+      AGENT_RUNTIME_PUBLIC_HOST: 'agent-runtime.your-tailnet.ts.net',
       POSTGRES_PASSWORD: 'replace-with-generated-password',
       TS_HOSTNAME: 'agent-runtime',
     });

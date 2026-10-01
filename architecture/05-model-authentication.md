@@ -92,8 +92,11 @@ The operator command is bundled into the application image (`bun dist/auth.js an
 right after a renewal is treated as definitive: the renewed generation is durably marked as needing
 reauthorization, so later runs fail with authorization guidance without dispatching.
 
-Not yet implemented: the API that starts runs through the assembly, the OpenAI device flow and refresh, and any
-live verification. Issuer rotation and local persistence cannot be one transaction: a crash between them can
+The browser API starts runs through the assembly and screens goals and answers against stored usable credentials
+before storing them. An optional deployment-wide `modelRequestCeiling` caps model requests across all runs (used
+by the bounded live trial).
+
+Not yet implemented: the OpenAI device flow and refresh, and any live verification. Issuer rotation and local persistence cannot be one transaction: a crash between them can
 require reauthorization.
 
 ## Historical design

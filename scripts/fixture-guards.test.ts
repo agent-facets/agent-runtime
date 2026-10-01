@@ -65,7 +65,7 @@ describe('launcher environment policy', () => {
     return { code: await proc.exited, stderr: await new Response(proc.stderr).text() };
   };
 
-  for (const script of ['scripts/run-integration.ts', 'scripts/container-smoke.ts']) {
+  for (const script of ['scripts/run-integration.ts', 'scripts/run-browser.ts', 'scripts/container-smoke.ts']) {
     test(`${script} refuses unsafe targets without starting anything`, async () => {
       for (const [args, env] of [
         [[], { DATABASE_URL: 'postgres://owner@127.0.0.1/agent_runtime' }],

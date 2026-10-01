@@ -27,7 +27,7 @@ and new invocations under a stale owner epoch.
 Mutations run in owner-fenced transactions (owner row share-locked, then the run row locked for update). Event
 sequences are allocated under the run lock, so sequence order is commit order, and are carried as decimal strings.
 Replaying a source key with the same event returns the original; different content is refused. Answers are validated against their question before acceptance
-(`packages/runtime/src/domain/questions.ts`): text is kept exactly and bounded in code points and 8 KiB of UTF-8;
+(`canonicalAnswer` in `packages/contracts`, shared with the console): text is kept exactly and bounded in code points and 8 KiB of UTF-8;
 choices compare by JSON type (`false` is not `"false"`); multiple selections are returned in the question's
 option order and duplicates are refused. Run creation is
 idempotent per request ID, and an uncertain commit is resolved by same-owner readback before anything is dispatched.
@@ -37,8 +37,8 @@ idempotency ledger and automatic recovery of active work.
 
 ## Phase 1 lifecycle (as built)
 
-Implemented in `packages/runtime/src/execution/` and `packages/runtime/src/records/run-store.ts`; verified with
-scripted, provider-free models (provider bindings arrive later).
+Implemented in `packages/runtime/src/execution/` and `packages/runtime/src/records/run-store.ts`, driven by the run
+service and API (`packages/runtime/src/service/`); verified with scripted models and scripted provider networks.
 
 **Two stores, separate commits.** Graph state is written by the official checkpointer; run records by Bun SQL. No
 transaction spans both, so the application records are the authority: a graph interrupt is not a question until
@@ -84,7 +84,17 @@ match the attempt rows. Attempt states: `reserved → dispatched → completed`,
 checkpoint namespace and ID, task, interrupt, ordinal, payload digest, required-state digest (saved channel values
 and versions, pending writes and tasks, in a canonical form that keeps message replay metadata) and the execution
 definition digest. Answer precedence: existence → recorded disposition (duplicates acknowledged, conflicts refused)
-→ answerability → answer constraints → continuation verification → conditional acceptance with readback.
+→ answerability → answer constraints and credential screening → continuation verification (with the workspace
+admitted afresh; a workspace that cannot be admitted now leaves the question pending) → provider readiness of the
+stored binding → conditional acceptance with readback.
+
+**Counters across runs.** An optional deployment-wide `modelRequestCeiling` counts every attempt not known to be
+unsent across all runs, under one transaction-scoped advisory lock taken by every admission; reaching it fails the
+run as `step_limit` (`request_ceiling_reached`).
+
+**Browser projections.** History events and run snapshots reach the browser as projections defined in
+`packages/contracts`: the state union without owner epochs, invocation or cancellation identities and binding
+digests; attempts without provider request IDs; answers without invocation identities.
 
 **Compatibility.** The execution definition is rebuilt for the run's stored binding and compared by exact digest:
 Bun version, package versions and integrity values used by the execution code, digests of that code (its own

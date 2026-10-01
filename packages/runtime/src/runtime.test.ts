@@ -6,6 +6,9 @@ import { parseOperatorConfig } from './config/operator.ts';
 import { CredentialStore } from './credentials/store.ts';
 import { startRuntime, statusForStartupFailure } from './runtime.ts';
 
+// The console's bundling is covered by console.test.ts; these tests start the runtime many times.
+const noConsole = async () => new Map();
+
 describe('runtime lifecycle', () => {
   test('maps startup failures to operator-visible readiness states', () => {
     expect(statusForStartupFailure('owned_elsewhere')).toBe('owned_elsewhere');
@@ -17,6 +20,7 @@ describe('runtime lifecycle', () => {
 
   test('runs without persistence when no database is configured and stops cleanly', async () => {
     const runtime = startRuntime({
+      loadConsole: noConsole,
       config: { port: 0, databaseUrl: undefined, stateDir: '/tmp/state', configFile: undefined },
       log: () => {},
     });
@@ -45,6 +49,7 @@ describe('runtime lifecycle', () => {
       const readiness = async () => {
         const lines: string[] = [];
         const runtime = startRuntime({
+          loadConsole: noConsole,
           config: { port: 0, databaseUrl: undefined, stateDir, configFile: undefined, operator },
           log: (line) => lines.push(line),
         });
@@ -94,6 +99,7 @@ describe('runtime lifecycle', () => {
   test('exits for restart when the database is unreachable at startup, without logging connection details', async () => {
     const lines: string[] = [];
     const runtime = startRuntime({
+      loadConsole: noConsole,
       config: {
         port: 0,
         databaseUrl: 'postgres://fixture:synthetic-secret@127.0.0.1:1/fixture',

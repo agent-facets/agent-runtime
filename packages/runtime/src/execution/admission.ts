@@ -8,7 +8,12 @@ import type { OwnerFence } from '../persistence/ownership.ts';
 import { type RunStore, RunStoreError } from '../records/run-store.ts';
 import { AdmissionRefused, type AdmissionTicket, type RequestAdmission } from './terminal.ts';
 
-export type AdmissionRefusal = 'cancelled' | 'not_dispatchable' | 'step_budget_exhausted' | 'ownership_lost';
+export type AdmissionRefusal =
+  | 'cancelled'
+  | 'not_dispatchable'
+  | 'step_budget_exhausted'
+  | 'request_ceiling_reached'
+  | 'ownership_lost';
 
 export interface RunAdmissionOptions {
   store: Pick<RunStore, 'reserveAttempt' | 'settleAttempt'>;
@@ -38,6 +43,7 @@ export function runAdmission(options: RunAdmissionOptions): RequestAdmission {
         } catch (error) {
           if (error instanceof RunStoreError) {
             if (error.code === 'budget_exhausted') throw new AdmissionRefused('step_budget_exhausted');
+            if (error.code === 'ceiling_reached') throw new AdmissionRefused('request_ceiling_reached');
             if (error.code === 'not_dispatchable' || error.code === 'run_finished') {
               throw new AdmissionRefused('not_dispatchable');
             }

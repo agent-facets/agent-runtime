@@ -11,8 +11,8 @@ recorded as an open question rather than resolved silently.
 > changes supersede these documents wherever they differ. Phase 1 is being built
 > as a Bun/Turborepo monorepo with separate `packages/runtime` and `packages/ui`
 > packages delivered as one Docker Compose application; LangChain `createAgent`
-> owns the agent loop. Only the development foundation exists so far — see the
-> root [README](../README.md) for what is actually implemented. Older
+> owns the agent loop, and a browser console with REST/SSE is the first client.
+> See the root [README](../README.md) for what is actually implemented. Older
 > crash-survival, memory-canonicality and delivery-order descriptions here are
 > historical intent, not current guarantees.
 
@@ -88,8 +88,8 @@ of them invalidates multiple documents.
 
 ## Status
 
-Pre-implementation. Only the development foundation exists (see the root
-[README](../README.md)). The repository also contains OpenSpec governance,
+Phase 1 of the MVP is being implemented; the root [README](../README.md) states
+what exists and what has been verified. The repository also contains OpenSpec governance,
 optional facet tooling configuration (`facets.json`), these documents, and the
 throwaway P0 spike harnesses under `spikes/`.
 

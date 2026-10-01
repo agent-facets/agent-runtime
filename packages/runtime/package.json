@@ -5,12 +5,14 @@
   "scripts": {
     "dev": "bun --hot src/main.ts",
     "start": "bun dist/main.js",
-    "build": "bun build src/main.ts src/auth.ts --target bun --outdir dist && bun src/build/write-code-manifest.ts dist",
+    "build": "bun build src/main.ts src/auth.ts --target bun --production --root .. --entry-naming '[name].[ext]' --outdir dist && bun src/build/write-code-manifest.ts dist",
     "typecheck": "tsc -p tsconfig.json",
     "test": "bun test"
   },
   "dependencies": {
     "@agent-runtime/anthropic-subscription": "workspace:*",
+    "@agent-runtime/contracts": "workspace:*",
+    "@agent-runtime/ui": "workspace:*",
     "@anthropic-ai/sdk": "0.122.0",
     "@langchain/anthropic": "1.5.11",
     "@langchain/core": "1.2.13",

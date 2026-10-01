@@ -1,4 +1,5 @@
 import type { RuntimeConfig } from './config.ts';
+import { type ConsoleFiles, loadConsole } from './console.ts';
 import { PersistenceError } from './persistence/errors.ts';
 import type { OwnershipOptions } from './persistence/ownership.ts';
 import { openPersistence, type Persistence } from './persistence/persistence.ts';
@@ -6,6 +7,8 @@ import { createProviderAssembly } from './providers/assembly.ts';
 import { RunStore } from './records/run-store.ts';
 import { formatDiagnostic } from './security/diagnostics.ts';
 import { type PersistenceStatus, startServer } from './server.ts';
+import { handleApi, type ServiceProvider } from './service/http.ts';
+import { RunService } from './service/runs.ts';
 
 export interface RuntimeHandle {
   readonly port: number;
@@ -22,6 +25,8 @@ export interface RuntimeOptions {
   /** Receives safe diagnostic lines (security/diagnostics.ts); never free text. */
   log?: (line: string) => void;
   ownership?: OwnershipOptions;
+  /** Loads the console's files; tests substitute a fixed set. */
+  loadConsole?: () => Promise<ConsoleFiles>;
 }
 
 /** The readiness state reported for a failed persistence startup. */
@@ -43,10 +48,34 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
     resolveStopped = resolve;
   });
 
-  const server = startServer({ port: options.config.port, persistenceStatus: () => status });
+  // The run service exists once persistence is ready and agent execution is configured; until then the API reports
+  // itself unavailable rather than accept anything.
+  let runs: RunService | undefined;
+  const services: ServiceProvider = () => {
+    if (runs !== undefined && status === 'ready') return runs;
+    return { unavailable: operator === undefined ? 'unconfigured' : status };
+  };
+  let consoleFiles: ConsoleFiles | undefined;
+  const server = startServer({
+    port: options.config.port,
+    persistenceStatus: () => status,
+    api: (request, server) => handleApi(request, services, server),
+    console: () => consoleFiles,
+    agentExecution: () =>
+      operator === undefined ? 'unconfigured' : 'unavailable' in services() ? 'unavailable' : 'ready',
+    ...(options.config.publicOrigin === undefined ? {} : { publicOrigin: options.config.publicOrigin }),
+  });
+  const consoleLoaded = (options.loadConsole ?? loadConsole)().then(
+    (files) => {
+      consoleFiles = files;
+    },
+    () => {
+      log(formatDiagnostic({ event: 'console_unavailable', operation: 'startup' }));
+    },
+  );
 
   // Provider integrations for configured providers. Readiness only reads stored credentials; nothing logs in,
-  // refreshes or sends inference here. The API that starts runs through them arrives with the console.
+  // refreshes or sends inference here.
   const operator = options.config.operator;
   const providers =
     operator === undefined
@@ -111,6 +140,20 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
                 count: reconciled.interrupted + reconciled.cancelled,
               }),
             );
+            const configFile = options.config.configFile;
+            if (operator !== undefined && providers !== undefined && configFile !== undefined) {
+              runs = new RunService({
+                operator,
+                locations: { stateDir: options.config.stateDir, configFile },
+                persistence: opened,
+                assembly: providers,
+                failStop: () => {
+                  log(formatDiagnostic({ event: 'fail_stop', operation: 'persistence' }));
+                  void stop(1);
+                },
+                log,
+              });
+            }
             if (opened.ownership.lost === undefined) status = 'ready';
           },
           (error: unknown) => {
@@ -126,7 +169,7 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
   return {
     port: server.port ?? options.config.port,
     status: () => status,
-    started: Promise.all([started, providersReported]).then(() => {}),
+    started: Promise.all([started, providersReported, consoleLoaded]).then(() => {}),
     stopped,
     stop,
   };

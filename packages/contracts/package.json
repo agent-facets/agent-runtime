@@ -1,0 +1,15 @@
+{
+  "name": "@agent-runtime/contracts",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "zod": "4.6.5"
+  }
+}

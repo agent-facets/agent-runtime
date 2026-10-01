@@ -3,10 +3,12 @@
 //   2. a question already answered is answered: an equal canonical answer is acknowledged (even if the run has
 //      since finished) and a different one is a conflict — no fresh check can invalidate the acknowledgement;
 //   3. a closed question, or a run not waiting on it, is not answerable;
-//   4. the answer satisfies the question's declared input;
+//   4. the answer satisfies the question's declared input, and contains no credential material (it is refused,
+//      never rewritten);
 //   5. continuation is verified without invoking the graph: a temporary inability to look changes nothing, while
 //      a confirmed missing, unusable or incompatible saved state closes the question and fails the run;
-//   6. acceptance is conditional on the run still waiting on the same question and binding. A race loser rereads
+//   6. the remaining prerequisites (for example, provider authorization) hold; if not, nothing changes;
+//   7. acceptance is conditional on the run still waiting on the same question and binding. A race loser rereads
 //      the winning disposition rather than continuing; an uncertain commit is resolved by same-owner readback.
 // Only an `accepted` result may be followed by exactly one resume, addressed to the saved interrupt.
 import { failureFor } from '../domain/failures.ts';
@@ -39,8 +41,12 @@ export type AnswerResult =
   | { kind: 'answer_conflict' }
   | { kind: 'not_answerable' }
   | { kind: 'answer_invalid'; code: AnswerErrorCode }
+  | { kind: 'credential_in_input' }
+  /** Credential screening could not be completed, so the answer could not be admitted. */
+  | { kind: 'screening_unavailable' }
   | { kind: 'continuation_unavailable'; problem: ContinuationProblem }
   | { kind: 'cannot_verify' }
+  | { kind: 'prerequisite_unavailable'; code: string }
   /** Storing the answer failed and readback confirmed it was not recorded: it was not accepted. */
   | { kind: 'storage_failed' }
   | { kind: 'acceptance_unknown' };
@@ -49,6 +55,10 @@ export interface AnswerDeps {
   store: Pick<RunStore, 'readQuestion' | 'acceptAnswer' | 'refuseContinuation' | 'withCommitCertainty' | 'snapshot'>;
   gates: KeyedSerializer;
   verify: VerifyContinuation;
+  /** Owner-input credential screening of the canonical answer. */
+  screen?: (question: RecordedQuestion, answer: Answer) => Promise<'clean' | 'credential' | 'unavailable'>;
+  /** Prerequisites checked after verification; a code means the answer is not accepted now. */
+  prerequisites?: (question: RecordedQuestion) => Promise<{ ok: true } | { ok: false; code: string }>;
 }
 
 const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
@@ -78,6 +88,11 @@ export async function submitAnswer(
       return { kind: 'not_answerable' };
     }
     if (!validated.ok) return { kind: 'answer_invalid', code: validated.code };
+    if (deps.screen !== undefined) {
+      const screened = await deps.screen(question, validated.answer).catch(() => 'unavailable' as const);
+      if (screened === 'credential') return { kind: 'credential_in_input' };
+      if (screened === 'unavailable') return { kind: 'screening_unavailable' };
+    }
 
     const check = await deps.verify(question);
     if (check.kind === 'unavailable') return { kind: 'cannot_verify' };
@@ -97,6 +112,10 @@ export async function submitAnswer(
         return { kind: 'cannot_verify' };
       }
       return { kind: 'continuation_unavailable', problem: check.problem };
+    }
+    if (deps.prerequisites !== undefined) {
+      const ready = await deps.prerequisites(question);
+      if (!ready.ok) return { kind: 'prerequisite_unavailable', code: ready.code };
     }
 
     const answer = validated.answer;

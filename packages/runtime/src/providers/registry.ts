@@ -74,6 +74,19 @@ export class ProviderRegistry {
     return { ok: true, binding: Object.freeze({ ...stored }) };
   }
 
+  /** Readiness of a stored binding (its own profile and credential slot), for continuing a paused run. */
+  async bindingReadiness(stored: ProviderBinding): Promise<ProviderReadiness> {
+    const resolution = this.reconstruct(stored);
+    if (!resolution.ok) return 'integration_unavailable';
+    const integration = this.#integrations.get(stored.provider);
+    if (integration === undefined) return 'integration_unavailable';
+    try {
+      return await integration.credentialReadiness(stored.credentialSlot);
+    } catch {
+      return 'temporarily_unavailable';
+    }
+  }
+
   async readiness(provider: Provider): Promise<ProviderReadiness> {
     const resolution = this.resolve(provider);
     if (!resolution.ok) {

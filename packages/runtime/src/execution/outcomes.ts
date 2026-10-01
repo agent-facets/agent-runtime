@@ -89,6 +89,7 @@ export function classifyInvocationFailure(error: unknown, provider: Provider): F
       return { kind: 'superseded' };
     case 'admission_refused':
       if (evidence.reason === 'step_budget_exhausted') return fail('step_budget_exhausted', provider);
+      if (evidence.reason === 'request_ceiling_reached') return fail('request_ceiling_reached', provider);
       if (evidence.reason === 'ownership_lost') return { kind: 'fail_stop' };
       return { kind: 'superseded' };
     case 'credential_unavailable':

@@ -1,3 +1,3 @@
-// Browser console package boundary. The console, its HTML entry and its React
-// dependencies are implemented in the console block after the pre-console gates.
-export {};
+// Public entry of the browser console package: its HTML entry, which the runtime imports to bundle and serve the
+// console as part of the one application. Nothing else of this package is server code.
+export { default } from './index.html';
