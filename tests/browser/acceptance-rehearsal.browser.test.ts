@@ -92,7 +92,8 @@ describe('acceptance trial rehearsal', () => {
     let page = await context.newPage();
     await page.goto(`${server.url}/#/runs/${runs.journey}`);
     await page.getByRole('form', { name: 'Answer the question' }).waitFor({ timeout: TIMEOUT });
-    expect(await page.getByText('mcp_Read').count()).toBeGreaterThan(0);
+    // The question comes from the run's snapshot; its history (including the read) follows.
+    await page.getByText('mcp_Read').first().waitFor({ timeout: TIMEOUT });
     await page.close();
 
     // The runtime restarts while both runs wait for answers.

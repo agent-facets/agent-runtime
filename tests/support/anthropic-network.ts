@@ -69,7 +69,9 @@ export interface SentInference {
  * Replies in order, or by what each request contains; an unscripted request fails the way a lost connection
  * would.
  */
-export function inferenceNetwork(replies: (() => Response)[] | ((request: SentInference) => Response)) {
+export function inferenceNetwork(
+  replies: (() => Response)[] | ((request: SentInference) => Response | Promise<Response>),
+) {
   const sent: SentInference[] = [];
   const fetchImpl = (async (_url: string, init: RequestInit) => {
     const request = { headers: Object.fromEntries(new Headers(init.headers)), body: JSON.parse(String(init.body)) };

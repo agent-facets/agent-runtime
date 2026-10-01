@@ -169,38 +169,42 @@ export function RunList({ client }: { client: ApiClient }) {
       {unavailable && <p className="notice uncertain">The run list cannot be refreshed right now.</p>}
       {runs !== undefined && runs.length === 0 && <p className="hint">No runs yet.</p>}
       {runs !== undefined && runs.length > 0 && (
-        <table className="runs">
-          <thead>
-            <tr>
-              <th>Goal</th>
-              <th>Provider</th>
-              <th>Status</th>
-              <th>Started</th>
-              <th>Last activity</th>
-              <th>Run</th>
-            </tr>
-          </thead>
-          <tbody>
-            {runs.map((run) => (
-              <tr key={run.runId}>
-                <td className="goal">
-                  <a href={runHref(run.runId)}>{run.goal}</a>
-                </td>
-                <td>
-                  {providerLabel(run.provider)} · {run.model}
-                </td>
-                <td>
-                  <span className={`status status-${run.status}`}>{STATE_LABELS[run.status]}</span>
-                </td>
-                <td title={run.createdAt}>{formatTime(run.createdAt)}</td>
-                <td title={run.lastActivityAt}>{formatTime(run.lastActivityAt)}</td>
-                <td className="id" title={run.runId}>
-                  {run.runId.slice(0, 8)}
-                </td>
+        <div className="table-scroll">
+          <table className="runs">
+            <thead>
+              <tr>
+                <th>Goal</th>
+                <th className="wide-only">Provider</th>
+                <th>Status</th>
+                <th className="wide-only">Started</th>
+                <th>Last activity</th>
+                <th className="wide-only">Run</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {runs.map((run) => (
+                <tr key={run.runId}>
+                  <td className="goal">
+                    <a href={runHref(run.runId)}>{run.goal}</a>
+                  </td>
+                  <td className="wide-only">
+                    {providerLabel(run.provider)} · {run.model}
+                  </td>
+                  <td>
+                    <span className={`status status-${run.status}`}>{STATE_LABELS[run.status]}</span>
+                  </td>
+                  <td className="wide-only" title={run.createdAt}>
+                    {formatTime(run.createdAt)}
+                  </td>
+                  <td title={run.lastActivityAt}>{formatTime(run.lastActivityAt)}</td>
+                  <td className="id wide-only" title={run.runId}>
+                    {run.runId.slice(0, 8)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
       {next !== undefined && (
         <button type="button" className="secondary" onClick={() => void more()}>

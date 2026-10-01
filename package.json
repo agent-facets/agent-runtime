@@ -22,6 +22,7 @@
     "test:integration": "bun --no-env-file scripts/run-integration.ts",
     "test:container": "bun --no-env-file scripts/container-smoke.ts",
     "test:browser": "bun --no-env-file scripts/run-browser.ts",
+    "console:offline": "bun --no-env-file scripts/run-console-offline.ts",
     "acceptance:anthropic": "bun --no-env-file scripts/acceptance-anthropic.ts",
     "browser:install": "bun --bun node_modules/playwright/cli.js install chromium-headless-shell",
     "provenance:anthropic": "bun --no-env-file scripts/verify-anthropic-provenance.ts"

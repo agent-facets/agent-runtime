@@ -26,6 +26,8 @@ export async function consoleServer(options: {
   replies: Parameters<typeof inferenceNetwork>[0];
   /** Operator settings merged over the defaults (for example a trial's budget and ceiling). */
   operator?: Record<string, unknown>;
+  /** Listening port; 0 (the default) picks a free one. */
+  port?: number;
 }) {
   const base = join(options.scratch, `server-${++counter}`);
   const stateDir = join(base, 'state');
@@ -81,7 +83,7 @@ export async function consoleServer(options: {
       api: (request, srv) => handleApi(request, () => service, srv, timing),
       console: () => loaded,
     });
-  let server = listen(0);
+  let server = listen(options.port ?? 0);
   const port = server.port as number;
   return {
     url: `http://127.0.0.1:${port}`,
