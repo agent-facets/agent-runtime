@@ -9,6 +9,6 @@
     "worktrunk": "0.1.0",
     "graphite": "0.1.0",
     "voice-to-text": "1.1.1",
-    "chrome-devtools": "1.7.3"
+    "chrome-devtools-headless": "1.0.1"
   }
 }
