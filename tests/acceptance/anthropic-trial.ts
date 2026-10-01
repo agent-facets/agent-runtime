@@ -1,5 +1,5 @@
 // The bounded Anthropic acceptance trial (task 12.8), shared by its offline rehearsal (scripted provider, the
-// browser suite) and the live trial the owner runs after fresh authorization (task 12.11). Both use the same
+// browser suite) and the live trial the owner runs after fresh authorization (task 12.20). Both use the same
 // fixture content, the same two runs and the same pass conditions; only the provider behind the runtime differs.
 //
 // The cap is enforced by the runtime itself, not by this tooling: the trial deployment's configuration sets each

@@ -32,8 +32,9 @@ Implemented so far (`packages/runtime/src/providers/`, `packages/runtime/src/cre
   at each boundary).
 - **Coordination.** An in-process single flight per slot, plus a provider-scoped kernel `flock` held by the Bun
   process itself (acquired through the image's `/usr/bin/flock` on an inherited descriptor) and shared with operator
-  login. The lock covers reread → issuer refresh → partial merge → durable replacement, and login holds it for its
-  whole flow. Verified with two Bun processes: 64 concurrent callers produce one refresh; a refresh waiting behind a
+  login. The lock covers reread → issuer refresh → partial merge → durable replacement, and the terminal login holds
+  it for its whole flow (including the owner's browser step). A console login takes it only once the code has
+  arrived, for the exchange and the write. Verified with two Bun processes: 64 concurrent callers produce one refresh; a refresh waiting behind a
   login adopts it; a login waiting behind a refresh is written after it; a dead holder releases the lock; a paused
   one keeps it. A negative control without the lock produced two refreshes. A caller that is already cancelled
   (including one cancelled while the record is read, or during lock setup) starts no issuer call and launches no
@@ -87,6 +88,16 @@ function calls with matching IDs, token and account from one credential generati
 would honor them). The spike measured Node's `fetch` adding headers no caller can remove and chose `node:http`;
 Bun's `fetch` does not add them (a loopback capture test pins this), so the runtime uses Bun's `fetch` and the
 `node:http` path is not used.
+
+**Console login (design Decision 16).** The owner connects Anthropic from the browser: the console starts an
+attempt, links to the same PKCE authorization URL, and posts the code Anthropic's fixed callback page shows to
+`/api/v1/auth/anthropic/complete`. Attempts live only in the runtime's memory (ten-minute lifetime, one unfinished
+at a time, at most 32 retained); the verifier and OAuth state stay on the server. Waiting for the code holds no
+lock. On arrival the code is checked against the attempt's state (a paste from another sign-in is refused before
+anything is sent), the attempt is claimed, and the existing `loginAnthropic` runs once under the provider lock. A
+claimed attempt's failure is final — rejected, throttled, unknown outcome, lock busy or not stored — and its code is
+never sent again; success is reported only after durable replacement. Shutdown aborts an unfinished exchange and
+waits for its lock to be released. The terminal command remains as a fallback.
 
 The operator command is bundled into the application image (`bun dist/auth.js anthropic login|status`). A 401
 right after a renewal is treated as definitive: the renewed generation is durably marked as needing

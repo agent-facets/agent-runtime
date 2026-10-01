@@ -28,6 +28,10 @@ export async function consoleServer(options: {
   operator?: Record<string, unknown>;
   /** Listening port; 0 (the default) picks a free one. */
   port?: number;
+  /** Store the synthetic credential (the default), or start with Anthropic needing a login. */
+  credential?: boolean;
+  /** Token endpoint replies, for console logins. */
+  tokens?: Response[];
 }) {
   const base = join(options.scratch, `server-${++counter}`);
   const stateDir = join(base, 'state');
@@ -42,25 +46,28 @@ export async function consoleServer(options: {
   });
   writeFileSync(configFile, source);
   const operator = parseOperatorConfig(source, { stateDir, configFile });
-  await CredentialStore.forStateDir(stateDir).replace({
-    version: 1,
-    provider: 'anthropic',
-    authMode: 'subscription',
-    slot: 'default',
-    generation: 1,
-    updatedAtMs: Date.now(),
-    lifecycle: 'usable',
-    accessToken: SYNTHETIC_ACCESS,
-    refreshToken: SYNTHETIC_REFRESH,
-    expiresAtMs: Date.now() + 3_600_000,
-    account: {},
-  });
+  if (options.credential !== false) {
+    await CredentialStore.forStateDir(stateDir).replace({
+      version: 1,
+      provider: 'anthropic',
+      authMode: 'subscription',
+      slot: 'default',
+      generation: 1,
+      updatedAtMs: Date.now(),
+      lifecycle: 'usable',
+      accessToken: SYNTHETIC_ACCESS,
+      refreshToken: SYNTHETIC_REFRESH,
+      expiresAtMs: Date.now() + 3_600_000,
+      account: {},
+    });
+  }
   const net = inferenceNetwork(options.replies);
+  const tokens = tokenNetwork(options.tokens);
   const assembly = createProviderAssembly({
     config: operator,
     stateDir,
     inferenceTransport: net.fetchImpl,
-    authTransport: tokenNetwork().fetchImpl,
+    authTransport: tokens.fetchImpl,
   });
   const logs: string[] = [];
   const service = new RunService({
@@ -89,6 +96,8 @@ export async function consoleServer(options: {
     url: `http://127.0.0.1:${port}`,
     service,
     net,
+    /** Token endpoint requests: the witness of every login exchange. */
+    tokens,
     /** Every diagnostic line the service wrote. */
     logs,
     /** Closes every connection (as a proxy or network failure would) and listens again shortly after. */
@@ -99,6 +108,7 @@ export async function consoleServer(options: {
     },
     async stop() {
       await server.stop(true);
+      await service.login.stop();
       await service.settled();
     },
   };

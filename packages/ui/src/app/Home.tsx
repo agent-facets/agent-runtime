@@ -3,6 +3,7 @@ import type { Options, Provider, RunSummary } from '@agent-runtime/contracts';
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import type { ApiClient } from '../api/client.ts';
 import { RequestIdentity } from '../api/requests.ts';
+import { ConnectAnthropic } from './Connect.tsx';
 import { formatTime, providerLabel, STATE_LABELS } from './format.ts';
 import { runHref } from './route.ts';
 
@@ -28,19 +29,24 @@ export function StartForm({ client }: { client: ApiClient }) {
   const [notice, setNotice] = useState<Notice>();
   const identity = useRef(new RequestIdentity<{ goal: string; provider: Provider }>());
 
-  useEffect(() => {
-    let live = true;
-    void client.options().then((outcome) => {
-      if (!live) return;
-      if (outcome.ok) {
-        setOptions(outcome.value);
-        setProvider((current) => current ?? outcome.value.defaultProvider);
-      } else setOptionsError(true);
-    });
-    return () => {
-      live = false;
-    };
+  const live = useRef(true);
+  const loadOptions = useCallback(async () => {
+    const outcome = await client.options();
+    if (!live.current) return;
+    if (outcome.ok) {
+      setOptionsError(false);
+      setOptions(outcome.value);
+      setProvider((current) => current ?? outcome.value.defaultProvider);
+    } else setOptionsError(true);
   }, [client]);
+
+  useEffect(() => {
+    live.current = true;
+    void loadOptions();
+    return () => {
+      live.current = false;
+    };
+  }, [loadOptions]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -117,10 +123,18 @@ export function StartForm({ client }: { client: ApiClient }) {
         {selected !== undefined && selected.readiness !== 'ready' && (
           <p className="notice error">
             {providerLabel(selected.provider)} is not ready ({selected.readiness.replaceAll('_', ' ')}).
+            {selected.provider === 'anthropic' &&
+              selected.readiness === 'reauthorization_required' &&
+              ' Connect it below.'}
           </p>
         )}
         {notice !== undefined && <p className={`notice ${notice.tone}`}>{notice.text}</p>}
       </form>
+      {/* Its own form, outside the task form: the code is never part of a task. */}
+      {selected?.provider === 'anthropic' &&
+        (selected.readiness === 'ready' || selected.readiness === 'reauthorization_required') && (
+          <ConnectAnthropic client={client} readiness={selected.readiness} onConnected={() => void loadOptions()} />
+        )}
     </section>
   );
 }

@@ -3,13 +3,18 @@
 // signal is never passed on: closing a connection cannot stop or change a run.
 import {
   API_PREFIX,
+  AUTH_BODY_MAX_BYTES,
+  attemptCommandSchema,
+  beginLoginSchema,
   type CommandErrorCode,
+  completeLoginSchema,
   type ErrorCode,
   parseAnswerSubmission,
   parseCancelRun,
   parseStartRun,
   REQUEST_BODY_MAX_BYTES,
 } from '@agent-runtime/contracts';
+import { FAILURE_MESSAGES, type LoginOutcome } from './auth.ts';
 import { type ApiResult, type RunService, refusal } from './runs.ts';
 import { openEventStream, type StreamTiming } from './stream.ts';
 
@@ -39,9 +44,11 @@ type Route =
   | { name: 'events'; runId: string }
   | { name: 'stream'; runId: string }
   | { name: 'answer'; runId: string; questionId: string }
-  | { name: 'cancel'; runId: string };
+  | { name: 'cancel'; runId: string }
+  | { name: 'login'; action: 'begin' | 'complete' | 'status' | 'cancel' };
 
 const ALLOWED: Record<Route['name'], 'GET' | 'POST' | 'GET, POST'> = {
+  login: 'POST',
   options: 'GET',
   runs: 'GET, POST',
   run: 'GET',
@@ -63,7 +70,28 @@ const ROUTES: [RegExp, (match: RegExpExecArray) => Route][] = [
     (m) => ({ name: 'answer', runId: m[1] as string, questionId: m[2] as string }),
   ],
   [new RegExp(`^/runs/${SEGMENT}/cancel$`), (m) => ({ name: 'cancel', runId: m[1] as string })],
+  [
+    /^\/auth\/anthropic\/(begin|complete|status|cancel)$/,
+    (m) => ({ name: 'login', action: m[1] as 'begin' | 'complete' | 'status' | 'cancel' }),
+  ],
 ];
+
+/** A login outcome as an API result. Attempt states are reported, not refused: a failed login is an answer. */
+function loginResponse(outcome: LoginOutcome): ApiResult {
+  switch (outcome.kind) {
+    case 'unconfigured':
+      return refusal('provider_unavailable', 'Anthropic is not configured for this runtime.');
+    case 'not_found':
+      return refusal(
+        'not_found',
+        'That login is no longer known (it expired, or the runtime restarted). Check the connection status, then start a new login.',
+      );
+    case 'code_mismatch':
+      return refusal('invalid_request', FAILURE_MESSAGES.code_mismatch);
+    case 'attempt':
+      return { status: outcome.attempt.state === 'completing' ? 202 : 200, body: outcome.attempt };
+  }
+}
 
 function route(pathname: string): Route | undefined {
   if (!pathname.startsWith(`${API_PREFIX}/`)) return undefined;
@@ -76,14 +104,17 @@ function route(pathname: string): Route | undefined {
 }
 
 /** Reads a JSON body no larger than the API limit; refuses other content types, oversized and malformed bodies. */
-async function readJson(request: Request): Promise<{ ok: true; value: unknown } | { ok: false; result: ApiResult }> {
+async function readJson(
+  request: Request,
+  maxBytes: number,
+): Promise<{ ok: true; value: unknown } | { ok: false; result: ApiResult }> {
   const type = request.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
   if (type !== 'application/json') {
     return { ok: false, result: refusal('json_required', 'Requests that change anything must be JSON.') };
   }
   const tooLarge = { ok: false as const, result: refusal('request_too_large', 'The request body is too large.') };
   const declared = request.headers.get('content-length');
-  if (declared !== null && (!/^\d{1,12}$/.test(declared) || Number(declared) > REQUEST_BODY_MAX_BYTES)) return tooLarge;
+  if (declared !== null && (!/^\d{1,12}$/.test(declared) || Number(declared) > maxBytes)) return tooLarge;
   const chunks: Uint8Array[] = [];
   let total = 0;
   if (request.body !== null) {
@@ -92,7 +123,7 @@ async function readJson(request: Request): Promise<{ ok: true; value: unknown } 
       const { done, value } = await reader.read();
       if (done) break;
       total += value.byteLength;
-      if (total > REQUEST_BODY_MAX_BYTES) {
+      if (total > maxBytes) {
         await reader.cancel().catch(() => {});
         return tooLarge;
       }
@@ -134,7 +165,7 @@ export async function handleApi(
 
   let body: unknown;
   if (method === 'POST') {
-    const read = await readJson(request);
+    const read = await readJson(request, target.name === 'login' ? AUTH_BODY_MAX_BYTES : REQUEST_BODY_MAX_BYTES);
     if (!read.ok) return jsonResponse(read.result);
     body = read.value;
   }
@@ -188,6 +219,29 @@ export async function handleApi(
       const command = parseCancelRun(body);
       if (!command.ok) return jsonResponse(refusal('invalid_request', COMMAND_ERRORS.invalid_request.message));
       return jsonResponse(await service.cancel(target.runId, command.value.requestId));
+    }
+    case 'login':
+      return jsonResponse(await login(service, target.action, body));
+  }
+}
+
+/** The authentication operations. A malformed request is refused before any attempt is touched. */
+async function login(service: RunService, action: 'begin' | 'complete' | 'status' | 'cancel', body: unknown) {
+  const invalid = refusal('invalid_request', COMMAND_ERRORS.invalid_request.message);
+  switch (action) {
+    case 'begin':
+      return beginLoginSchema.safeParse(body).success ? loginResponse(await service.login.start()) : invalid;
+    case 'complete': {
+      const command = completeLoginSchema.safeParse(body);
+      if (!command.success) return invalid;
+      return loginResponse(await service.login.complete(command.data.attemptId, command.data.code));
+    }
+    case 'status':
+    case 'cancel': {
+      const command = attemptCommandSchema.safeParse(body);
+      if (!command.success) return invalid;
+      const { attemptId } = command.data;
+      return loginResponse(action === 'status' ? service.login.status(attemptId) : service.login.cancel(attemptId));
     }
   }
 }

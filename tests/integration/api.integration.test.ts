@@ -54,6 +54,7 @@ let counter = 0;
 interface Harness {
   service: RunService;
   net: ReturnType<typeof inferenceNetwork>;
+  tokens: ReturnType<typeof tokenNetwork>;
   stateDir: string;
   failStops: number;
   call(
@@ -73,6 +74,8 @@ async function harness(
     credential?: boolean;
     store?: (base: RunStore) => RunStore;
     admit?: RunServiceOptions['admit'];
+    /** Token endpoint replies, for console logins. */
+    tokens?: Response[];
   } = {},
 ): Promise<Harness> {
   const base = join(scratch, `case-${++counter}`);
@@ -104,15 +107,17 @@ async function harness(
     });
   }
   const net = inferenceNetwork(options.replies ?? []);
+  const tokens = tokenNetwork(options.tokens);
   const assembly = createProviderAssembly({
     config: operator,
     stateDir,
     inferenceTransport: net.fetchImpl,
-    authTransport: tokenNetwork().fetchImpl,
+    authTransport: tokens.fetchImpl,
   });
   const store = new RunStore(persistence.app, persistence.ownership);
   const h: Harness = {
     net,
+    tokens,
     stateDir,
     failStops: 0,
     service: undefined as unknown as RunService,
@@ -684,5 +689,86 @@ describe('reading runs and history', () => {
     }));
     expect(unavailable.status).toBe(503);
     expect(((await unavailable.json()) as Body).error).toMatchObject({ code: 'service_unavailable', retryable: true });
+  });
+});
+
+describe('connecting Anthropic from the console', () => {
+  const LOGIN = '/api/v1/auth/anthropic';
+  const NEW_ACCESS = 'sk-ant-oat01-api-suite-console-login-access';
+  const NEW_REFRESH = 'sk-ant-ort01-api-suite-console-login-refresh';
+  const CODE = 'synthetic-console-login-code';
+  const pastedFor = (url: string) => `${CODE}#${new URL(url).searchParams.get('state')}`;
+
+  test('begin, paste the code, connected: readiness changes and no run or model request is made', async () => {
+    const granted = Response.json({ access_token: NEW_ACCESS, refresh_token: NEW_REFRESH, expires_in: 3600 });
+    const h = await harness({ credential: false, tokens: [granted] });
+    const before = await h.call('GET', '/api/v1/options');
+    expect(before.body.providers[0].readiness).toBe('reauthorization_required');
+
+    const begun = await h.call('POST', `${LOGIN}/begin`, {});
+    expect(begun.status).toBe(200);
+    expect(begun.body).toMatchObject({ provider: 'anthropic', state: 'awaiting_code' });
+    expect(new URL(begun.body.authorizationUrl).origin).toBe('https://claude.ai');
+    expect(h.tokens.sent).toEqual([]);
+
+    const done = await h.call('POST', `${LOGIN}/complete`, {
+      attemptId: begun.body.attemptId,
+      code: pastedFor(begun.body.authorizationUrl),
+    });
+    expect([done.status, done.body.state]).toEqual([200, 'connected']);
+    expect((await h.call('GET', '/api/v1/options')).body.providers[0].readiness).toBe('ready');
+    // A repeated completion reports the outcome without another exchange.
+    const again = await h.call('POST', `${LOGIN}/complete`, {
+      attemptId: begun.body.attemptId,
+      code: pastedFor(begun.body.authorizationUrl),
+    });
+    expect(again.body.state).toBe('connected');
+    expect(h.tokens.sent).toHaveLength(1);
+    expect(h.net.sent).toEqual([]);
+    for (const body of [begun.body, done.body, again.body]) {
+      const text = JSON.stringify(body);
+      for (const secret of [CODE, NEW_ACCESS, NEW_REFRESH]) expect(text).not.toContain(secret);
+    }
+  });
+
+  test('refusals: malformed requests, foreign codes, unknown attempts and wrong methods change nothing', async () => {
+    const h = await harness({ credential: false });
+    const begun = await h.call('POST', `${LOGIN}/begin`, {});
+    const attemptId = begun.body.attemptId as string;
+    const refused = async (body: unknown, path = 'complete', headers?: Record<string, string>) =>
+      (await h.call('POST', `${LOGIN}/${path}`, body, headers)).body.error.code;
+    expect(await refused({ attemptId, code: 'x', extra: true })).toBe('invalid_request');
+    expect(await refused({ attemptId, code: '' })).toBe('invalid_request');
+    expect(await refused({ attemptId: 'not-a-uuid', code: 'x' })).toBe('invalid_request');
+    expect(await refused({ slot: 'other' }, 'begin')).toBe('invalid_request');
+    expect(await refused({ attemptId, code: 'x'.repeat(40_000) })).toBe('request_too_large');
+    expect(await refused(`attemptId=${attemptId}`, 'complete', { 'content-type': 'text/plain' })).toBe('json_required');
+    const foreign = await h.call('POST', `${LOGIN}/complete`, { attemptId, code: `${CODE}#${'f'.repeat(32)}` });
+    expect(foreign.status).toBe(400);
+    expect(JSON.stringify(foreign.body)).not.toContain(CODE);
+    expect((await h.call('POST', `${LOGIN}/status`, { attemptId: crypto.randomUUID() })).status).toBe(404);
+    expect((await h.call('GET', `${LOGIN}/begin`)).status).toBe(405);
+    expect((await h.call('POST', `${LOGIN}/status`, { attemptId })).body.state).toBe('awaiting_code');
+    expect((await h.call('POST', `${LOGIN}/cancel`, { attemptId })).body.state).toBe('cancelled');
+    expect(h.tokens.sent).toEqual([]);
+  });
+
+  test('every login response is uncacheable', async () => {
+    const h = await harness({ credential: false });
+    for (const [path, body] of [
+      ['begin', {}],
+      ['status', { attemptId: crypto.randomUUID() }],
+      ['complete', { nope: 1 }],
+    ] as const) {
+      const response = await handleApi(
+        new Request(`http://127.0.0.1:3000${LOGIN}/${path}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        }),
+        () => h.service,
+      );
+      expect(response.headers.get('cache-control')).toBe('no-store');
+    }
   });
 });

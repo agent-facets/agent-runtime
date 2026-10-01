@@ -16,7 +16,10 @@ events for the browser console. Remote MCP, A2A, identity headers, app capabilit
   headers are ignored.
 - **REST** under `/api/v1`: options, run list/start/detail, history pages, answers and cancellation, with
   idempotent request IDs, explicit acceptance states (`not_accepted`, `unknown`, `already_accepted`) and
-  disposition-first answers.
+  disposition-first answers. Connecting Anthropic uses four POST operations under `/api/v1/auth/anthropic/`
+  (begin, complete, status, cancel) behind the same Host/Origin checks, with a 32 KiB body limit and `no-store`
+  responses; the pasted authorization code is the only secret any request carries, and no response contains it.
+  Anthropic's sign-in returns to its own callback page, not to this runtime, so no callback route exists.
 - **SSE replay is real storage, not free.** Each event is a committed database row with a per-run decimal sequence,
   allocated in the same transaction as the change it records. A stream replays rows after the client's cursor (the
   snapshot's `throughSeq`, or `Last-Event-ID` on reconnect) and then tails the run by querying again; there is no

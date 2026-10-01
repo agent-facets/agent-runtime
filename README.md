@@ -3,13 +3,14 @@
 A personal agent runtime: start a repository task from a browser, leave, return, answer the agent's
 questions, and collect the result using an existing Anthropic or OpenAI subscription.
 
-> **Status: the Anthropic browser slice is built and verified offline; nothing has run against a real provider
-> yet.** The [browser console](#browser-console-and-api), its REST/SSE API, controlled agent execution (see
+> **Status: the Anthropic browser slice works against a real Claude subscription** (local trial, 2026-09-30; see
+> [G4 live](architecture/integration-evidence/mvp-01/g4-anthropic-live.md)). The
+> [browser console](#browser-console-and-api), its REST/SSE API, controlled agent execution (see
 > [Agent execution](#agent-execution)), PostgreSQL persistence, the confined read/search tools, credential storage
-> and the [providers](#providers) exist: Anthropic subscription login and inference, and the OpenAI inference
+> and the [providers](#providers) exist: Anthropic subscription login (from the console or a terminal) and inference, and the OpenAI inference
 > transport (not yet usable: no OpenAI login). They are verified against scripted provider networks, including
-> real-browser journeys. The live Anthropic trial (gate G4), OpenAI login and the remaining acceptance work are
-> delivered by the remaining tasks in
+> real-browser journeys, and the Anthropic journey also live. A real token renewal, the Tailscale/second-device
+> path, OpenAI login and the remaining acceptance work are delivered by the remaining tasks in
 > [`openspec/changes/mvp-01-interactive-agent-execution`](openspec/changes/mvp-01-interactive-agent-execution/tasks.md).
 
 Further reading:
@@ -372,6 +373,12 @@ the pending question, the final result or failure with its category and guidance
 the model, tools and workspace is rendered as plain text; nothing from a run is interpreted as markup or loads
 external resources.
 
+**Connecting Anthropic.** When Anthropic needs authorization, the start form says so and offers **Connect
+Anthropic**: open Anthropic's sign-in in a new tab, approve access with your Claude account, then copy the code
+Anthropic shows and paste it into the console's code field. The provider then shows as ready, with no terminal and
+without starting a task; **Reconnect** replaces a working authorization the same way. Details under
+[Providers](#providers).
+
 You can close the page at any time — the run continues — and reopen it later: the console reads a snapshot,
 fills in history up to it, then follows the run's event stream from there. Whether the page is connected is shown
 separately from the run's status; a dropped connection never shows a run as finished or failed. Questions accept
@@ -389,6 +396,9 @@ The API (`/api/v1`, JSON only):
 | `GET /runs/:runId/stream` | Server-sent events: replay after the cursor (`after`, or the browser's `Last-Event-ID`), then the live tail; a comment heartbeat every 15 seconds |
 | `POST /runs/:runId/questions/:questionId/answer` | `{ answer }` for that exact question |
 | `POST /runs/:runId/cancel` | `{ requestId }` |
+| `POST /auth/anthropic/begin` | `{}`: start connecting Anthropic, or return the login already in progress, with Anthropic's sign-in URL |
+| `POST /auth/anthropic/complete` | `{ attemptId, code }`: exchange the pasted code once; `202` while it is still completing |
+| `POST /auth/anthropic/status`, `…/cancel` | `{ attemptId }`: read a login's state, or close one still waiting for its code |
 
 - **Idempotency.** Repeating a start with the same `requestId` and content returns the original run (`200`)
   before any prerequisite is checked again, so a lost reply can always be retried; different content is a
@@ -428,8 +438,22 @@ and billing blocks, with the runtime's native tool names unchanged; a conversati
 because the billing block derives from it. A client-version rejection fails the run as an unsupported
 model/profile; updating the profile is a reviewed package change with a new profile ID.
 
-Log in from a private terminal. The command prints a URL to open in a browser on any device, then reads the
-pasted code; it shares the runtime's credential lock, so it can run while the service is up:
+**Log in from the console** (the normal way): **Connect Anthropic** on the start form opens Anthropic's sign-in
+in a new tab. Anthropic's page then shows a code (its fixed callback page, not a redirect back to the console);
+paste it into the console's code field. How it behaves:
+
+- A login waits up to ten minutes for its code. While it waits it holds no credential lock, so runs and renewals
+  continue. Pressing Connect again (after a reload, say) returns the same login rather than starting a second one.
+- The code is exchanged **once**. A code from a different sign-in is refused before anything is sent; after that,
+  a refusal, a throttle or an exchange whose outcome is unknown ends the login, and a new login is needed. A code
+  that may have been used is never sent again. Only after the new authorization is durably stored does the console
+  say connected; an unsuccessful login leaves any earlier authorization as it was.
+- Unfinished logins live only in the runtime's memory: a restart forgets them (saved authorization is unaffected).
+- The code goes only to the login endpoint. It never becomes part of a task, history, logs or browser storage, and
+  responses never echo it. Token values stay on the server; the browser sees only the login's state.
+
+**Or from a terminal** (fallback). The command prints the same URL and reads the pasted code; it shares the
+runtime's credential lock, so it can run while the service is up:
 
 ```bash
 docker compose exec -it runtime bun dist/auth.js anthropic login     # inside the running application container
@@ -451,8 +475,11 @@ Offline verification runs the stock models inside the stock agent against script
 `tests/integration/provider-assembly.integration.test.ts`); results are recorded in the dated
 [G2](architecture/integration-evidence/mvp-01/g2-anthropic-boundary.md),
 [G4 offline](architecture/integration-evidence/mvp-01/g4-anthropic-offline.md) and
-[G5 offline](architecture/integration-evidence/mvp-01/g5-openai-offline.md) evidence. Nothing has been verified
-against a real provider in this runtime yet; live checks happen only with the owner's fresh authorization.
+[G5 offline](architecture/integration-evidence/mvp-01/g5-openai-offline.md) evidence. Anthropic has also been
+verified live: console login, profile `claude-cli-2.1.280` with `claude-opus-5-5`, and the full
+read/question/restart/answer/result journey ([G4 live](architecture/integration-evidence/mvp-01/g4-anthropic-live.md));
+a real token renewal has not yet occurred. OpenAI has not run against the real service. Live checks happen only
+with the owner's fresh authorization.
 
 ## Deployment
 
@@ -477,12 +504,13 @@ cp .env.example .env   # set the workspace, configuration path, tailnet name and
 cp deploy/runtime/config.example.json /path/to/config.json   # then choose the model; see Configuration
 docker compose up -d --build
 docker compose logs tailscale   # first start: open the printed login URL to join your tailnet
-docker compose exec -it runtime bun dist/auth.js anthropic login
+# then open the console and press Connect Anthropic (or use the terminal login under Providers)
 ```
 
 `AGENT_RUNTIME_PUBLIC_HOST` must be the full tailnet name Serve publishes (`<TS_HOSTNAME>.<your-tailnet>.ts.net`);
 the console only answers requests addressed to it. Restrict the machine to your own devices with your tailnet access
-policy. The real tailnet login, Serve HTTPS and access from a second device are verified in the live Anthropic trial.
+policy. The real tailnet login, Serve HTTPS and access from a second device are not yet verified: the live Anthropic
+trial runs locally on loopback, and the tailnet journey is a later, separate check.
 
 Health endpoints: `/healthz` (liveness) and `/readyz` — ready (`200`) only when persistence is ready, agent execution
 is configured and composed, and the console is loaded; each is reported in `checks`. Provider authorization is not
@@ -493,7 +521,9 @@ part of readiness: an unauthorized provider is shown in the console and refuses 
 | Symptom | Cause and remedy |
 |---|---|
 | The console answers `403` | The address is not `RUNTIME_PUBLIC_ORIGIN`, or a change came from another page. Use exactly the configured tailnet name. |
-| Starting a run reports the provider unavailable | No usable authorization: run the `auth … login` command; `auth … status` shows the slot's state. |
+| Starting a run reports the provider unavailable | No usable authorization: press **Connect Anthropic** on the start form (or run the `auth … login` command); `auth … status` shows the slot's state. |
+| The console login says the code is not from this sign-in | The pasted text is from another (older) sign-in, or only part of the code was copied. Copy the whole code from the tab this login opened. |
+| The console login failed or expired | Press **Connect Anthropic** again for a new sign-in. A failed login never retries its code. |
 | Input is refused as unscreenable | A credential record cannot be read or is invalid. Check `auth … status`, and log in again. |
 | The page shows “Reconnecting” | The connection dropped; the run is unaffected and the page catches up when it reconnects. |
 | `503 acceptance_unknown` | Storage could not confirm a change. Repeat the same action; it cannot be applied twice. |
@@ -501,8 +531,8 @@ part of readiness: an unauthorized provider is shown in the console and refuses 
 
 ## Limitations
 
-- Nothing has been verified against a real provider yet: the Anthropic slice is verified with scripted
-  providers, and its live trial is pending. OpenAI login is not implemented, so OpenAI runs cannot be started.
+- The Anthropic slice has passed one bounded live trial on loopback; a real token renewal and use over Tailscale
+  Serve from a second device are not yet verified. OpenAI login is not implemented, so OpenAI runs cannot be started.
 - No application accounts: anyone your tailnet policy admits to the machine can use the console.
 - No backup, retention or restore tooling; ordinary restarts preserve the database volume, nothing more.
 - Read-only mounts and path checks are not a sandbox against hostile processes on the host; the workspace is
