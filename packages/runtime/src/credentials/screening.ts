@@ -9,8 +9,11 @@
 //
 // The screen is bounded. When every retained generation is leased, a new generation is refused, so the request that
 // needed it is not sent: screening fails closed rather than quietly losing coverage.
+
+import type { Provider } from '../records/schemas.ts';
 import { type ExactSecretMatcher, exactSecretMatcher } from './matcher.ts';
 import type { UsableCredential } from './record.ts';
+import type { ReadResult } from './store.ts';
 
 export const SCREEN_CAPACITY = 64;
 
@@ -74,6 +77,50 @@ export class CredentialScreen {
   /** A matcher over every retained generation, current at the time of the call. */
   matcher(): ExactSecretMatcher {
     return this.#matcher;
+  }
+
+  /**
+   * A matcher over every retained generation and the given credentials too (for example, generations read from
+   * the store that no request has used yet). Nothing is retained or leased.
+   */
+  matcherIncluding(credentials: readonly ScreenedCredential[]): ExactSecretMatcher {
+    if (credentials.length === 0) return this.#matcher;
+    return exactSecretMatcher([
+      ...[...this.#entries.values()].flatMap((retained) => retained.tokens),
+      ...credentials.flatMap((credential) => [credential.accessToken, credential.refreshToken]),
+    ]);
+  }
+}
+
+export type OwnerInputMatcher = { ok: true; matcher: ExactSecretMatcher } | { ok: false };
+
+/**
+ * The matcher owner input (goals and answers) is screened with before it is stored or reaches a model: every
+ * generation the screen retains, plus the usable credentials currently stored in the given slots, read without
+ * refreshing. A slot whose record cannot be read or decoded makes screening incomplete, so the caller refuses the
+ * input rather than accept it unscreened.
+ */
+export async function ownerInputMatcher(
+  screen: CredentialScreen,
+  store: { read(provider: Provider, slot: string): Promise<ReadResult> },
+  slots: readonly { provider: Provider; slot: string }[],
+): Promise<OwnerInputMatcher> {
+  const stored: ScreenedCredential[] = [];
+  for (const { provider, slot } of slots) {
+    let read: ReadResult;
+    try {
+      read = await store.read(provider, slot);
+    } catch {
+      return { ok: false };
+    }
+    if (read.kind === 'missing') continue;
+    if (read.kind !== 'record') return { ok: false };
+    if (read.record.lifecycle === 'usable') stored.push(read.record);
+  }
+  try {
+    return { ok: true, matcher: screen.matcherIncluding(stored) };
+  } catch {
+    return { ok: false };
   }
 }
 

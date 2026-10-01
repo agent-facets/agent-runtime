@@ -71,6 +71,11 @@ export const FAILURE_REASONS = {
     message: 'Another model request would exceed this run\u2019s step budget.',
     remediation: 'Start a new run, with a larger budget if appropriate.',
   },
+  request_ceiling_reached: {
+    category: 'step_limit',
+    message: 'This deployment\u2019s overall limit on model requests has been reached.',
+    remediation: 'Raise or remove the configured model-request ceiling, then start a new run.',
+  },
   saved_state_missing: {
     category: 'continuation_unavailable',
     message: 'The saved state needed to continue this run is missing.',

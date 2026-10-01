@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "workspace": { "id": "main", "label": "My repository", "root": "/workspace" },
+  "providers": {
+    "anthropic": { "authMode": "subscription", "model": "your-model-id", "profileId": "claude-cli-2.1.280" }
+  },
+  "defaultProvider": "anthropic",
+  "stepBudget": 50
+}

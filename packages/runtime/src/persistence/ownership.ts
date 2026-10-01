@@ -6,6 +6,8 @@ import { PersistenceError, sqlStateOf } from './errors.ts';
 export const LOCK_NAMESPACE = 1_095_193_172; // "AGRT"
 export const OWNERSHIP_LOCK = 1;
 export const MIGRATION_LOCK = 2;
+/** Transaction-scoped: serializes model-request admissions across runs when a deployment-wide ceiling is set. */
+export const REQUEST_CEILING_LOCK = 3;
 
 const DEFAULT_VERIFY_INTERVAL_MS = 5_000;
 const DEFAULT_VERIFY_TIMEOUT_MS = 3_000;

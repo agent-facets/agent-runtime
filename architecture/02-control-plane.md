@@ -22,7 +22,13 @@ lifetime, state inspection, application transactions and history projection — 
 - **Seven states** (`working`, `waiting`, `cancelling`, `succeeded`, `failed`, `cancelled`, `interrupted`) with the
   transitions and crash windows in [09](09-data-model-and-lifecycle.md#phase-1-lifecycle-as-built). Active work is
   never resumed after a restart.
-- **Not yet built:** provider bindings, the REST/SSE API and the browser console (later blocks of MVP 01).
+- **Run service and API.** A run service (`packages/runtime/src/service/`) composes the controller, saver, provider
+  assembly and workspace admission behind application-owned REST and replaying SSE
+  ([07](07-network-and-protocols.md#phase-1-as-built-mvp-01)). It dispatches invocations independently of any
+  request; only the request that created a run, or had an answer accepted, dispatches; repeated starts and
+  identical answers are acknowledged before fresh prerequisites; uncertain commits are read back before anything is
+  acknowledged or dispatched. Wire shapes live in `packages/contracts`; records stay runtime-private.
+- **Not yet built:** OpenAI login; live provider acceptance (later tasks of MVP 01).
 
 The historical design follows.
 
