@@ -45,7 +45,8 @@ type Route =
   | { name: 'stream'; runId: string }
   | { name: 'answer'; runId: string; questionId: string }
   | { name: 'cancel'; runId: string }
-  | { name: 'login'; action: 'begin' | 'complete' | 'status' | 'cancel' };
+  | { name: 'login'; provider: 'anthropic'; action: 'begin' | 'complete' | 'status' | 'cancel' }
+  | { name: 'login'; provider: 'openai'; action: 'begin' | 'status' | 'cancel' };
 
 const ALLOWED: Record<Route['name'], 'GET' | 'POST' | 'GET, POST'> = {
   login: 'POST',
@@ -72,15 +73,22 @@ const ROUTES: [RegExp, (match: RegExpExecArray) => Route][] = [
   [new RegExp(`^/runs/${SEGMENT}/cancel$`), (m) => ({ name: 'cancel', runId: m[1] as string })],
   [
     /^\/auth\/anthropic\/(begin|complete|status|cancel)$/,
-    (m) => ({ name: 'login', action: m[1] as 'begin' | 'complete' | 'status' | 'cancel' }),
+    (m) => ({ name: 'login', provider: 'anthropic', action: m[1] as 'begin' | 'complete' | 'status' | 'cancel' }),
+  ],
+  // A device login has nothing to paste back: OpenAI has no `complete`.
+  [
+    /^\/auth\/openai\/(begin|status|cancel)$/,
+    (m) => ({ name: 'login', provider: 'openai', action: m[1] as 'begin' | 'status' | 'cancel' }),
   ],
 ];
 
+const PROVIDER_NAMES = { anthropic: 'Anthropic', openai: 'OpenAI' } as const;
+
 /** A login outcome as an API result. Attempt states are reported, not refused: a failed login is an answer. */
-function loginResponse(outcome: LoginOutcome): ApiResult {
+function loginResponse(provider: 'anthropic' | 'openai', outcome: LoginOutcome): ApiResult {
   switch (outcome.kind) {
     case 'unconfigured':
-      return refusal('provider_unavailable', 'Anthropic is not configured for this runtime.');
+      return refusal('provider_unavailable', `${PROVIDER_NAMES[provider]} is not configured for this runtime.`);
     case 'not_found':
       return refusal(
         'not_found',
@@ -221,27 +229,29 @@ export async function handleApi(
       return jsonResponse(await service.cancel(target.runId, command.value.requestId));
     }
     case 'login':
-      return jsonResponse(await login(service, target.action, body));
+      return jsonResponse(await login(service, target, body));
   }
 }
 
 /** The authentication operations. A malformed request is refused before any attempt is touched. */
-async function login(service: RunService, action: 'begin' | 'complete' | 'status' | 'cancel', body: unknown) {
+async function login(service: RunService, target: Extract<Route, { name: 'login' }>, body: unknown) {
   const invalid = refusal('invalid_request', COMMAND_ERRORS.invalid_request.message);
-  switch (action) {
+  const flow = target.provider === 'anthropic' ? service.login : service.openaiLogin;
+  const respond = (outcome: LoginOutcome) => loginResponse(target.provider, outcome);
+  switch (target.action) {
     case 'begin':
-      return beginLoginSchema.safeParse(body).success ? loginResponse(await service.login.start()) : invalid;
+      return beginLoginSchema.safeParse(body).success ? respond(await flow.start()) : invalid;
     case 'complete': {
       const command = completeLoginSchema.safeParse(body);
       if (!command.success) return invalid;
-      return loginResponse(await service.login.complete(command.data.attemptId, command.data.code));
+      return respond(await service.login.complete(command.data.attemptId, command.data.code));
     }
     case 'status':
     case 'cancel': {
       const command = attemptCommandSchema.safeParse(body);
       if (!command.success) return invalid;
       const { attemptId } = command.data;
-      return loginResponse(action === 'status' ? service.login.status(attemptId) : service.login.cancel(attemptId));
+      return respond(target.action === 'status' ? flow.status(attemptId) : flow.cancel(attemptId));
     }
   }
 }

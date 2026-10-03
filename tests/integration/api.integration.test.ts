@@ -2,6 +2,7 @@
 // workspace admission, credential screening, provider assembly, controller and PostgreSQL records. The model
 // network and token endpoint are fakes and are the independent witnesses of what was dispatched.
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -55,6 +56,8 @@ interface Harness {
   service: RunService;
   net: ReturnType<typeof inferenceNetwork>;
   tokens: ReturnType<typeof tokenNetwork>;
+  /** Paths requested from OpenAI's issuer, in order. */
+  openaiSent: string[];
   stateDir: string;
   failStops: number;
   call(
@@ -76,6 +79,8 @@ async function harness(
     admit?: RunServiceOptions['admit'];
     /** Token endpoint replies, for console logins. */
     tokens?: Response[];
+    /** Configures OpenAI too; its issuer answers with these replies in order. */
+    openai?: Response[];
   } = {},
 ): Promise<Harness> {
   const base = join(scratch, `case-${++counter}`);
@@ -85,7 +90,12 @@ async function harness(
   const source = JSON.stringify({
     version: 1,
     workspace: { id: 'main', label: 'Main workspace', root: fixture.root },
-    providers: { anthropic: { authMode: 'subscription', model: 'claude-opus-5', profileId: 'claude-cli-2.1.280' } },
+    providers: {
+      anthropic: { authMode: 'subscription', model: 'claude-opus-5', profileId: 'claude-cli-2.1.280' },
+      ...(options.openai === undefined
+        ? {}
+        : { openai: { authMode: 'subscription', model: 'gpt-5.6-sol', profileId: 'codex-0.151.0' } }),
+    },
     defaultProvider: 'anthropic',
     stepBudget: options.stepBudget ?? 10,
   });
@@ -108,16 +118,26 @@ async function harness(
   }
   const net = inferenceNetwork(options.replies ?? []);
   const tokens = tokenNetwork(options.tokens);
+  const openaiReplies = [...(options.openai ?? [])];
+  const openaiSent: string[] = [];
+  const authTransport = (async (url: string, init: RequestInit) => {
+    if (new URL(url).origin !== 'https://auth.openai.com') return tokens.fetchImpl(url, init);
+    openaiSent.push(new URL(url).pathname);
+    const reply = openaiReplies.shift();
+    if (reply === undefined) throw new Error('unscripted OpenAI authorization request');
+    return reply;
+  }) as unknown as typeof fetch;
   const assembly = createProviderAssembly({
     config: operator,
     stateDir,
     inferenceTransport: net.fetchImpl,
-    authTransport: tokens.fetchImpl,
+    authTransport,
   });
   const store = new RunStore(persistence.app, persistence.ownership);
   const h: Harness = {
     net,
     tokens,
+    openaiSent,
     stateDir,
     failStops: 0,
     service: undefined as unknown as RunService,
@@ -770,5 +790,90 @@ describe('connecting Anthropic from the console', () => {
       );
       expect(response.headers.get('cache-control')).toBe('no-store');
     }
+  });
+});
+
+describe('connecting OpenAI from the console', () => {
+  const LOGIN = '/api/v1/auth/openai';
+  const b64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const jwt = (claims: Record<string, unknown>) => `${b64({ alg: 'RS256' })}.${b64(claims)}.c3ludGhldGlj`;
+  const VERIFIER = 'synthetic-api-suite-verifier-0123456789abcdefghijklmn';
+  const NEW_ACCESS = jwt({ exp: Math.floor(NOW / 1000) + 864_000, sub: 'api-suite-openai-access' });
+  const NEW_REFRESH = 'synthetic-api-suite-openai-refresh-token';
+  const deviceCode = () =>
+    Response.json({ device_auth_id: 'deviceauth_api_suite', user_code: 'APIS-13579', interval: '5' });
+  const approval = () =>
+    Response.json({
+      authorization_code: 'synthetic-api-suite-authorization-code',
+      code_verifier: VERIFIER,
+      code_challenge: createHash('sha256').update(VERIFIER).digest('base64url'),
+    });
+  const issued = () =>
+    Response.json({
+      id_token: jwt({ 'https://api.openai.com/auth': { chatgpt_account_id: 'acct_api_suite' } }),
+      access_token: NEW_ACCESS,
+      refresh_token: NEW_REFRESH,
+    });
+
+  const settledAttempt = async (h: Harness, attemptId: string) => {
+    for (let index = 0; index < 200; index++) {
+      const status = await h.call('POST', `${LOGIN}/status`, { attemptId });
+      if (status.body.state !== 'awaiting_approval' && status.body.state !== 'completing') return status;
+      await Bun.sleep(5);
+    }
+    throw new Error('the login did not settle');
+  };
+
+  test('begin shows the code; approval is noticed and stored; no run or model request is made', async () => {
+    const h = await harness({ openai: [deviceCode(), approval(), issued()] });
+    const openai = async () =>
+      ((await h.call('GET', '/api/v1/options')).body.providers as Body[]).find((entry) => entry.provider === 'openai');
+    expect((await openai())?.readiness).toBe('reauthorization_required');
+
+    const begun = await h.call('POST', `${LOGIN}/begin`, {});
+    expect(begun.status).toBe(200);
+    expect(begun.body).toMatchObject({
+      provider: 'openai',
+      state: 'awaiting_approval',
+      authorizationUrl: 'https://auth.openai.com/codex/device',
+      userCode: 'APIS-13579',
+    });
+    const done = await settledAttempt(h, begun.body.attemptId);
+    expect([done.status, done.body.state]).toEqual([200, 'connected']);
+    expect((await openai())?.readiness).toBe('ready');
+    expect(h.openaiSent).toEqual([
+      '/api/accounts/deviceauth/usercode',
+      '/api/accounts/deviceauth/token',
+      '/oauth/token',
+    ]);
+    expect(h.net.sent).toEqual([]);
+    expect(h.tokens.sent).toEqual([]);
+    for (const body of [begun.body, done.body]) {
+      const text = JSON.stringify(body);
+      for (const secret of [NEW_ACCESS, NEW_REFRESH, VERIFIER, 'synthetic-api-suite-authorization-code']) {
+        expect(text).not.toContain(secret);
+      }
+    }
+    await h.service.openaiLogin.stop();
+  });
+
+  test('there is nothing to paste back, and OpenAI must be configured', async () => {
+    const configured = await harness({ openai: [] });
+    expect(
+      (await configured.call('POST', `${LOGIN}/complete`, { attemptId: crypto.randomUUID(), code: 'x' })).status,
+    ).toBe(404);
+    const unconfigured = await harness();
+    const refused = await unconfigured.call('POST', `${LOGIN}/begin`, {});
+    expect([refused.status, refused.body.error.code]).toEqual([409, 'provider_unavailable']);
+    expect(refused.body.error.message).toBe('OpenAI is not configured for this runtime.');
+  });
+
+  test('cancelling while waiting closes the attempt', async () => {
+    const h = await harness({ openai: [deviceCode(), new Response(null, { status: 403 })] });
+    const begun = await h.call('POST', `${LOGIN}/begin`, {});
+    const cancelled = await h.call('POST', `${LOGIN}/cancel`, { attemptId: begun.body.attemptId });
+    expect(cancelled.body.state).toBe('cancelled');
+    await h.service.openaiLogin.stop();
+    expect((await h.call('POST', `${LOGIN}/status`, { attemptId: begun.body.attemptId })).body.state).toBe('cancelled');
   });
 });

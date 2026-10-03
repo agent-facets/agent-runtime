@@ -66,7 +66,7 @@ describe('runtime lifecycle', () => {
         }),
         JSON.stringify({
           event: 'provider_readiness',
-          reason: 'integration_unavailable',
+          reason: 'reauthorization_required',
           provider: 'openai',
           operation: 'startup',
         }),
@@ -84,10 +84,25 @@ describe('runtime lifecycle', () => {
         expiresAtMs: Date.now() - 1,
         account: {},
       });
+      await CredentialStore.forStateDir(stateDir).replace({
+        version: 1,
+        provider: 'openai',
+        authMode: 'subscription',
+        slot: 'default',
+        generation: 1,
+        updatedAtMs: Date.now(),
+        lifecycle: 'usable',
+        accessToken: 'synthetic-openai-readiness-access',
+        refreshToken: 'synthetic-openai-readiness-refresh',
+        expiresAtMs: Date.now() - 1,
+        account: { accountId: 'acct_synthetic' },
+      });
       const lines = await readiness();
       // Expired access is still ready: renewal happens on use, never at startup.
-      expect(lines[0]).toBe(
-        JSON.stringify({ event: 'provider_readiness', reason: 'ready', provider: 'anthropic', operation: 'startup' }),
+      expect(lines).toEqual(
+        (['anthropic', 'openai'] as const).map((provider) =>
+          JSON.stringify({ event: 'provider_readiness', reason: 'ready', provider, operation: 'startup' }),
+        ),
       );
       expect(lines.join('\n')).not.toContain('synthetic');
     } finally {

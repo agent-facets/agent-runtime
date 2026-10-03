@@ -41,7 +41,7 @@ export const EXECUTION_ROOTS: readonly string[] = [
 /** Each provider's adapter roots: its model, request profile, credentials and per-invocation wiring. */
 export const PROVIDER_ROOTS: Readonly<Record<Provider, readonly string[]>> = {
   anthropic: ['src/providers/anthropic/binding.ts'],
-  openai: ['src/providers/openai/inference.ts'],
+  openai: ['src/providers/openai/binding.ts'],
 };
 
 /**

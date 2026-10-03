@@ -97,9 +97,9 @@ export class ApiClient {
     return this.#post(`/api/v1/runs/${encodeURIComponent(runId)}/cancel`, { requestId }, cancellationAcceptedSchema);
   }
 
-  /** Starts connecting Anthropic, or returns the login already in progress. */
-  beginLogin(): Promise<ApiOutcome<AuthAttempt>> {
-    return this.#post('/api/v1/auth/anthropic/begin', {}, authAttemptSchema);
+  /** Starts connecting a provider, or returns the login already in progress. */
+  beginLogin(provider: Provider = 'anthropic'): Promise<ApiOutcome<AuthAttempt>> {
+    return this.#post(`/api/v1/auth/${provider}/begin`, {}, authAttemptSchema);
   }
 
   /** Submits the code Anthropic showed. Sent only here, never through a task or an answer. */
@@ -107,12 +107,12 @@ export class ApiClient {
     return this.#post('/api/v1/auth/anthropic/complete', { attemptId, code }, authAttemptSchema);
   }
 
-  loginStatus(attemptId: string): Promise<ApiOutcome<AuthAttempt>> {
-    return this.#post('/api/v1/auth/anthropic/status', { attemptId }, authAttemptSchema);
+  loginStatus(attemptId: string, provider: Provider = 'anthropic'): Promise<ApiOutcome<AuthAttempt>> {
+    return this.#post(`/api/v1/auth/${provider}/status`, { attemptId }, authAttemptSchema);
   }
 
-  cancelLogin(attemptId: string): Promise<ApiOutcome<AuthAttempt>> {
-    return this.#post('/api/v1/auth/anthropic/cancel', { attemptId }, authAttemptSchema);
+  cancelLogin(attemptId: string, provider: Provider = 'anthropic'): Promise<ApiOutcome<AuthAttempt>> {
+    return this.#post(`/api/v1/auth/${provider}/cancel`, { attemptId }, authAttemptSchema);
   }
 
   #get<T>(path: string, schema: Schema<T>): Promise<ApiOutcome<T>> {

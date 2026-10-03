@@ -1,6 +1,5 @@
 // OpenAI subscription inference: stock ChatOpenAI in streaming Responses mode, every physical request through the
-// guarded terminal and adapted to the run's immutable profile. Operational readiness stays disabled until OpenAI
-// authorization (device login and renewal) is implemented; this module is the offline transport.
+// guarded terminal and adapted to the run's immutable profile. ./binding.ts wires one invocation from these parts.
 import { ChatOpenAI } from '@langchain/openai';
 import type { CredentialCoordinator } from '../../credentials/coordinator.ts';
 import type { ScreenScope } from '../../credentials/screening.ts';
@@ -101,7 +100,11 @@ export function openaiCredentials(coordinator: CredentialCoordinator, scope?: Sc
   };
 }
 
-export function openaiRenewal(coordinator: CredentialCoordinator): CredentialRenewal {
+export function openaiRenewal(
+  coordinator: CredentialCoordinator,
+  /** Told which generation the renewal produced (or adopted). */
+  onRenewed?: (generation: number) => void,
+): CredentialRenewal {
   return {
     async recoverable(response) {
       return response.status === 401;
@@ -109,6 +112,7 @@ export function openaiRenewal(coordinator: CredentialCoordinator): CredentialRen
     async renew(rejectedGeneration, signal) {
       const state = await coordinator.refresh({ observedGeneration: rejectedGeneration, signal });
       if (state.kind !== 'ready') throw new CredentialRefusal(state.kind);
+      onRenewed?.(state.credential.generation);
     },
   };
 }
