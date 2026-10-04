@@ -337,6 +337,63 @@ describe('body settlement', () => {
     expect((error as Error).message).not.toContain(SECRET);
     expect(log.at(-1)).toBe('completed:failed');
   });
+
+  test('a check that finds the response complete early ends the body there and reads no further', async () => {
+    const witness: string[] = [];
+    const { build, log, settled } = harness(
+      () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('done|trailing'));
+            },
+            cancel() {
+              witness.push('source-cancelled');
+            },
+          }),
+        ),
+    );
+    let complete = false;
+    let endAt: number | undefined;
+    let incomplete = 0;
+    const terminal = build({
+      completion: () => ({
+        observe(chunk: Uint8Array) {
+          const at = new TextDecoder().decode(chunk).indexOf('|');
+          if (at >= 0) {
+            complete = true;
+            endAt = at;
+          }
+        },
+        get complete() {
+          return complete;
+        },
+        failed: false,
+        get endAt() {
+          return endAt;
+        },
+        onIncomplete: () => incomplete++,
+      }),
+    });
+    const response = await terminal(URL_OK, post());
+    expect(await response.text()).toBe('done');
+    await Promise.all(settled);
+    expect(witness).toEqual(['source-cancelled']);
+    expect(log.at(-1)).toBe('completed:ok');
+    expect(incomplete).toBe(0);
+  });
+
+  test('an incomplete response is reported to its check before the body fails', async () => {
+    let incomplete = 0;
+    const { build, log } = harness(() => new Response('partial'));
+    const terminal = build({
+      completion: () => ({ observe() {}, complete: false, failed: false, onIncomplete: () => incomplete++ }),
+    });
+    const response = await terminal(URL_OK, post());
+    expect(await response.text().catch((caught: unknown) => caught)).toMatchObject({ code: 'incomplete_response' });
+    expect(incomplete).toBe(1);
+    expect(log.at(-1)).toBe('completed:failed');
+  });
 });
 
 describe('with Bun fetch against a local server', () => {

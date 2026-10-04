@@ -198,7 +198,13 @@ async function harness(options: {
   const reports = new ModelCallReports();
   const admitted: string[] = [];
   const runId = `00000000-0000-4000-8000-${String(runs).padStart(12, '0')}`;
-  const hooks = openaiTerminalHooks({ profile, model: MODEL, conversationId: runId });
+  const incomplete: string[] = [];
+  const hooks = openaiTerminalHooks({
+    profile,
+    model: MODEL,
+    conversationId: runId,
+    onIncomplete: (summary) => incomplete.push(summary),
+  });
   const terminal = createTerminal({
     policy: openaiInferencePolicy(profile),
     signal: new AbortController().signal,
@@ -239,7 +245,7 @@ async function harness(options: {
   const run = () => executor.start({ runId, agent, input: { kind: 'initial', goal: GOAL }, budgetMax: 10 });
   const messages = async () =>
     (await agent.graph.getState({ configurable: { thread_id: runId } })).values.messages as { content: unknown }[];
-  return { run, runId, net, admitted, saver, refreshed, messages };
+  return { run, runId, net, admitted, saver, refreshed, messages, incomplete };
 }
 
 const GOAL = 'Summarize notes/plan.md.';
@@ -349,6 +355,27 @@ describe('offline G5: only a completed response becomes a message', () => {
       expect(evidence).toMatchObject({ kind: 'terminal', code: 'incomplete_response', attemptId: h.admitted[0] });
       expect(classified).toMatchObject({ failure: { reason: 'incomplete_response' } });
       expect((await h.messages()).map((message) => message.content)).toEqual([GOAL]);
+      expect(h.net.sent).toHaveLength(1);
+      // The diagnostic names the events seen, never their content.
+      expect(h.incomplete).toHaveLength(1);
+      expect(h.incomplete[0]).toStartWith('response.created,response.output_item.added');
+      expect(h.incomplete[0]).not.toContain('gAAAA');
+      expect(h.incomplete[0]).not.toContain('notes/plan.md');
+    });
+  }
+
+  for (const [name, trailer, stall] of [
+    ['a later event', data('codex.response.metadata', { note: 1 }), false],
+    ['an error event', data('error', { code: 'late' }), false],
+    ['a line the SDK could not parse', 'data: not json\n\n', false],
+    ['a body that stays open', '', true],
+  ] as const) {
+    test(`the response ends at response.completed: ${name} after it is never read`, async () => {
+      const h = await harness({ replies: [() => sse(textTurn('resp_t', 'Done.') + trailer, { stall })] });
+      expect(await h.run().settled).toEqual({ kind: 'finished' });
+      const last = (await h.messages()).at(-1)?.content;
+      expect(JSON.stringify(last)).toContain('Done.');
+      expect(h.incomplete).toEqual([]);
       expect(h.net.sent).toHaveLength(1);
     });
   }

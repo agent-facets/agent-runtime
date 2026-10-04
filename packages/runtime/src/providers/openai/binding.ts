@@ -31,6 +31,8 @@ export interface OpenAIInvocation {
   track: (work: Promise<unknown>) => void;
   deadlineMs: number;
   transport?: typeof fetch;
+  /** Told the event-name summary (never content) of a response stream judged incomplete. */
+  onStreamIncomplete?: (streamEvents: string) => void;
 }
 
 /** The same shape as the Anthropic adapter's; declared here so neither adapter's closure includes the other. */
@@ -48,7 +50,12 @@ export function wireOpenAIInvocation(options: OpenAIInvocation): WiredModel | { 
   const { coordinator } = options;
   const scope = new ScreenScope(options.screen);
   const reports = new ModelCallReports();
-  const hooks = openaiTerminalHooks({ profile, model: options.binding.model, conversationId: options.runId });
+  const hooks = openaiTerminalHooks({
+    profile,
+    model: options.binding.model,
+    conversationId: options.runId,
+    onIncomplete: (streamEvents) => options.onStreamIncomplete?.(streamEvents),
+  });
   // Generations produced by this invocation's renewal: a rejection of one of those is definitive.
   const renewed = new Set<number>();
 

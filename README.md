@@ -470,8 +470,10 @@ minutes of expiry. Like any renewal, one whose outcome is unknown marks the slot
 
 **OpenAI** (profile `codex-0.151.0`). Requests use the measured Codex backend profile (allowlisted headers,
 stateless replay of encrypted reasoning and function calls with matching IDs), token and account always from one
-credential generation, and completion only on `response.completed`. They use Bun's own `fetch`, which a test shows
-adds no browser-style headers. The profile's body settings and client version were captured from one model
+credential generation, and completion only on `response.completed`: as in the Codex client, the response ends with
+that event and nothing after it is read, while `response.failed`, `response.incomplete` or `error` before it fail
+the run. A response judged incomplete is logged as `model_stream_incomplete` with the names of the events received
+(never their content). Requests use Bun's own `fetch`, which a test shows adds no browser-style headers. The profile's body settings and client version were captured from one model
 (`gpt-5.6-sol`) at Codex 0.151.0; if OpenAI stops accepting them, runs fail as an unsupported model/profile and the
 profile needs re-capturing as a new profile ID.
 

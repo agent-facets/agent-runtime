@@ -11,6 +11,7 @@ import { CredentialStore } from '../credentials/store.ts';
 import type { RequestAdmission } from '../execution/terminal.ts';
 import type { Provider, ProviderBinding } from '../records/schemas.ts';
 import { type ContentPolicy, createContentPolicy } from '../security/content-policy.ts';
+import { formatDiagnostic } from '../security/diagnostics.ts';
 import { type WiredModel, wireAnthropicInvocation } from './anthropic/binding.ts';
 import { anthropicIssuer, createAnthropicAuthTransport } from './anthropic/credentials.ts';
 import type { Transport as OpenAIAuthTransport } from './openai/auth.ts';
@@ -26,6 +27,8 @@ export interface ProviderAssemblyOptions {
   inferenceTransport?: typeof fetch;
   authTransport?: typeof fetch;
   now?: () => number;
+  /** Safe diagnostics from provider wiring (for example, an incomplete response stream's event names). */
+  log?: (line: string) => void;
 }
 
 export interface InvocationRequest {
@@ -140,7 +143,20 @@ export function createProviderAssembly(options: ProviderAssemblyOptions): Provid
         case 'anthropic':
           return wireAnthropicInvocation(common);
         case 'openai':
-          return wireOpenAIInvocation({ ...common, runId: request.runId });
+          return wireOpenAIInvocation({
+            ...common,
+            runId: request.runId,
+            onStreamIncomplete: (streamEvents) =>
+              options.log?.(
+                formatDiagnostic({
+                  event: 'model_stream_incomplete',
+                  provider: 'openai',
+                  operation: 'inference',
+                  runId: request.runId,
+                  streamEvents,
+                }),
+              ),
+          });
       }
     },
   };
