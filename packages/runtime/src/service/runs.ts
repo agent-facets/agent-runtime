@@ -50,7 +50,6 @@ import { formatDiagnostic } from '../security/diagnostics.ts';
 import { admitWorkspace, type PrivateLocations, type WorkspaceAdmission } from '../workspace/admission.ts';
 import type { WorkspacePolicy } from '../workspace/policy.ts';
 import { AnthropicLogin } from './auth.ts';
-import { OpenAILogin } from './openai-auth.ts';
 import { decodeRunCursor, encodeRunCursor, eventView, snapshotView, summaryView } from './projection.ts';
 
 /** A complete API outcome: the HTTP status and the contract-shaped body. */
@@ -113,7 +112,7 @@ const ACKNOWLEDGEMENT_LOST =
 const READINESS_MESSAGES: Record<Exclude<ProviderReadiness, 'ready'>, string> = {
   unconfigured: 'That provider is not configured for this runtime.',
   integration_unavailable:
-    'That provider cannot be used by this runtime yet, or its configured profile is unsupported.',
+    'This build has no integration for that provider (or for its configured profile), so it cannot run tasks. Signing in would not change that.',
   reauthorization_required:
     'The provider has no usable authorization. Connect it from the console (or with the `auth` login command), then try again.',
   temporarily_unavailable: 'The provider’s stored authorization cannot be read right now. Try again shortly.',
@@ -167,8 +166,6 @@ export class RunService {
   readonly store: RunStore;
   /** Connecting Anthropic from the console; independent of runs. */
   readonly login: AnthropicLogin;
-  /** Connecting OpenAI from the console (a device login); independent of runs. */
-  readonly openaiLogin: OpenAILogin;
   readonly gates = new KeyedSerializer();
   readonly active = new ActiveInvocations();
   readonly #creations = new KeyedSerializer();
@@ -197,12 +194,6 @@ export class RunService {
       slot: providerSettingsFor(options.operator, 'anthropic')?.credentialSlot,
       coordinator: options.assembly.anthropicAuth.coordinator,
       transport: options.assembly.anthropicAuth.transport,
-      log: this.#log,
-    });
-    this.openaiLogin = new OpenAILogin({
-      slot: providerSettingsFor(options.operator, 'openai')?.credentialSlot,
-      coordinator: options.assembly.openaiAuth.coordinator,
-      transport: options.assembly.openaiAuth.transport,
       log: this.#log,
     });
     this.#controller = new RunController({
@@ -667,7 +658,6 @@ export class RunService {
     const { assembly, persistence } = this.#deps;
     const wired = assembly.wire({
       binding,
-      runId,
       admission: wiring.admission,
       signal: wiring.signal,
       track: (work) => wiring.inflight.track(work),

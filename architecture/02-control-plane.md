@@ -28,7 +28,8 @@ lifetime, state inspection, application transactions and history projection — 
   request; only the request that created a run, or had an answer accepted, dispatches; repeated starts and
   identical answers are acknowledged before fresh prerequisites; uncertain commits are read back before anything is
   acknowledged or dispatched. Wire shapes live in `packages/contracts`; records stay runtime-private.
-- **Not yet built:** OpenAI login; live provider acceptance (later tasks of MVP 01).
+- **Not yet built:** an OpenAI integration (the earlier one was removed after its live journey failed; design
+  Decision 11) and the remaining acceptance work (later tasks of MVP 01).
 
 The historical design follows.
 

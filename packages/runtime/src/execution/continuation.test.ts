@@ -128,20 +128,6 @@ describe('execution definition', () => {
       expect((await definition({ code: changed })).digest).not.toBe(base.digest);
     }
   });
-
-  test('a change confined to the other provider’s adapter leaves an Anthropic run continuable', async () => {
-    const anthropic = await currentCodeManifest('anthropic');
-    const openai = await currentCodeManifest('openai');
-    const openaiOnly = openai.executionCode
-      .map((entry) => entry.path)
-      .filter((path) => !anthropic.executionCode.some((entry) => entry.path === path));
-    expect(openaiOnly).toEqual(
-      expect.arrayContaining(['src/providers/openai/inference.ts', 'src/providers/openai/profile.ts']),
-    );
-    expect(openaiOnly.every((path) => path.startsWith('src/providers/openai/'))).toBe(true);
-    // The Anthropic definition is built from the Anthropic manifest alone, so these files are not inputs to it.
-    expect((await definition()).digest).toBe((await definition({ code: anthropic })).digest);
-  });
 });
 
 describe('saved-state inspection', () => {

@@ -1,6 +1,6 @@
 // Classifies provider and runtime problems by the operation they occurred in. The same HTTP status means different
-// things in different places: a 403 while polling a device login means "keep polling", while a 403 on inference
-// is an authorization rejection. Provider adapters normalize their typed error codes into ProviderErrorCode;
+// things in different places: a 401 refreshing a credential requires reauthorization, while a 401 on inference may
+// first take the one permitted renewal. Provider adapters normalize their typed error codes into ProviderErrorCode;
 // nothing here reads raw bodies, headers or exception text.
 import { type FailureReason, failureFor } from '../domain/failures.ts';
 import type { Failure, Provider } from '../records/schemas.ts';
@@ -30,10 +30,6 @@ export type ProviderEvidence =
   | { kind: 'transport'; problem: TransportProblem };
 
 export type Classification =
-  /** Device login is still waiting for the owner; not an error. */
-  | { kind: 'continue_polling' }
-  /** Device login failed; the operator command reports it. Never a run failure. */
-  | { kind: 'login_failed'; reason: 'login_denied' | 'login_expired' | 'login_unavailable' }
   /** One explicit credential renewal is permitted; the retry consumes another model step. */
   | { kind: 'renew_credentials' }
   /** Credentials were definitively rejected; stop using them until the owner reauthorizes. */
@@ -47,7 +43,6 @@ export type Classification =
   | { kind: 'failure'; failure: Failure };
 
 export type OperationContext =
-  | { kind: 'device_poll'; provider: Provider; evidence: ProviderEvidence }
   | { kind: 'credential_refresh'; provider: Provider; evidence: ProviderEvidence }
   | {
       kind: 'inference';
@@ -114,21 +109,6 @@ const TRANSPORT_REASONS: Record<TransportProblem, FailureReason> = {
 
 export function classify(context: OperationContext): Classification {
   switch (context.kind) {
-    case 'device_poll': {
-      const { evidence } = context;
-      if (evidence.kind === 'transport') {
-        return evidence.problem === 'timeout' || evidence.problem === 'network'
-          ? { kind: 'continue_polling' }
-          : { kind: 'login_failed', reason: 'login_unavailable' };
-      }
-      // The subscription device flow answers 403/404 while the owner has not yet approved the code.
-      if (evidence.status === 403 || evidence.status === 404) return { kind: 'continue_polling' };
-      if (evidence.status === 429 || evidence.status >= 500) return { kind: 'continue_polling' };
-      if (evidence.code === 'auth_rejected') return { kind: 'login_failed', reason: 'login_denied' };
-      if (evidence.code === 'auth_expired') return { kind: 'login_failed', reason: 'login_expired' };
-      return { kind: 'login_failed', reason: 'login_unavailable' };
-    }
-
     case 'credential_refresh': {
       const { evidence } = context;
       if (evidence.kind === 'transport') return { kind: 'temporarily_unavailable' };

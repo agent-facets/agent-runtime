@@ -205,6 +205,31 @@ describe('workspace import boundaries', () => {
     );
     expect(violations.map(describeImport)).toEqual([]);
   });
+
+  test('no package depends on or imports an OpenAI client; the retired Codex integration is gone', async () => {
+    // Design Decision 11: this build has no OpenAI integration. A replacement needs its own approved design.
+    const clients = /^(?:@langchain\/openai|openai)(?:\/|$)/;
+    const violations = (await importsOf(join(repoRoot, 'packages')))
+      .filter((record) => clients.test(record.specifier))
+      .map(describeImport);
+    for (const pkg of packages) {
+      for (const field of dependencyFields) {
+        for (const name of Object.keys(pkg.manifest[field] ?? {})) {
+          if (clients.test(name)) violations.push(`${pkg.manifest.name} ${field}: ${name}`);
+        }
+      }
+    }
+    // Addresses, identifiers and headers only the removed Codex login and inference code used, in production
+    // sources. Tests may name them to prove their absence; the provider's name alone is not a marker.
+    const markers = ['auth.openai.com', 'chatgpt.com/backend-api', 'app_EMoamEEZ73f0CkXaXp7hrann', 'codex_exec'];
+    for (const file of listSourceFiles(join(repoRoot, 'packages'))) {
+      if (/\.test\.[jt]sx?$/.test(file) || file.includes('/test-support/')) continue;
+      const source = await Bun.file(file).text();
+      for (const marker of markers)
+        if (source.includes(marker)) violations.push(`${relative(repoRoot, file)}: ${marker}`);
+    }
+    expect(violations).toEqual([]);
+  });
 });
 
 // On Bun 1.3.14 a plain pool query can run inside another caller's transaction, so runtime code reaches PostgreSQL

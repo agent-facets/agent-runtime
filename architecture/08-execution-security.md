@@ -59,9 +59,9 @@ What Phase 1 enforces:
   to settle. Tests scan the persisted checkpoint tables for synthetic credentials.
 - **Provider adapters** (`packages/runtime/src/providers/`, provider block). Token requests reach exactly one
   issuer endpoint and never follow redirects; inference headers are set by the provider profile, with SDK
-  fingerprint headers and the SDK's sentinel key removed (OpenAI's are rebuilt from an allowlist). The Anthropic
-  subscription package performs no I/O of its own and reads no environment. Offline suites scan checkpoints for the
-  synthetic tokens of every generation used, including across a renewal.
+  fingerprint headers and the SDK's sentinel key removed. The Anthropic subscription package performs no I/O of its
+  own and reads no environment. Offline suites scan checkpoints for the synthetic tokens of every generation used,
+  including across a renewal. (The OpenAI adapter was removed; design Decision 11.)
 
 - **Browser surface** (`packages/runtime/src/service/`, `request-policy.ts`, `packages/ui`, console block). Goals and
   answers are screened before storage against live generations and the stored usable credentials of the configured

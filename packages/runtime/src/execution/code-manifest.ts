@@ -7,8 +7,8 @@
 //
 // Monorepo package boundaries do not end the closure: an import of a workspace package (`workspace:` in the
 // lockfile) follows that package's public entry into its source, which joins the closure file by file. There is one
-// manifest per provider — the common roots plus that provider's adapter — so a change to one provider's adapter
-// leaves runs bound to the other continuable.
+// manifest per provider whose adapter this build includes — the common roots plus that adapter. A provider without
+// an adapter (OpenAI, design Decision 11) has no manifest: nothing can run or continue on it.
 //
 // The application image ships only bundled output, so the manifests are written at build time beside the bundle
 // and read from there; running from source computes them directly.
@@ -38,10 +38,9 @@ export const EXECUTION_ROOTS: readonly string[] = [
   'src/records/run-store.ts',
 ];
 
-/** Each provider's adapter roots: its model, request profile, credentials and per-invocation wiring. */
-export const PROVIDER_ROOTS: Readonly<Record<Provider, readonly string[]>> = {
+/** The adapter roots of each provider this build includes: its model, request profile, credentials and wiring. */
+export const PROVIDER_ROOTS: Readonly<Partial<Record<Provider, readonly string[]>>> = {
   anthropic: ['src/providers/anthropic/binding.ts'],
-  openai: ['src/providers/openai/binding.ts'],
 };
 
 /**
@@ -61,10 +60,10 @@ export interface CodeManifest {
   packages: { name: string; version: string; integrity: string }[];
 }
 
-/** What the build writes: one manifest per provider. */
+/** What the build writes: one manifest per provider adapter in the build. */
 export interface ShippedManifests {
   version: typeof CODE_MANIFEST_VERSION;
-  providers: Record<Provider, CodeManifest>;
+  providers: Partial<Record<Provider, CodeManifest>>;
 }
 
 const sha256 = (text: string) => new Bun.CryptoHasher('sha256').update(text).digest('hex');
@@ -188,24 +187,40 @@ export function computeCodeManifest(input: CodeManifestInput): CodeManifest {
 
 /** The per-provider manifests for the runtime package. */
 export function computeShippedManifests(input: Omit<CodeManifestInput, 'roots'>): ShippedManifests {
-  const forProvider = (provider: Provider) =>
-    computeCodeManifest({ ...input, roots: [...EXECUTION_ROOTS, ...PROVIDER_ROOTS[provider]] });
-  return {
-    version: CODE_MANIFEST_VERSION,
-    providers: { anthropic: forProvider('anthropic'), openai: forProvider('openai') },
-  };
+  const providers: Partial<Record<Provider, CodeManifest>> = {};
+  for (const [provider, roots] of Object.entries(PROVIDER_ROOTS) as [Provider, readonly string[]][]) {
+    providers[provider] = computeCodeManifest({ ...input, roots: [...EXECUTION_ROOTS, ...roots] });
+  }
+  return { version: CODE_MANIFEST_VERSION, providers };
+}
+
+/** Thrown for a provider whose adapter this build does not include. */
+export class NoProviderAdapter extends Error {
+  override readonly name = 'NoProviderAdapter';
+  constructor(provider: Provider) {
+    super(`this build has no ${provider} adapter`);
+  }
 }
 
 /** The runtime package, when running from source. */
 export const PACKAGE_ROOT = resolve(import.meta.dir, '..', '..');
 
-/** The manifest of the running code for runs bound to `provider`: shipped beside the bundle, or from source. */
+/**
+ * The manifest of the running code for runs bound to `provider`: shipped beside the bundle, or from source. A
+ * provider without an adapter in this build has none.
+ */
 export async function currentCodeManifest(provider: Provider): Promise<CodeManifest> {
+  const roots = PROVIDER_ROOTS[provider];
+  if (roots === undefined) throw new NoProviderAdapter(provider);
   const shipped = Bun.file(join(import.meta.dir, CODE_MANIFEST_FILE));
-  if (await shipped.exists()) return ((await shipped.json()) as ShippedManifests).providers[provider];
+  if (await shipped.exists()) {
+    const manifest = ((await shipped.json()) as ShippedManifests).providers[provider];
+    if (manifest === undefined) throw new NoProviderAdapter(provider);
+    return manifest;
+  }
   return computeCodeManifest({
     packageRoot: PACKAGE_ROOT,
     lockfile: resolve(PACKAGE_ROOT, '..', '..', 'bun.lock'),
-    roots: [...EXECUTION_ROOTS, ...PROVIDER_ROOTS[provider]],
+    roots: [...EXECUTION_ROOTS, ...roots],
   });
 }

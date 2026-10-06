@@ -32,7 +32,6 @@ export const FAILURE_MESSAGES: Record<AuthFailureReason, string> = {
   code_mismatch:
     'That is not the code from this sign-in. Copy the whole code Anthropic shows after you authorize, then paste it.',
   rejected: 'Anthropic refused the code. It may have expired or already been used. Start a new login.',
-  denied: 'The sign-in was refused. Start a new login.',
   throttled: 'Anthropic is limiting authorization requests. Wait a little, then start a new login.',
   not_sent: 'Anthropic’s authorization service could not be reached. Check the connection, then start a new login.',
   outcome_unknown:

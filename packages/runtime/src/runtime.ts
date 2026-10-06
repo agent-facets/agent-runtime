@@ -80,7 +80,7 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
   const providers =
     operator === undefined
       ? undefined
-      : createProviderAssembly({ config: operator, stateDir: options.config.stateDir, log });
+      : createProviderAssembly({ config: operator, stateDir: options.config.stateDir });
   const providersReported = (async () => {
     if (operator === undefined || providers === undefined) return;
     for (const provider of ['anthropic', 'openai'] as const) {
@@ -96,7 +96,7 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
       // Admission stops first; persistence (and with it ownership) is released last.
       await server.stop(true);
       // An unfinished console login is aborted and settles (releasing its credential lock) before shutdown ends.
-      await Promise.all([runs?.login.stop(), runs?.openaiLogin.stop()]);
+      await runs?.login.stop();
       await persistence?.close();
       resolveStopped(code);
       return code;

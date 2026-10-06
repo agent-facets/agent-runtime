@@ -34,6 +34,12 @@ The system SHALL allow the owner to start an agent task with a goal and SHALL as
 - **THEN** the system SHALL explain the provider problem before dispatching any model or tool work
 - **AND** it SHALL NOT switch providers or use billed API access
 
+#### Scenario: A configured provider is unavailable in the installed build
+- **WHEN** a provider remains configured but its integration is unavailable in the installed build
+- **THEN** the console SHALL identify the integration as unavailable even if saved authorization exists
+- **AND** starting a task with that provider SHALL be refused before model or tool work
+- **AND** the system SHALL NOT offer login as a remedy for the missing integration or automatically select another provider or billing mode
+
 #### Scenario: Workspace is unavailable at start
 - **WHEN** the configured workspace is absent or unreadable
 - **THEN** the system SHALL explain the workspace problem before dispatching any model or tool work
@@ -111,6 +117,11 @@ The system SHALL retain the run's identity, goal, workspace, provider, recorded 
 #### Scenario: Inspect a failed run after restart
 - **WHEN** the owner opens a previously failed run after an ordinary runtime restart
 - **THEN** the console SHALL retain the failure and recorded progress rather than present a fresh or successful run
+
+#### Scenario: Inspect history after a provider integration is removed
+- **WHEN** the installed build no longer supplies the provider integration used by an existing run
+- **THEN** the run's identity, provider, recorded activity, questions, accepted answers and recorded outcome SHALL remain inspectable
+- **AND** inspecting that history SHALL NOT execute work or silently substitute a different provider or model
 
 ### Requirement: Explicit human questions
 
@@ -352,11 +363,16 @@ The owner SHALL be able to select Anthropic or OpenAI subscription access for a 
 
 ### Requirement: Subscription access can be established without a browser on the host
 
-The system SHALL provide documented means to establish and reauthorize access to each supported subscription provider without requiring a browser on the runtime host.
+The system SHALL provide documented means to establish and reauthorize access to each supported subscription provider using only a normal browser on the owner's device, without requiring a browser on the runtime host. Required owner-side setup SHALL NOT require an installed helper, browser extension, client-side CLI command, tunnel, or credential-file transfer. Optional server-side operator tooling MAY remain available.
 
 #### Scenario: Authorize a runtime host without a browser
 - **WHEN** the runtime host has no browser and the owner follows the documented authorization procedure using a browser on another device
 - **THEN** the owner SHALL be able to establish access to either supported subscription provider
+
+#### Scenario: Authorize or reconnect from a browser-only device
+- **WHEN** the owner establishes or reauthorizes a supported provider from another device with access to the console
+- **THEN** the required owner actions SHALL be completable in a normal browser
+- **AND** no installed helper, extension, client-side CLI command, tunnel or credential-file transfer SHALL be required
 
 ### Requirement: Anthropic access can be connected from the console
 
@@ -407,6 +423,12 @@ Existing usable authorization, including successfully renewed credentials, SHALL
 #### Scenario: Restart retains usable authorization
 - **WHEN** the runtime restarts while its saved subscription authorization remains usable
 - **THEN** subsequent provider requests SHALL use that authorization without requiring the owner to authorize again
+
+#### Scenario: Removing an integration preserves credentials without reusing them
+- **WHEN** a build removes a provider integration while private authorization for that provider is saved
+- **THEN** the removal SHALL leave the saved authorization unchanged in private storage
+- **AND** the removed integration SHALL NOT log in, renew authorization or send model requests
+- **AND** retained credentials SHALL NOT be treated as authorization for another integration or as evidence that the removed integration is available
 
 ### Requirement: Authorization failures explain how to restore access
 

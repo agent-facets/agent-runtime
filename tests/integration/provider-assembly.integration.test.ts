@@ -24,15 +24,8 @@ import { KeyedSerializer } from '../../packages/runtime/src/persistence/keyed-se
 import { openPersistence, type Persistence } from '../../packages/runtime/src/persistence/persistence.ts';
 import { createProviderAssembly } from '../../packages/runtime/src/providers/assembly.ts';
 import { RunStore } from '../../packages/runtime/src/records/run-store.ts';
-import type { Provider, ProviderBinding } from '../../packages/runtime/src/records/schemas.ts';
+import type { ProviderBinding } from '../../packages/runtime/src/records/schemas.ts';
 import { createFixture } from '../../packages/runtime/test-support/workspace.ts';
-import {
-  functionCallTurn,
-  openaiUnauthorized,
-  responsesStream,
-  syntheticJwt,
-  textTurn,
-} from '../support/openai-network.ts';
 import { createScratchDatabase, type ScratchDatabase } from '../support/scratch-database.ts';
 
 let db: ScratchDatabase;
@@ -54,8 +47,6 @@ afterAll(async () => {
 const NOW = Date.now();
 const access = (generation: number) => `sk-ant-oat01-assembly-access-${generation}-token`;
 const refresh = (generation: number) => `sk-ant-ort01-assembly-refresh-${generation}-token`;
-const openaiAccess = (generation: number) => `synthetic-openai-assembly-access-${generation}-token`;
-const openaiRefresh = (generation: number) => `synthetic-openai-assembly-refresh-${generation}-token`;
 
 // --- Fake Anthropic network ----------------------------------------------------------------------------------------
 
@@ -134,82 +125,44 @@ function tokenEndpoint(replies: Response[]) {
 
 let counter = 0;
 
-function operatorConfig(
-  stateDir: string,
-  model = 'claude-opus-5',
-  profileId = 'claude-cli-2.1.280',
-  provider: Provider = 'anthropic',
-): OperatorConfig {
+function operatorConfig(stateDir: string, model = 'claude-opus-5', profileId = 'claude-cli-2.1.280'): OperatorConfig {
   return parseOperatorConfig(
     JSON.stringify({
       version: 1,
       workspace: { id: 'main', label: 'Main workspace', root: fixture.root },
-      providers:
-        provider === 'anthropic'
-          ? { anthropic: { authMode: 'subscription', model, profileId } }
-          : {
-              anthropic: { authMode: 'subscription', model: 'claude-opus-5', profileId: 'claude-cli-2.1.280' },
-              openai: { authMode: 'subscription', model, profileId },
-            },
-      defaultProvider: provider,
+      providers: { anthropic: { authMode: 'subscription', model, profileId } },
+      defaultProvider: 'anthropic',
     }),
     { stateDir, configFile: join(stateDir, 'config.json') },
   );
 }
 
-async function service(options: {
-  replies: (() => Response)[];
-  tokens?: Response[];
-  credential?: boolean;
-  provider?: Provider;
-}) {
-  const provider = options.provider ?? 'anthropic';
+async function service(options: { replies: (() => Response)[]; tokens?: Response[]; credential?: boolean }) {
   const stateDir = join(scratch, `state-${++counter}`);
   mkdirSync(stateDir, { mode: 0o700 });
   if (options.credential !== false) {
-    await CredentialStore.forStateDir(stateDir).replace(
-      provider === 'anthropic'
-        ? {
-            version: 1,
-            provider: 'anthropic',
-            authMode: 'subscription',
-            slot: 'default',
-            generation: 1,
-            updatedAtMs: NOW,
-            lifecycle: 'usable',
-            accessToken: access(1),
-            refreshToken: refresh(1),
-            expiresAtMs: NOW + 3_600_000,
-            account: {},
-          }
-        : {
-            version: 1,
-            provider: 'openai',
-            authMode: 'subscription',
-            slot: 'default',
-            generation: 1,
-            updatedAtMs: NOW,
-            lifecycle: 'usable',
-            accessToken: openaiAccess(1),
-            refreshToken: openaiRefresh(1),
-            expiresAtMs: NOW + 3_600_000,
-            account: { accountId: 'acct_assembly_1' },
-          },
-    );
+    await CredentialStore.forStateDir(stateDir).replace({
+      version: 1,
+      provider: 'anthropic',
+      authMode: 'subscription',
+      slot: 'default',
+      generation: 1,
+      updatedAtMs: NOW,
+      lifecycle: 'usable',
+      accessToken: access(1),
+      refreshToken: refresh(1),
+      expiresAtMs: NOW + 3_600_000,
+      account: {},
+    });
   }
   const net = network(options.replies);
   const tokens = tokenEndpoint(options.tokens ?? []);
-  const config =
-    provider === 'anthropic'
-      ? operatorConfig(stateDir)
-      : operatorConfig(stateDir, 'gpt-5.6-sol', 'codex-0.151.0', 'openai');
-  const logs: string[] = [];
+  const config = operatorConfig(stateDir);
   const assembly = createProviderAssembly({
     config,
     stateDir,
     inferenceTransport: net.fetchImpl,
     authTransport: tokens.fetchImpl,
-    log: (line) => logs.push(line),
   });
   const store = new RunStore(persistence.app, persistence.ownership);
   const gates = new KeyedSerializer();
@@ -229,13 +182,12 @@ async function service(options: {
     reports: wired.reports,
   });
   const wire = (
-    runId: string,
     binding: ProviderBinding,
     admission: RequestAdmission,
     signal: () => AbortSignal,
     inflight: InFlight,
   ) => {
-    const wired = assembly.wire({ binding, runId, admission, signal, track: (work) => inflight.track(work) });
+    const wired = assembly.wire({ binding, admission, signal, track: (work) => inflight.track(work) });
     if ('unavailable' in wired) throw new Error(wired.unavailable);
     return wired;
   };
@@ -248,7 +200,7 @@ async function service(options: {
     const options = agentOptions(
       runId,
       crypto.randomUUID(),
-      wire(runId, binding, refuseAll, () => new AbortController().signal, new InFlight()),
+      wire(binding, refuseAll, () => new AbortController().signal, new InFlight()),
       new InFlight(),
     );
     return { agent: createExecutionAgent(options), params: executionAgentParams(options) };
@@ -260,7 +212,6 @@ async function service(options: {
         wiring.runId,
         wiring.invocationId,
         wire(
-          wiring.runId,
           wiring.binding,
           runAdmission({
             store,
@@ -289,7 +240,7 @@ async function service(options: {
     const resolved =
       binding ??
       (() => {
-        const result = assembly.registry.resolve(provider);
+        const result = assembly.registry.resolve('anthropic');
         if (!result.ok) throw new Error(result.code);
         return result.binding;
       })();
@@ -304,7 +255,7 @@ async function service(options: {
     const { snapshot } = await store.createRun({
       requestId: crypto.randomUUID(),
       goal: 'Summarize the plan.',
-      provider: resolved.provider,
+      provider: 'anthropic',
       workspace: { id: 'main', label: 'Main workspace', root: fixture.root, policyDigest: workspace.digest },
       binding: resolved as Parameters<RunStore['createRun']>[0]['binding'],
       definition,
@@ -340,7 +291,7 @@ async function service(options: {
     return { consumed: Number(row.consumed), unconfirmed: Number(row.unconfirmed) };
   };
   const credentialFile = () =>
-    JSON.parse(readFileSync(CredentialStore.forStateDir(stateDir).pathFor(provider, 'default'), 'utf8'));
+    JSON.parse(readFileSync(CredentialStore.forStateDir(stateDir).pathFor('anthropic', 'default'), 'utf8'));
   return {
     assembly,
     controller,
@@ -355,7 +306,6 @@ async function service(options: {
     credentialFile,
     stateDir,
     config,
-    logs,
   };
 }
 
@@ -460,7 +410,6 @@ describe('production provider assembly on the official saver', () => {
     expect(
       s.assembly.wire({
         binding: { ...stored, profileId: 'claude-cli-9.9.9' },
-        runId,
         admission: {
           admit: async () => {
             throw new Error('unused');
@@ -473,7 +422,6 @@ describe('production provider assembly on the official saver', () => {
     expect(
       s.assembly.wire({
         binding: { ...stored, provider: 'openai' },
-        runId,
         admission: {
           admit: async () => {
             throw new Error('unused');
@@ -482,7 +430,7 @@ describe('production provider assembly on the official saver', () => {
         signal: () => new AbortController().signal,
         track: () => {},
       }),
-    ).toEqual({ unavailable: 'profile_unsupported' });
+    ).toEqual({ unavailable: 'integration_unavailable' });
   });
 
   test('an authentication rejection renews once; the retry is admitted and counted with the new generation', async () => {
@@ -570,167 +518,5 @@ describe('production provider assembly on the official saver', () => {
     await running.catch(() => {});
     expect(s.net.sent).toHaveLength(1);
     expect((await s.store.snapshot(runId)).state.kind).toBe('cancelled');
-  });
-});
-
-describe('production provider assembly with OpenAI', () => {
-  type ResponsesBody = { model: string; input: Record<string, unknown>[] };
-  const inputOf = (sent: { body: unknown }) => (sent.body as ResponsesBody).input;
-  const askNo = {
-    prompt: 'List the steps?',
-    input: {
-      kind: 'choice',
-      multiple: false,
-      options: [
-        { label: 'Yes', value: true },
-        { label: 'No', value: false },
-      ],
-    },
-  };
-
-  test('read, question, answer false, result: two turns after a tool result, replayed statelessly', async () => {
-    const s = await service({
-      provider: 'openai',
-      replies: [
-        () => responsesStream(functionCallTurn('t1', 'call_read', 'mcp_Read', { mode: 'file', path: 'notes/plan.md' })),
-        () => responsesStream(functionCallTurn('t2', 'call_ask', 'mcp_AskUser', askNo)),
-        () => responsesStream(textTurn('t3', 'You said no, so I will not list them.')),
-      ],
-    });
-    expect(await s.assembly.registry.readiness('openai')).toBe('ready');
-    const { runId, invocationId } = await s.createRun();
-    expect((await s.store.snapshot(runId)).binding).toMatchObject({
-      provider: 'openai',
-      model: 'gpt-5.6-sol',
-      profileId: 'codex-0.151.0',
-    });
-    const waiting = await s.controller.run(runId, invocationId, { kind: 'initial', goal: 'Summarize the plan.' });
-    if (waiting.kind !== 'waiting') throw new Error(`expected waiting, got ${waiting.kind}`);
-    const answered = await s.answer(runId, waiting.questionId, false);
-    if (answered.kind !== 'accepted') throw new Error(answered.kind);
-    const done = await s.controller.run(runId, answered.acceptance.invocationId, {
-      kind: 'resume',
-      ...answered.resume,
-    });
-    expect(done.kind).toBe('succeeded');
-    expect(s.net.sent).toHaveLength(3);
-    expect(await s.budget(runId)).toEqual({ consumed: 3, unconfirmed: 0 });
-
-    for (const sent of s.net.sent) {
-      expect(sent.headers.authorization).toBe(`Bearer ${openaiAccess(1)}`);
-      expect(sent.headers['chatgpt-account-id']).toBe('acct_assembly_1');
-      expect(sent.headers.originator).toBe('codex_exec');
-      expect(sent.headers['session-id']).toBe(runId);
-      expect(sent.body.model).toBe('gpt-5.6-sol');
-    }
-    // The second turn carries the read's result; the third the question's, both under their own call IDs, with
-    // each turn's encrypted reasoning replayed unchanged.
-    const second = inputOf(s.net.sent[1] as { body: unknown });
-    expect(second).toContainEqual(expect.objectContaining({ type: 'function_call', call_id: 'call_read' }));
-    expect(second).toContainEqual(expect.objectContaining({ type: 'function_call_output', call_id: 'call_read' }));
-    expect(second).toContainEqual(
-      expect.objectContaining({ type: 'reasoning', encrypted_content: 'gAAAA-t1-reasoning' }),
-    );
-    const third = inputOf(s.net.sent[2] as { body: unknown });
-    const output = third.find((item) => item.type === 'function_call_output' && item.call_id === 'call_ask');
-    expect(JSON.parse(String(output?.output))).toEqual({ outcome: 'ok', result: { answer: false } });
-    const stored = await storedText(runId);
-    expect(stored).not.toContain(openaiAccess(1));
-    expect(stored).not.toContain(openaiRefresh(1));
-  });
-
-  test('an authorization rejection renews once; the retry carries the new token and account together', async () => {
-    const renewedAccess = syntheticJwt({ exp: Math.floor(NOW / 1000) + 3600, sub: 'synthetic-renewed' });
-    const s = await service({
-      provider: 'openai',
-      replies: [openaiUnauthorized, () => responsesStream(textTurn('r1', 'Renewed.'))],
-      tokens: [
-        Response.json({
-          access_token: renewedAccess,
-          refresh_token: openaiRefresh(2),
-          id_token: syntheticJwt({ 'https://api.openai.com/auth': { chatgpt_account_id: 'acct_assembly_2' } }),
-        }),
-      ],
-    });
-    const { runId, invocationId } = await s.createRun();
-    expect((await s.controller.run(runId, invocationId, { kind: 'initial', goal: 'Summarize the plan.' })).kind).toBe(
-      'succeeded',
-    );
-    expect(s.net.sent.map((sent) => [sent.headers.authorization, sent.headers['chatgpt-account-id']])).toEqual([
-      [`Bearer ${openaiAccess(1)}`, 'acct_assembly_1'],
-      [`Bearer ${renewedAccess}`, 'acct_assembly_2'],
-    ]);
-    expect(s.tokens.sent).toEqual([
-      { client_id: 'app_EMoamEEZ73f0CkXaXp7hrann', grant_type: 'refresh_token', refresh_token: openaiRefresh(1) },
-    ]);
-    expect(await s.budget(runId)).toEqual({ consumed: 2, unconfirmed: 0 });
-    expect(s.credentialFile()).toMatchObject({
-      generation: 2,
-      lifecycle: 'usable',
-      account: { accountId: 'acct_assembly_2' },
-    });
-  });
-
-  test('a rejection right after renewal is definitive, and nothing falls back to another provider', async () => {
-    const s = await service({
-      provider: 'openai',
-      replies: [openaiUnauthorized, openaiUnauthorized],
-      tokens: [
-        Response.json({
-          access_token: syntheticJwt({ exp: Math.floor(NOW / 1000) + 3600, sub: 'synthetic-renewed' }),
-          refresh_token: openaiRefresh(2),
-        }),
-      ],
-    });
-    const { runId, invocationId } = await s.createRun();
-    const failed = await s.controller.run(runId, invocationId, { kind: 'initial', goal: 'Summarize the plan.' });
-    expect(failed).toMatchObject({ kind: 'failed', failure: { category: 'authorization' } });
-    expect(s.net.sent).toHaveLength(2);
-    expect(s.credentialFile()).toMatchObject({ lifecycle: 'reauthorization_required' });
-    expect(await s.assembly.registry.readiness('openai')).toBe('reauthorization_required');
-    // Anthropic is configured here but has no authorization stored: the failed OpenAI run used nothing of it.
-    expect(await s.assembly.registry.readiness('anthropic')).toBe('reauthorization_required');
-    expect(s.net.sent.every((sent) => sent.body.model === 'gpt-5.6-sol')).toBe(true);
-  });
-
-  test('a response ending at response.completed succeeds despite trailing events; an incomplete one is diagnosed by event names', async () => {
-    const complete = textTurn('c1', 'Done.');
-    const s = await service({
-      provider: 'openai',
-      replies: [
-        () => responsesStream(`${complete}data: {"type":"codex.response.metadata"}\n\ndata: [DONE]\n\n`),
-        () => responsesStream(complete.slice(0, complete.lastIndexOf('data:'))),
-      ],
-    });
-    const first = await s.createRun();
-    expect(
-      (await s.controller.run(first.runId, first.invocationId, { kind: 'initial', goal: 'Summarize the plan.' })).kind,
-    ).toBe('succeeded');
-    const second = await s.createRun();
-    expect(
-      await s.controller.run(second.runId, second.invocationId, { kind: 'initial', goal: 'Summarize the plan.' }),
-    ).toMatchObject({ kind: 'failed', failure: { reason: 'incomplete_response' } });
-    expect(s.logs.map((line) => JSON.parse(line))).toEqual([
-      {
-        event: 'model_stream_incomplete',
-        provider: 'openai',
-        operation: 'inference',
-        runId: second.runId,
-        streamEvents:
-          'response.created,response.output_item.added,response.content_part.added,response.output_text.delta,response.output_text.done,response.output_item.done',
-      },
-    ]);
-    expect(s.logs.join('\n')).not.toContain('Done.');
-  });
-
-  test('a run bound to an OpenAI profile this build does not implement is refused before dispatch', async () => {
-    const s = await service({ provider: 'openai', replies: [] });
-    const resolved = s.assembly.registry.resolve('openai');
-    if (!resolved.ok) throw new Error(resolved.code);
-    expect(s.assembly.registry.reconstruct({ ...resolved.binding, profileId: 'codex-9.9.9' })).toEqual({
-      ok: false,
-      code: 'profile_unsupported',
-    });
-    expect(s.net.sent).toEqual([]);
   });
 });
