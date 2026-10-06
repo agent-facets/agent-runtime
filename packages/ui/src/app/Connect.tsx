@@ -1,6 +1,11 @@
-// Connecting Anthropic from the console: open Anthropic's sign-in in another tab, then paste the code it shows.
-// The code lives only in this component's memory and goes only to the login endpoint; it is cleared as soon as it
-// is submitted or the login is cancelled.
+// Connecting a provider from the console.
+//
+// Anthropic: open Anthropic's sign-in in another tab, then paste the code it shows. The code lives only in this
+// component's memory and goes only to the login endpoint; it is cleared as soon as it is submitted or the login is
+// cancelled.
+//
+// OpenAI: the console shows a short code; the owner enters it on OpenAI's page in another tab and approves. The
+// runtime notices the approval itself, and this panel follows the attempt until it settles.
 import type { AuthAttempt, ProviderReadiness } from '@agent-runtime/contracts';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import type { ApiClient, ApiOutcome } from '../api/client.ts';
@@ -174,6 +179,141 @@ export function ConnectAnthropic({
             Connect Anthropic
           </button>{' '}
           <span className="hint">Sign in with your Claude account to let tasks use it.</span>
+        </p>
+      )}
+      {shown}
+    </div>
+  );
+}
+
+export function ConnectOpenAI({
+  client,
+  readiness,
+  onConnected,
+}: {
+  client: ApiClient;
+  readiness: ProviderReadiness;
+  /** Called once a login has been stored, so the page can reload provider readiness. */
+  onConnected: () => void;
+}) {
+  const [attempt, setAttempt] = useState<AuthAttempt | undefined>();
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<Notice>();
+
+  const settle = useCallback(
+    (outcome: ApiOutcome<AuthAttempt>, lostReply: string) => {
+      if (outcome.ok) {
+        const next = outcome.value;
+        if (next.state === 'connected') {
+          setAttempt(undefined);
+          setNotice({ tone: 'ok', text: 'Connected. You can start tasks now.' });
+          onConnected();
+        } else if (next.state === 'awaiting_approval' || next.state === 'completing') {
+          setAttempt(next);
+        } else {
+          setAttempt(undefined);
+          setNotice({
+            tone: 'error',
+            text:
+              next.failure?.message ??
+              (next.state === 'expired'
+                ? 'The code was not approved in time. Start a new login.'
+                : 'The login was cancelled.'),
+          });
+        }
+        return;
+      }
+      if (outcome.kind === 'refused') {
+        setAttempt(undefined);
+        setNotice({ tone: 'error', text: outcome.error.message });
+      } else {
+        setNotice({ tone: 'uncertain', text: lostReply });
+      }
+    },
+    [onConnected],
+  );
+
+  // The runtime waits for the approval; the panel reads the attempt back until it settles.
+  const pendingId = attempt?.attemptId;
+  useEffect(() => {
+    if (pendingId === undefined) return;
+    const timer = setInterval(async () => {
+      settle(await client.loginStatus(pendingId, 'openai'), 'Checking the login…');
+    }, STATUS_POLL_MS);
+    return () => clearInterval(timer);
+  }, [pendingId, client, settle]);
+
+  const begin = async () => {
+    setBusy(true);
+    setNotice(undefined);
+    settle(await client.beginLogin('openai'), UNREACHABLE);
+    setBusy(false);
+  };
+
+  const cancel = async () => {
+    if (attempt === undefined) return;
+    setBusy(true);
+    const outcome = await client.cancelLogin(attempt.attemptId, 'openai');
+    setBusy(false);
+    if (outcome.ok && outcome.value.state === 'cancelled') {
+      setAttempt(undefined);
+      setNotice(undefined);
+    } else settle(outcome, UNREACHABLE);
+  };
+
+  const shown = notice !== undefined && <p className={`notice ${notice.tone}`}>{notice.text}</p>;
+
+  if (attempt?.state === 'completing') {
+    return (
+      <div className="connect" aria-live="polite">
+        <p>Approved. Connecting OpenAI… This takes a few seconds.</p>
+        {shown}
+      </div>
+    );
+  }
+
+  if (attempt?.state === 'awaiting_approval' && attempt.authorizationUrl !== undefined) {
+    return (
+      <div className="connect" aria-live="polite">
+        <h2>Connect OpenAI</h2>
+        <ol>
+          <li>
+            <a className="button" href={attempt.authorizationUrl} target="_blank" rel="noopener noreferrer">
+              Open OpenAI sign-in
+            </a>{' '}
+            <span className="hint">Opens in a new tab. Sign in with your ChatGPT account.</span>
+          </li>
+          <li>
+            Enter this code there and approve: <code className="user-code">{attempt.userCode}</code>
+          </li>
+          <li>Come back here. This panel updates by itself once you approve.</li>
+        </ol>
+        <p className="hint">
+          Waiting for approval until {formatTime(attempt.expiresAt)}.{' '}
+          <button type="button" className="secondary" disabled={busy} onClick={() => void cancel()}>
+            Cancel
+          </button>
+        </p>
+        {shown}
+      </div>
+    );
+  }
+
+  return (
+    <div className="connect">
+      {readiness === 'ready' ? (
+        <p className="hint">
+          OpenAI is connected.{' '}
+          <button type="button" className="secondary" disabled={busy} onClick={() => void begin()}>
+            Reconnect
+          </button>
+        </p>
+      ) : (
+        <p>
+          <button type="button" disabled={busy} onClick={() => void begin()}>
+            Connect OpenAI
+          </button>{' '}
+          <span className="hint">Sign in with your ChatGPT account to let tasks use it.</span>
         </p>
       )}
       {shown}

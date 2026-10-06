@@ -1,13 +1,15 @@
 // The bounded Anthropic acceptance trial (task 12.8), shared by its offline rehearsal (scripted provider, the
 // browser suite) and the live trial the owner runs after fresh authorization (task 12.20). Both use the same
 // fixture content, the same two runs and the same pass conditions; only the provider behind the runtime differs.
+// The same trial runs against OpenAI by naming that provider and the deployment's ceiling (which then also covers
+// requests recorded before the trial); the trial's own two runs are still held to TRIAL.requestCeiling.
 //
 // The cap is enforced by the runtime itself, not by this tooling: the trial deployment's configuration sets each
 // run's budget to TRIAL.stepBudget and a deployment-wide ceiling of TRIAL.requestCeiling model requests, both
 // durable across restarts. Retries count against them. This module only refuses to proceed against a deployment
 // that is not configured that way, starts at most the two trial runs (by fixed request IDs, so repeating a step
 // never starts another), and reports what happened.
-import type { Options, RunEvent, RunSnapshot } from '../../packages/contracts/src/index.ts';
+import type { Options, Provider, RunEvent, RunSnapshot } from '../../packages/contracts/src/index.ts';
 import type { ApiClient } from '../../packages/ui/src/api/client.ts';
 
 export const TRIAL = Object.freeze({
@@ -58,39 +60,62 @@ export class TrialRefused extends Error {
   override readonly name = 'TrialRefused';
 }
 
+export interface TrialTarget {
+  provider: Provider;
+  /** The deployment-wide ceiling the trial expects to find configured. */
+  requestCeiling: number;
+}
+
+const DEFAULT_TARGET: TrialTarget = { provider: TRIAL.provider, requestCeiling: TRIAL.requestCeiling };
+
 /** Refuses a deployment whose limits, provider or workspace are not the trial's. */
-export async function checkTrialDeployment(client: ApiClient): Promise<Options> {
+export async function checkTrialDeployment(client: ApiClient, target: TrialTarget = DEFAULT_TARGET): Promise<Options> {
   const options = await client.options();
   if (!options.ok) throw new TrialRefused('the runtime’s options could not be read');
   const { value } = options;
-  const anthropic = value.providers.find((entry) => entry.provider === TRIAL.provider);
+  const provider = value.providers.find((entry) => entry.provider === target.provider);
   const problems = [
     value.defaultBudget !== TRIAL.stepBudget && `the step budget is ${value.defaultBudget}, not ${TRIAL.stepBudget}`,
-    value.modelRequestCeiling !== TRIAL.requestCeiling &&
-      `the model-request ceiling is ${value.modelRequestCeiling ?? 'unset'}, not ${TRIAL.requestCeiling}`,
-    anthropic === undefined && 'Anthropic is not configured',
-    anthropic !== undefined && anthropic.readiness !== 'ready' && `Anthropic is ${anthropic.readiness}`,
+    value.modelRequestCeiling !== target.requestCeiling &&
+      `the model-request ceiling is ${value.modelRequestCeiling ?? 'unset'}, not ${target.requestCeiling}`,
+    provider === undefined && `${target.provider} is not configured`,
+    provider !== undefined && provider.readiness !== 'ready' && `${target.provider} is ${provider.readiness}`,
     !value.workspace.available && 'the workspace is not available',
   ].filter((problem): problem is string => typeof problem === 'string');
   if (problems.length > 0) throw new TrialRefused(problems.join('; '));
   return value;
 }
 
-/** Starts the two trial runs, or finds them if they were already started. Never starts a third. */
-export async function startTrialRuns(client: ApiClient, trial: string): Promise<{ journey: string; cancel: string }> {
-  const ids = await trialRequestIds(trial);
-  const start = async (requestId: string, goal: string) => {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const outcome = await client.startRun({ requestId, goal, provider: TRIAL.provider });
-      if (outcome.ok) return outcome.value.run.runId;
-      // A lost reply is retried with the same request ID; anything definite stops the trial.
-      if (outcome.kind === 'refused' && outcome.error.acceptance !== 'unknown') {
-        throw new TrialRefused(`starting a trial run was refused: ${outcome.error.message}`);
-      }
+/** Starts one of the trial's two runs, or finds it if it was already started. Never starts another. */
+export async function startTrialRun(
+  client: ApiClient,
+  trial: string,
+  role: 'journey' | 'cancel',
+  provider: Provider = TRIAL.provider,
+): Promise<string> {
+  const requestId = (await trialRequestIds(trial))[role];
+  const goal = role === 'journey' ? TRIAL.journeyGoal : TRIAL.cancelGoal;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const outcome = await client.startRun({ requestId, goal, provider });
+    if (outcome.ok) return outcome.value.run.runId;
+    // A lost reply is retried with the same request ID; anything definite stops the trial.
+    if (outcome.kind === 'refused' && outcome.error.acceptance !== 'unknown') {
+      throw new TrialRefused(`starting a trial run was refused: ${outcome.error.message}`);
     }
-    throw new TrialRefused('starting a trial run did not get a reply');
+  }
+  throw new TrialRefused('starting a trial run did not get a reply');
+}
+
+/** Starts the two trial runs, or finds them if they were already started. Never starts a third. */
+export async function startTrialRuns(
+  client: ApiClient,
+  trial: string,
+  provider: Provider = TRIAL.provider,
+): Promise<{ journey: string; cancel: string }> {
+  return {
+    journey: await startTrialRun(client, trial, 'journey', provider),
+    cancel: await startTrialRun(client, trial, 'cancel', provider),
   };
-  return { journey: await start(ids.journey, TRIAL.journeyGoal), cancel: await start(ids.cancel, TRIAL.cancelGoal) };
 }
 
 export interface TrialReport {
@@ -118,9 +143,13 @@ async function history(client: ApiClient, runId: string): Promise<{ snapshot: Ru
 /**
  * The trial's pass conditions, from recorded history only: the journey read the note, asked one question, had
  * `false` accepted and finished with a result; the other run was cancelled while its question was pending and
- * stayed cancelled; and the requests charged stay within the cap.
+ * stayed cancelled; both ran on the trial's provider; and the requests charged stay within the cap.
  */
-export async function reportTrial(client: ApiClient, runs: { journey: string; cancel: string }): Promise<TrialReport> {
+export async function reportTrial(
+  client: ApiClient,
+  runs: { journey: string; cancel: string },
+  provider: Provider = TRIAL.provider,
+): Promise<TrialReport> {
   const journey = await history(client, runs.journey);
   const cancel = await history(client, runs.cancel);
   const charged = (snapshot: RunSnapshot) => snapshot.run.budget.consumed + snapshot.run.budget.unconfirmed;
@@ -130,6 +159,12 @@ export async function reportTrial(client: ApiClient, runs: { journey: string; ca
     total: charged(journey.snapshot) + charged(cancel.snapshot),
   };
   const findings: string[] = [];
+  for (const [name, run] of [
+    ['journey', journey],
+    ['second run', cancel],
+  ] as const) {
+    if (run.snapshot.run.provider !== provider) findings.push(`the ${name} ran on ${run.snapshot.run.provider}`);
+  }
   const kinds = (events: RunEvent[]) => events.map((event) => event.kind);
   const read = journey.events.some(
     (event) =>

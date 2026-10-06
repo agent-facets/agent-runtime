@@ -131,6 +131,12 @@ a.button {
   margin-bottom: 0.75rem;
 }
 
+.connect .user-code {
+  font-size: 1.25rem;
+  letter-spacing: 0.1em;
+  user-select: all;
+}
+
 button.danger {
   border-color: var(--bad);
   background: transparent;

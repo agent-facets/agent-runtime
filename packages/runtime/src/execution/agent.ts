@@ -54,6 +54,8 @@ export interface ExecutionAgentOptions extends ToolContext {
   modelCallSettled?: () => void;
   /** Where the terminal reports classified unsuccessful responses (its `failures.report`). */
   reports?: ModelCallReports;
+  /** The provider's check of a parsed response; a refusal reason fails the call before anything is stored. */
+  responseRefusal?: (message: AIMessage) => string | undefined;
 }
 
 /** The TerminalError behind an error: provider SDKs wrap what their `fetch` throws (as `cause`). */
@@ -103,6 +105,7 @@ export function boundaryMiddleware(options: {
   track?: (work: Promise<unknown>) => void;
   modelCallSettled?: () => void;
   reports?: ModelCallReports;
+  responseRefusal?: (message: AIMessage) => string | undefined;
 }) {
   return createMiddleware({
     name: 'ExecutionBoundary',
@@ -120,6 +123,23 @@ export function boundaryMiddleware(options: {
           throw new ExecutionFailure('model_request_failed', modelFailureEvidence(error, options.reports?.last()));
         }
         if (isCommand(response)) throw new ExecutionFailure('invariant_violation');
+        if (options.responseRefusal !== undefined) {
+          // A response the provider's own parse did not report complete is never stored or acted on.
+          if (!AIMessage.isInstance(response)) throw new ExecutionFailure('invariant_violation');
+          let refusal: string | undefined;
+          try {
+            refusal = options.responseRefusal(response);
+          } catch {
+            refusal = 'response_unreadable';
+          }
+          if (refusal !== undefined) {
+            throw new ExecutionFailure('model_request_failed', {
+              kind: 'terminal',
+              code: 'incomplete_response',
+              reason: refusal,
+            });
+          }
+        }
         const sanitized = sanitizeModelMessage(options.contentPolicy(), response as AIMessage, {
           assignId: options.newMessageId,
         });
@@ -279,6 +299,7 @@ export function executionAgentParams(options: ExecutionAgentOptions) {
         ...(options.track === undefined ? {} : { track: options.track }),
         ...(options.modelCallSettled === undefined ? {} : { modelCallSettled: options.modelCallSettled }),
         ...(options.reports === undefined ? {} : { reports: options.reports }),
+        ...(options.responseRefusal === undefined ? {} : { responseRefusal: options.responseRefusal }),
       }),
     ],
     version: 'v2' as const,

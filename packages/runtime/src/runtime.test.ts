@@ -40,7 +40,7 @@ describe('runtime lifecycle', () => {
           workspace: { id: 'main', label: 'Main', root: workspace },
           providers: {
             anthropic: { authMode: 'subscription', model: 'claude-opus-5', profileId: 'claude-cli-2.1.280' },
-            openai: { authMode: 'subscription', model: 'gpt-5.6-sol', profileId: 'codex-0.151.0' },
+            openai: { authMode: 'subscription', model: 'gpt-5.6-sol', profileId: 'codex-responses-v1' },
           },
           defaultProvider: 'anthropic',
         }),
@@ -66,7 +66,7 @@ describe('runtime lifecycle', () => {
         }),
         JSON.stringify({
           event: 'provider_readiness',
-          reason: 'integration_unavailable',
+          reason: 'reauthorization_required',
           provider: 'openai',
           operation: 'startup',
         }),
@@ -98,17 +98,12 @@ describe('runtime lifecycle', () => {
         account: { accountId: 'acct_synthetic' },
       });
       const lines = await readiness();
-      // Expired access is still ready: renewal happens on use, never at startup. A stored OpenAI authorization does
-      // not make OpenAI usable: this build has no integration for it.
-      expect(lines).toEqual([
-        JSON.stringify({ event: 'provider_readiness', reason: 'ready', provider: 'anthropic', operation: 'startup' }),
-        JSON.stringify({
-          event: 'provider_readiness',
-          reason: 'integration_unavailable',
-          provider: 'openai',
-          operation: 'startup',
-        }),
-      ]);
+      // Expired access is still ready: renewal happens on use, never at startup.
+      expect(lines).toEqual(
+        (['anthropic', 'openai'] as const).map((provider) =>
+          JSON.stringify({ event: 'provider_readiness', reason: 'ready', provider, operation: 'startup' }),
+        ),
+      );
       expect(lines.join('\n')).not.toContain('synthetic');
     } finally {
       rmSync(stateDir, { recursive: true, force: true });

@@ -7,7 +7,6 @@ import {
   computeCodeManifest,
   currentCodeManifest,
   EXECUTION_ROOTS,
-  NoProviderAdapter,
   PACKAGE_ROOT,
   PROVIDER_ROOTS,
 } from './code-manifest.ts';
@@ -136,44 +135,49 @@ describe('execution code manifest', () => {
     ).toThrow('outside its source');
   });
 
-  test('the Anthropic manifest covers the common closure and its adapter', async () => {
+  test('each provider manifest covers the common closure, its own adapter and nothing of the other', async () => {
     const anthropic = await currentCodeManifest('anthropic');
-    const paths = anthropic.executionCode.map((entry) => entry.path);
-    const names = anthropic.packages.map((entry) => entry.name);
-    for (const root of EXECUTION_ROOTS) expect(paths).toContain(root);
-    expect(paths).toContain('src/execution/tools.ts');
-    expect(paths).toContain('src/security/pre-graph.ts');
-    expect(paths.some((path) => path.startsWith('src/server') || path.includes('/ui/'))).toBe(false);
-    for (const name of [
-      'langchain',
-      '@langchain/core',
-      '@langchain/langgraph',
-      '@langchain/langgraph-checkpoint-postgres',
-      'zod',
-    ]) {
-      expect(names).toContain(name);
+    const openai = await currentCodeManifest('openai');
+    const paths = (manifest: typeof anthropic) => manifest.executionCode.map((entry) => entry.path);
+    const names = (manifest: typeof anthropic) => manifest.packages.map((entry) => entry.name);
+    for (const manifest of [anthropic, openai]) {
+      for (const root of EXECUTION_ROOTS) expect(paths(manifest)).toContain(root);
+      expect(paths(manifest)).toContain('src/execution/tools.ts');
+      expect(paths(manifest)).toContain('src/security/pre-graph.ts');
+      expect(paths(manifest).some((path) => path.startsWith('src/server') || path.includes('/ui/'))).toBe(false);
+      for (const name of [
+        'langchain',
+        '@langchain/core',
+        '@langchain/langgraph',
+        '@langchain/langgraph-checkpoint-postgres',
+        'zod',
+      ]) {
+        expect(names(manifest)).toContain(name);
+      }
+      expect(names(manifest)).not.toContain('turbo');
+      expect(names(manifest)).not.toContain('@biomejs/biome');
     }
-    expect(names).not.toContain('turbo');
-    expect(names).not.toContain('@biomejs/biome');
-    for (const root of PROVIDER_ROOTS.anthropic ?? []) expect(paths).toContain(root);
+    for (const root of PROVIDER_ROOTS.anthropic ?? []) expect(paths(anthropic)).toContain(root);
     // The internal subscription package's execution-used sources are part of Anthropic runs' definition.
     for (const file of ['index.ts', 'request.ts', 'billing.ts', 'profile.ts', 'response.ts', 'auth.ts']) {
-      expect(paths).toContain(`../anthropic-subscription/src/${file}`);
+      expect(paths(anthropic)).toContain(`../anthropic-subscription/src/${file}`);
     }
-    expect(paths.some((path) => path.includes('.test.') || path.includes('test-support'))).toBe(false);
+    expect(paths(anthropic).some((path) => path.includes('.test.') || path.includes('test-support'))).toBe(false);
     // Shared contracts used by execution (record and answer validation) are part of it; the console is not.
-    expect(paths).toEqual(expect.arrayContaining(['../contracts/src/questions.ts', '../contracts/src/text.ts']));
-    expect(paths.some((path) => path.startsWith('../ui/'))).toBe(false);
-    expect(paths.some((path) => path.startsWith('src/service/') || path === 'src/console.ts')).toBe(false);
-    expect(names).toEqual(expect.arrayContaining(['@langchain/anthropic', '@anthropic-ai/sdk']));
-  });
+    for (const manifest of [anthropic, openai]) {
+      expect(paths(manifest)).toEqual(
+        expect.arrayContaining(['../contracts/src/questions.ts', '../contracts/src/text.ts']),
+      );
+      expect(paths(manifest).some((path) => path.startsWith('../ui/'))).toBe(false);
+      expect(paths(manifest).some((path) => path.startsWith('src/service/') || path === 'src/console.ts')).toBe(false);
+    }
+    expect(names(anthropic)).toEqual(expect.arrayContaining(['@langchain/anthropic', '@anthropic-ai/sdk']));
+    expect(names(anthropic)).not.toContain('@langchain/openai');
 
-  test('this build has no OpenAI adapter, so there is no OpenAI manifest', async () => {
-    expect(Object.keys(PROVIDER_ROOTS)).toEqual(['anthropic']);
-    await expect(currentCodeManifest('openai')).rejects.toBeInstanceOf(NoProviderAdapter);
-    const anthropic = await currentCodeManifest('anthropic');
-    expect(anthropic.executionCode.some((entry) => entry.path.includes('providers/openai'))).toBe(false);
-    expect(anthropic.packages.map((entry) => entry.name)).not.toContain('@langchain/openai');
+    for (const root of PROVIDER_ROOTS.openai ?? []) expect(paths(openai)).toContain(root);
+    expect(paths(openai).some((path) => path.startsWith('../anthropic-subscription/'))).toBe(false);
+    expect(names(openai)).toEqual(expect.arrayContaining(['@langchain/openai', 'openai']));
+    expect(names(openai)).not.toContain('@langchain/anthropic');
   });
 
   test('the build writes the same per-provider manifests beside the bundle', async () => {
@@ -184,7 +188,10 @@ describe('execution code manifest', () => {
     });
     expect(child.exitCode).toBe(0);
     const written = await Bun.file(join(outdir, CODE_MANIFEST_FILE)).json();
-    expect(written).toEqual({ version: 2, providers: { anthropic: await currentCodeManifest('anthropic') } });
+    expect(written).toEqual({
+      version: 2,
+      providers: { anthropic: await currentCodeManifest('anthropic'), openai: await currentCodeManifest('openai') },
+    });
     const build = (await Bun.file(resolve(PACKAGE_ROOT, 'package.json')).json()).scripts.build as string;
     expect(build).toContain('src/build/write-code-manifest.ts dist');
   });

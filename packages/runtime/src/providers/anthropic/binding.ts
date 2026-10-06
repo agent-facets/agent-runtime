@@ -3,12 +3,12 @@
 // retry, and the screening scope and failure reports the model boundary consumes. This is the Anthropic adapter's
 // execution root: its closure is part of the execution definition of runs bound to Anthropic.
 import { profileFor } from '@agent-runtime/anthropic-subscription';
-import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import type { CredentialCoordinator } from '../../credentials/coordinator.ts';
 import { type CredentialScreen, ScreenScope } from '../../credentials/screening.ts';
 import { ModelCallReports } from '../../execution/failures.ts';
 import { createTerminal, type RequestAdmission } from '../../execution/terminal.ts';
 import type { ProviderBinding } from '../../records/schemas.ts';
+import type { WiredModel } from '../model.ts';
 import {
   ANTHROPIC_INFERENCE_POLICY,
   anthropicCredentials,
@@ -28,14 +28,6 @@ export interface AnthropicInvocation {
   track: (work: Promise<unknown>) => void;
   deadlineMs: number;
   transport?: typeof fetch;
-}
-
-export interface WiredModel {
-  model: BaseChatModel;
-  /** For the model boundary: ends the call's screening leases. */
-  modelCallSettled: () => void;
-  /** For the model boundary: the call's classified unsuccessful responses. */
-  reports: ModelCallReports;
 }
 
 export function wireAnthropicInvocation(

@@ -228,34 +228,34 @@ try {
     }
   });
 
-  await check('the image ships none of the retired OpenAI integration', async () => {
-    // Addresses, identifiers and headers only the removed Codex login and inference code used. The provider's name
-    // alone is not a marker: history and configuration still name it.
-    const markers = [
-      'auth.openai.com',
-      'api.openai.com',
-      'chatgpt.com/backend-api',
-      'app_EMoamEEZ73f0CkXaXp7hrann',
-      'deviceauth',
-      'codex_exec',
-      'x-codex',
-      '/auth/openai/',
-    ];
+  await check('the image ships the OpenAI adapter, without the retired Codex request wrapper', async () => {
+    // Present: the device login and the subscription endpoint. Absent: what only the retired wrapper sent or logged
+    // (a Codex client identity, its routing header, its byte-stream diagnostic).
+    const present = ['/api/accounts/deviceauth/usercode', 'chatgpt.com/backend-api/codex'];
+    const retired = ['codex_exec', 'x-codex-routing-hint', 'model_stream_incomplete'];
     const scan = await exec(
       'runtime',
       'bun',
       '-e',
-      `const markers = ${JSON.stringify(markers)}; const hits = []; let files = 0;
+      `const present = ${JSON.stringify(present)}; const retired = ${JSON.stringify(retired)};
+       const hits = []; const found = new Set(); const manifests = []; let files = 0;
        for (const path of new Bun.Glob('**/*').scanSync({ cwd: '/app', onlyFiles: true })) {
          files++;
          const text = await Bun.file('/app/' + path).text();
-         for (const marker of markers) if (text.includes(marker)) hits.push(path + ': ' + marker);
+         for (const marker of retired) if (text.includes(marker)) hits.push(path + ': ' + marker);
+         for (const marker of present) if (text.includes(marker)) found.add(marker);
+         if (path.endsWith('execution-manifest.json')) manifests.push(Object.keys(JSON.parse(text).providers).sort());
        }
-       console.log(JSON.stringify({ files, hits }));`,
+       console.log(JSON.stringify({ files, hits, found: [...found].sort(), manifests }));`,
     );
-    const result = JSON.parse(scan.stdout) as { files: number; hits: string[] };
+    const result = JSON.parse(scan.stdout) as { files: number; hits: string[]; found: string[]; manifests: string[][] };
     assert(result.files > 0, 'no application files were scanned');
-    assert(result.hits.length === 0, `retired OpenAI code shipped: ${result.hits.join(', ')}`);
+    assert(result.hits.length === 0, `retired OpenAI wrapper code shipped: ${result.hits.join(', ')}`);
+    assert(result.found.length === present.length, `the OpenAI adapter is missing: ${result.found.join(', ')}`);
+    assert(
+      JSON.stringify(result.manifests) === JSON.stringify([['anthropic', 'openai']]),
+      `unexpected execution manifests: ${JSON.stringify(result.manifests)}`,
+    );
   });
 
   await check('ordinary network peers cannot reach the runtime listener', async () => {
