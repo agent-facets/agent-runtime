@@ -1,10 +1,10 @@
-# Spec Delta
+# Execution Specification
 
 ## Purpose
 
 Let the owner start and observe agent tasks in a browser, answer questions, and receive durable results using subscription model access. Make disconnections, interruptions, failures, and the boundaries of permitted work explicit.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Reproducible development and operation
 
