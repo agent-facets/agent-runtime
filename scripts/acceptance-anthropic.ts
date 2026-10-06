@@ -8,10 +8,12 @@
 //   bun run acceptance:anthropic -- start  --origin <origin> --trial <name> [--provider <p> --ceiling <n>]
 //                                          [--run <journey|cancel>]
 //   bun run acceptance:anthropic -- report --origin <origin> --journey <run> --cancel <run> [--provider <p> --ceiling <n>]
+//                                          [--expected-answer <false|no>]
 //
 // `check` changes nothing. `start` starts (or finds) the trial's two runs, or only the one `--run` names; repeating
 // it starts nothing new. `report` only reads the two runs `start` printed and states whether the pass conditions
-// hold.
+// hold. The journey's answer must be the boolean `false`, or the string "no" with `--expected-answer no` when the
+// question declared that value. Its request count is a subtotal of those two runs only.
 import { parseArgs } from 'node:util';
 import { ApiClient } from '../packages/ui/src/api/client.ts';
 import {
@@ -23,7 +25,7 @@ import {
 } from '../tests/acceptance/anthropic-trial.ts';
 
 const USAGE =
-  'usage: acceptance:anthropic <check|start> --origin <https://host | http://127.0.0.1:port> [--trial <name>] [--run <journey|cancel>] | report --origin <origin> --journey <run> --cancel <run>; each with [--provider <anthropic|openai> --ceiling <n>]';
+  'usage: acceptance:anthropic <check|start> --origin <https://host | http://127.0.0.1:port> [--trial <name>] [--run <journey|cancel>] | report --origin <origin> --journey <run> --cancel <run> [--expected-answer <false|no>]; each with [--provider <anthropic|openai> --ceiling <n>]';
 
 const { positionals, values } = parseArgs({
   args: Bun.argv.slice(2),
@@ -35,6 +37,7 @@ const { positionals, values } = parseArgs({
     provider: { type: 'string' },
     ceiling: { type: 'string' },
     run: { type: 'string' },
+    'expected-answer': { type: 'string' },
   },
   allowPositionals: true,
   strict: true,
@@ -45,6 +48,7 @@ const origin = values.origin;
 const trial = values.trial ?? 'g4';
 const provider = values.provider ?? TRIAL.provider;
 const ceiling = values.ceiling === undefined ? TRIAL.requestCeiling : Number(values.ceiling);
+const expectedAnswer = values['expected-answer'];
 if (
   positionals.length !== 1 ||
   (action !== 'check' && action !== 'start' && action !== 'report') ||
@@ -55,6 +59,7 @@ if (
   !Number.isInteger(ceiling) ||
   ceiling < 1 ||
   (values.run !== undefined && (action !== 'start' || (values.run !== 'journey' && values.run !== 'cancel'))) ||
+  (expectedAnswer !== undefined && (action !== 'report' || (expectedAnswer !== 'false' && expectedAnswer !== 'no'))) ||
   (action === 'report' && (!UUID.test(values.journey ?? '') || !UUID.test(values.cancel ?? '')))
 ) {
   console.error(USAGE);
@@ -89,9 +94,10 @@ try {
     client,
     { journey: values.journey as string, cancel: values.cancel as string },
     provider,
+    expectedAnswer === 'no' ? 'no' : false,
   );
   console.log(
-    `model requests: journey ${report.requests.journey}, cancellation ${report.requests.cancel}, total ${report.requests.total} of ${TRIAL.requestCeiling}`,
+    `model requests: journey ${report.requests.journey}, cancellation ${report.requests.cancel}, named-run subtotal ${report.requests.total} of ${TRIAL.requestCeiling} (these two runs only; other runs count against the deployment's ceiling)`,
   );
   for (const finding of report.findings) console.log(`finding: ${finding}`);
   console.log(report.passed ? 'trial conditions hold' : 'trial conditions do not hold');

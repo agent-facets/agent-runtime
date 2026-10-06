@@ -58,9 +58,12 @@ function usable(generation: number): CredentialRecord {
   };
 }
 
-function setup(options: { script?: Step[]; now?: () => number; replyWaitMs?: number; slot?: string | null } = {}) {
-  const state = join(scratch, `state-${++counter}`);
-  mkdirSync(state, { mode: 0o700 });
+function setup(
+  options: { script?: Step[]; now?: () => number; replyWaitMs?: number; slot?: string | null; state?: string } = {},
+) {
+  // Passing an earlier fixture's state directory stands in for a restarted runtime on the same private volume.
+  const state = options.state ?? join(scratch, `state-${++counter}`);
+  if (options.state === undefined) mkdirSync(state, { mode: 0o700 });
   const store = new CredentialStore(join(state, 'credentials'));
   const network = tokenEndpoint(options.script);
   const transport = createAnthropicAuthTransport(network.fetchImpl);
@@ -80,7 +83,7 @@ function setup(options: { script?: Step[]; now?: () => number; replyWaitMs?: num
     ...(options.now === undefined ? {} : { now: options.now }),
     ...(options.replyWaitMs === undefined ? {} : { replyWaitMs: options.replyWaitMs }),
   });
-  return { store, login, sent: network.sent, logs };
+  return { state, store, login, sent: network.sent, logs };
 }
 
 function attempt(outcome: LoginOutcome) {
@@ -233,6 +236,33 @@ describe('console login', () => {
     expect(sent).toHaveLength(1);
     const lock = await acquireProviderLock(store, 'anthropic', { waitMs: 200 });
     await lock.release();
+  });
+
+  test('a restart forgets an unfinished login: its code is never exchanged and saved authorization is untouched', async () => {
+    const before = setup({ script: [granted] });
+    await before.store.replace(usable(3));
+    const record = before.store.pathFor('anthropic', 'default');
+    const saved = await Bun.file(record).bytes();
+    const begun = attempt(await before.login.start());
+    const code = pasted(begun.authorizationUrl);
+    await before.login.stop();
+
+    const after = setup({ script: [granted], state: before.state });
+    expect(after.login.status(begun.attemptId).kind).toBe('not_found');
+    expect(after.login.cancel(begun.attemptId).kind).toBe('not_found');
+    expect((await after.login.complete(begun.attemptId, code)).kind).toBe('not_found');
+    expect(before.sent).toEqual([]);
+    expect(after.sent).toEqual([]);
+    expect(await Bun.file(record).bytes()).toEqual(saved);
+    expect(await generation(after.store)).toBe(3);
+
+    // Only an explicit new login starts again, as a different attempt; beginning it sends nothing.
+    const next = attempt(await after.login.start());
+    expect(next.attemptId).not.toBe(begun.attemptId);
+    expect(next.state).toBe('awaiting_code');
+    expect(after.sent).toEqual([]);
+    await after.login.stop();
+    expect(await Bun.file(record).bytes()).toEqual(saved);
   });
 
   test('without Anthropic configured there is nothing to connect', async () => {

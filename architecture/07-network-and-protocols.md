@@ -20,8 +20,11 @@ events for the browser console. Remote MCP, A2A, identity headers, app capabilit
   (begin, complete, status, cancel) behind the same Host/Origin checks, with a 32 KiB body limit and `no-store`
   responses; the pasted authorization code is the only secret any request carries, and no response contains it.
   Anthropic's sign-in returns to its own callback page, not to this runtime, so no callback route exists.
-  The OpenAI login routes under `/api/v1/auth/openai/` were removed with the OpenAI integration (design
-  Decision 11); requests to them get the ordinary not-found answer and reach no issuer.
+  Connecting OpenAI uses three POST operations under `/api/v1/auth/openai/` (begin, status, cancel) behind the same
+  checks and limits. It is a device login: only begin contacts OpenAI, which returns a short user code and its
+  verification page; while the attempt awaits approval, responses carry those two for the owner to use on OpenAI's
+  page. The runtime then polls OpenAI itself, so there is no completion endpoint, nothing is pasted back and no
+  callback route or listener exists. Device identifiers, verifiers and tokens never leave the server.
 - **SSE replay is real storage, not free.** Each event is a committed database row with a per-run decimal sequence,
   allocated in the same transaction as the change it records. A stream replays rows after the client's cursor (the
   snapshot's `throughSeq`, or `Last-Event-ID` on reconnect) and then tails the run by querying again; there is no

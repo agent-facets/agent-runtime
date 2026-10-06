@@ -1,8 +1,8 @@
 # agent-runtime
 
 A personal agent runtime: start a repository task from a browser, leave, return, answer the agent's
-questions, and collect the result using an existing Anthropic or ChatGPT subscription. (OpenAI support has been
-rebuilt on the stock library and awaits live acceptance; see [Providers](#providers).)
+questions, and collect the result using an existing Anthropic or ChatGPT subscription. (OpenAI support was
+rebuilt on the stock library; its live trial was accepted with documented exceptions; see [Providers](#providers).)
 
 > **Status: the Anthropic browser slice works against a real Claude subscription,** locally and in the shipped
 > Docker deployment over Tailscale Serve (see [G4 live](architecture/integration-evidence/mvp-01/g4-anthropic-live.md)
@@ -12,8 +12,9 @@ rebuilt on the stock library and awaits live acceptance; see [Providers](#provid
 > and the Anthropic [provider](#providers) exist: subscription login (from the console or a terminal), renewal and
 > inference, verified against scripted provider networks, including real-browser journeys, and live. The earlier
 > OpenAI integration failed its live journey and was removed; OpenAI is now **restored** with the earlier device
-> login and stock `ChatOpenAI` inference, verified offline only so far (see [Providers](#providers)). The remaining
-> acceptance work is tracked in
+> login and stock `ChatOpenAI` inference, and its live trial in the Docker deployment was accepted by the owner
+> with documented exceptions ([G5 recovery](architecture/integration-evidence/mvp-01/g5-openai-recovery.md)). The
+> final acceptance of the phase is still to come; that work is tracked in
 > [`openspec/changes/mvp-01-interactive-agent-execution`](openspec/changes/mvp-01-interactive-agent-execution/tasks.md).
 
 Further reading:
@@ -70,9 +71,10 @@ mise exec -- bun install --frozen-lockfile  # reproduces bun.lock exactly
 ```
 
 Pinned tools: Bun 1.3.14 (`mise.toml` and `packageManager`), Turbo 2.10.4, TypeScript 5.9.3, Biome 2.4.15.
-Bun is configured to add exact versions. The runtime pins LangChain 1.5.14, `@langchain/core` 1.2.13, LangGraph
-1.4.13 with its PostgreSQL checkpointer, and the provider model `@langchain/anthropic` 1.5.11 (with
-`@anthropic-ai/sdk` 0.122.0), all in `packages/runtime/package.json`. Their Bun compatibility is verified by the offline suites, not by live use. The
+Bun is configured to add exact versions. The runtime pins LangChain 1.5.14, `@langchain/core` 1.2.14, LangGraph
+1.4.13 with its PostgreSQL checkpointer, and the provider models `@langchain/anthropic` 1.5.11 (with
+`@anthropic-ai/sdk` 0.122.0) and `@langchain/openai` 1.6.2 (with `openai` 7.28.0), all in
+`packages/runtime/package.json`. Their Bun compatibility is verified by the offline suites, not by live use. The
 console pins React and React DOM 19.3.0 (`packages/ui`); browser journeys use Playwright 1.63.0 (root development
 dependency) with its headless Chromium, installed once with `bun run browser:install`.
 
@@ -108,8 +110,8 @@ Run from the repository root (prefix with `mise exec --` if mise is not activate
 | `bun run test:browser` | Starts a disposable PostgreSQL fixture and runs `tests/browser`: the built console in headless Chromium against the run service, with scripted providers, including the acceptance-trial rehearsal. Requires Docker and `bun run browser:install`. |
 | `bun run console:offline` | Runs the console on this machine at `http://127.0.0.1:4310/` (or a free port, printed) with nothing real behind it: a disposable PostgreSQL fixture, a synthetic workspace and credential, and a scripted model that reads a file, asks one question and reports your answer. Goals containing “text”, “several” or “fail” choose a text question, a multiple-choice question or a provider failure. No provider is contacted. Ctrl+C stops it and removes everything it created. Requires Docker. |
 | `bun run browser:install` | Downloads the pinned Playwright headless Chromium (once, into Playwright's user cache). |
-| `bun run test:container` | Builds the image and smoke-tests the isolated Compose topology, including the served console and the Host/Origin checks. Requires Docker. |
-| `bun run acceptance:anthropic` | The live Anthropic trial's operator tool; use only as the [checklist](deploy/runtime/anthropic-acceptance.md) describes, after fresh authorization. |
+| `bun run test:container` | Builds the image and smoke-tests the isolated Compose topology, including the served console and the Host/Origin checks, then rehearses an image rollback over preserved storage (below). Stops at the first failed check. Requires Docker. |
+| `bun run acceptance:anthropic` | The live trial's operator tool (Anthropic by default; `--provider openai --ceiling <n>` for OpenAI); use only as the [checklist](deploy/runtime/anthropic-acceptance.md) describes, after fresh authorization. Its `report` only reads two named runs. |
 | `bun run provenance:anthropic` | Maintenance only, uses the network: re-verifies the subscription package's recorded upstream baseline, or lists what differs at a candidate revision (see [PROVENANCE.md](packages/anthropic-subscription/PROVENANCE.md)). Never part of `check`. |
 
 Turbo caching is **local only** (remote caching and telemetry disabled). Package tasks are invalidated by
@@ -126,6 +128,19 @@ environment, and refuse to start if storage, Compose, credential or provider var
 Compose project with fresh storage and removes only what it created. The container smoke replaces the
 Tailscale daemon with an inert namespace holder, so it performs no tailnet login and proves Docker topology,
 not real Serve/HTTPS behavior.
+
+**Rollback rehearsal.** The container suite builds two images from one disposable copy of the build context; the
+second differs only in the console page's title, so both ship identical execution manifests for both providers
+while having distinct image IDs. With the runtime stopped, a test-only helper (`tests/container/rollback-state.ts`,
+bundled and mounted read-only into a one-off container) writes synthetic credentials and records one run per
+provider that is cancelled before any work, through the runtime's own stores. The runtime then moves from the first
+image to the second and back over the same database and private-state volumes. At each step the suite checks the
+running image ID and served title, readiness of both providers, that the database and private-state volumes are the
+same, and that a read-only fingerprint of every recorded run, event, invocation, definition and credential file is
+unchanged, with no model attempt. All fixture networks are internal. This shows that a compatible image can be
+rolled back on preserved storage; it is not a rollback of a live deployment, does not show compatibility with older
+execution code (a changed execution manifest refuses waiting runs instead), and leaves crash, question and
+cancellation semantics to the integration suites.
 
 ## Persistence
 
@@ -473,21 +488,35 @@ reauthorization, and later runs fail with authorization guidance without sending
 real renewal can be exercised deliberately; ordinary use never needs it, because access renews itself within five
 minutes of expiry. Like any renewal, one whose outcome is unknown marks the slot as needing a new login.
 
-**OpenAI (ChatGPT subscription): restored, offline-verified, live acceptance pending.** Sign-in is a device login
-with nothing to paste back and no callback: **Connect OpenAI** on the start form (or `auth openai login`) shows a
-link to OpenAI's device page and a short code; enter the code there from any browser and approve, and the runtime
-notices the approval itself and stores the authorization (`auth openai status|renew` work as for Anthropic).
-Inference is the stock `ChatOpenAI` in streaming Responses mode, pointed at the ChatGPT Codex backend
+**OpenAI (ChatGPT subscription): restored; live trial accepted with exceptions; final acceptance pending.** Sign-in
+is a device login with nothing to paste back and no callback: **Connect OpenAI** on the start form (or
+`auth openai login`) shows a link to OpenAI's device page and a short code; enter the code there from any browser
+and approve, and the runtime notices the approval itself and stores the authorization (`auth openai status|renew`
+work as for Anthropic). The device protocol is the project's own TypeScript, not a library's; the account ID it
+stores comes from the decoded ID token, whose signature is not verified. Inference is the stock `ChatOpenAI`
+(`@langchain/openai` 1.6.2, `openai` 7.28.0) in streaming Responses mode, pointed at the ChatGPT Codex backend
 (`https://chatgpt.com/backend-api/codex/responses`) through the same guarded terminal, with stateless replay
-(`store: false`, encrypted reasoning) and only public library settings; it identifies itself as `agent_runtime`
-and does not imitate a Codex client. A response counts only when the library's own parse reports it `completed`:
-anything else fails the run before the response is stored or any tool in it runs. This uses the same Codex backend
-the Codex CLI uses with a ChatGPT sign-in; it is not OpenAI's API-key platform and not a vendor-documented
-third-party interface. Use the profile `codex-responses-v1`. An earlier build reached OpenAI by imitating the Codex
-CLI, and every real model request it made failed as incomplete
-([evidence](architecture/integration-evidence/mvp-01/g5-openai-live.md)); that wrapper stays removed. Runs it
-recorded (profile `codex-0.151.0`) stay readable, and a question they left waiting cannot be answered (answering
-closes the run as `continuation_unavailable`); they are never rebound to the current profile.
+(`store: false`, encrypted reasoning) and only public library settings, with retries off. The terminal supplies the
+token and account header from one credential generation; requests identify the application as `agent_runtime`,
+carry the run as their session and thread, and do not imitate a Codex client. A response counts only when the
+library's own parse reports it `completed`: anything else fails the run before the response is stored or any tool
+in it runs. This uses the same Codex backend the Codex CLI uses with a ChatGPT sign-in; it is not OpenAI's API-key
+platform and not a vendor-documented third-party interface, so it can change without notice. Use the profile
+`codex-responses-v1`. An earlier build reached OpenAI by imitating the Codex CLI, and every real model request it
+made failed as incomplete ([evidence](architecture/integration-evidence/mvp-01/g5-openai-live.md)); that wrapper
+stays removed. Runs it recorded (profile `codex-0.151.0`) stay readable, and a question they left waiting cannot be
+answered (answering closes the run as `continuation_unavailable`); they are never rebound to the current profile.
+Saved OpenAI authorization is the same subscription sign-in either way and was kept without conversion.
+
+The restored OpenAI build (`dbf7145`) was tried live in the Docker deployment on 2026-10-06 and the owner accepted
+the result with exceptions. Observed then: a fresh console device login and one deliberate renewal; a journey
+whose question waited through a runtime restart and recreation (but was answered "yes"); a repeat journey
+answered "no" with a result that respected it (finished before the recreation); a cancellation that stayed
+cancelled after a restart; nine new OpenAI model requests, all successful, including two of the owner's own runs.
+The trial report failed one check, because it then accepted only the boolean `false` and the question had declared
+the string `"no"`; it can now be told which one to expect (`--expected-answer no`). See the
+[recovery record](architecture/integration-evidence/mvp-01/g5-openai-recovery.md). The phase's final acceptance
+(including whether Anthropic's earlier live results still apply to this build) has not been run.
 
 Offline verification runs the stock model inside the stock agent against scripted provider streams
 (`src/providers/anthropic/inference.test.ts`, `src/providers/openai/inference.test.ts`, and the production assembly on the official saver in
@@ -557,8 +586,9 @@ part of readiness: an unauthorized provider is shown in the console and refuses 
 ## Limitations
 
 - The Anthropic slice has passed bounded live trials locally and in the Docker deployment over Tailscale Serve,
-  including one deliberate real token renewal. OpenAI has been rebuilt on the stock library and verified offline;
-  its live acceptance has not yet been run.
+  including one deliberate real token renewal. OpenAI has been rebuilt on the stock library; its live trial was
+  accepted with exceptions (see [Providers](#providers)), and it depends on a backend that is not a documented
+  third-party interface. The phase's final acceptance has not yet been run.
 - No application accounts: anyone your tailnet policy admits to the machine can use the console.
 - No backup, retention or restore tooling; ordinary restarts preserve the database volume, nothing more.
 - Read-only mounts and path checks are not a sandbox against hostile processes on the host; the workspace is

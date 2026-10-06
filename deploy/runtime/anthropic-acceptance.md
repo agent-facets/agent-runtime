@@ -1,5 +1,13 @@
 # Anthropic acceptance trial — operator checklist
 
+> **Current status (2026-10-06).** This checklist records the local Anthropic trial and its pass conditions. That
+> trial passed, as did the later Docker/Tailscale trial; neither result is changed here. The same tool runs the
+> trial against OpenAI with `--provider openai --ceiling <n>` (the deployment's ceiling, which also counts requests
+> made before the trial). The restored OpenAI build's live trial was accepted by the owner with documented
+> exceptions ([evidence](../../architecture/integration-evidence/mvp-01/g5-openai-recovery.md)); final acceptance
+> of both providers together is still pending.
+> Nothing here grants authority for a new trial.
+
 The bounded live trial behind gate G4 (MVP 01 task 12.12). **Do not start it without the fresh authorization
 confirmed at task 12.20**, which names the tested build, the model, the credential slot, the authorization
 operations (a console login, and renewal as the runtime performs it) and the request allowance. Nothing here grants
@@ -60,7 +68,13 @@ authorization, and refresh only as the runtime performs it on use. Connecting ma
 12. Open the cancellation run; when its question appears, press **Cancel run**. Restart the runtime again and
     confirm the run is still cancelled and its question closed.
 13. `bun run acceptance:anthropic -- report --origin http://127.0.0.1:<port> --journey <run> --cancel <run>` must
-    end with `trial conditions hold`, reporting at most 12 model requests.
+    end with `trial conditions hold`. It only reads the two named runs (which must differ). It checks that the
+    journey's one question offered the expected negative answer as a single choice and that exactly that value was
+    accepted for it — the boolean `false` by default; pass `--expected-answer no` only if the question declared the
+    string `"no"` instead. It also checks each run's budget is 6 with at most 6 model requests charged (unconfirmed
+    ones included), and at most 12 for the two runs together. That total is a **subtotal of the two named runs**:
+    requests by any other run, such as a repeated journey or the owner's own tasks, are not in it and must be
+    accounted for from the deployment's own totals.
 
 Record only safe outcomes: the report's lines, run states, the browser used, and the request counts. Never record
 tokens, authorization codes, raw provider bodies or the browser's network log.

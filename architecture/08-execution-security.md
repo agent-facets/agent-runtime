@@ -60,8 +60,16 @@ What Phase 1 enforces:
 - **Provider adapters** (`packages/runtime/src/providers/`, provider block). Token requests reach exactly one
   issuer endpoint and never follow redirects; inference headers are set by the provider profile, with SDK
   fingerprint headers and the SDK's sentinel key removed. The Anthropic subscription package performs no I/O of its
-  own and reads no environment. Offline suites scan checkpoints for the synthetic tokens of every generation used,
-  including across a renewal. (The OpenAI adapter was removed; design Decision 11.)
+  own and reads no environment. The OpenAI adapter configures the stock model only through public options; the
+  terminal sets its bearer token and account header from the same screened generation, and its requests name the
+  application (`agent_runtime`) and the run rather than imitate another client. Its responses are accepted only
+  when the library's own parse reports them `completed` without an error or invalid tool call; that check runs
+  before the response is sanitized, checkpointed or any tool in it runs. Offline suites scan checkpoints for the
+  synthetic tokens of every generation used, including across a renewal.
+- **Login material.** The one deliberate exception for display is OpenAI's short device user code (with its
+  verification page), shown only in the connection panel while an attempt awaits approval and cleared when it
+  ends; Anthropic's pasted code goes only to its login endpoint. Neither enters tasks, history, logs or browser
+  storage, and tokens, verifiers and device identifiers stay on the server.
 
 - **Browser surface** (`packages/runtime/src/service/`, `request-policy.ts`, `packages/ui`, console block). Goals and
   answers are screened before storage against live generations and the stored usable credentials of the configured

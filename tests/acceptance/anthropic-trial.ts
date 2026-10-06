@@ -2,7 +2,8 @@
 // browser suite) and the live trial the owner runs after fresh authorization (task 12.20). Both use the same
 // fixture content, the same two runs and the same pass conditions; only the provider behind the runtime differs.
 // The same trial runs against OpenAI by naming that provider and the deployment's ceiling (which then also covers
-// requests recorded before the trial); the trial's own two runs are still held to TRIAL.requestCeiling.
+// requests recorded before the trial); the trial's own two runs are still held to TRIAL.requestCeiling. The
+// journey's negative answer is `false` unless the report is told the question declared `"no"` instead.
 //
 // The cap is enforced by the runtime itself, not by this tooling: the trial deployment's configuration sets each
 // run's budget to TRIAL.stepBudget and a deployment-wide ceiling of TRIAL.requestCeiling model requests, both
@@ -118,9 +119,18 @@ export async function startTrialRuns(
   };
 }
 
+/**
+ * The negative answer the journey's question must have been answered with: the boolean `false` (the console's
+ * usual No choice), or the string `"no"` when that is the value the question declared. Compared exactly.
+ */
+export type ExpectedNegative = false | 'no';
+
 export interface TrialReport {
   passed: boolean;
-  /** Model requests charged to each run: confirmed sent plus admitted but unconfirmed. */
+  /**
+   * Model requests charged to each named run: confirmed sent plus admitted but unconfirmed. `total` covers these
+   * two runs only, not other runs in the deployment; the deployment's own ceiling accounts for those.
+   */
   requests: { journey: number; cancel: number; total: number };
   findings: string[];
 }
@@ -141,15 +151,19 @@ async function history(client: ApiClient, runId: string): Promise<{ snapshot: Ru
 }
 
 /**
- * The trial's pass conditions, from recorded history only: the journey read the note, asked one question, had
- * `false` accepted and finished with a result; the other run was cancelled while its question was pending and
- * stayed cancelled; both ran on the trial's provider; and the requests charged stay within the cap.
+ * The trial's pass conditions, from recorded history only: the journey read the note, asked one question offering
+ * the expected negative answer as a single choice, had exactly that value accepted for that question and finished
+ * with a result; the other run was cancelled while its question was pending and stayed cancelled; both are distinct
+ * runs on the trial's provider; and each run's budget and the two runs' requests stay within the trial's caps.
+ * Reading changes nothing.
  */
 export async function reportTrial(
   client: ApiClient,
   runs: { journey: string; cancel: string },
   provider: Provider = TRIAL.provider,
+  expectedAnswer: ExpectedNegative = false,
 ): Promise<TrialReport> {
+  if (runs.journey === runs.cancel) throw new TrialRefused('the journey and the second run must be different runs');
   const journey = await history(client, runs.journey);
   const cancel = await history(client, runs.cancel);
   const charged = (snapshot: RunSnapshot) => snapshot.run.budget.consumed + snapshot.run.budget.unconfirmed;
@@ -164,6 +178,11 @@ export async function reportTrial(
     ['second run', cancel],
   ] as const) {
     if (run.snapshot.run.provider !== provider) findings.push(`the ${name} ran on ${run.snapshot.run.provider}`);
+    const { maximum } = run.snapshot.run.budget;
+    if (maximum !== TRIAL.stepBudget) findings.push(`the ${name}’s budget is ${maximum}, not ${TRIAL.stepBudget}`);
+    if (charged(run.snapshot) > TRIAL.stepBudget) {
+      findings.push(`the ${name}’s ${charged(run.snapshot)} model requests exceed its cap of ${TRIAL.stepBudget}`);
+    }
   }
   const kinds = (events: RunEvent[]) => events.map((event) => event.kind);
   const read = journey.events.some(
@@ -174,17 +193,28 @@ export async function reportTrial(
       event.payload.disposition.outcome === 'ok',
   );
   if (!read) findings.push('the journey did not complete a workspace read');
+  const expected = JSON.stringify(expectedAnswer);
   const asked = journey.events.filter((event) => event.kind === 'question.asked');
   if (asked.length !== 1) findings.push(`the journey asked ${asked.length} questions, not one`);
-  const answered = journey.events.find((event) => event.kind === 'question.answered');
-  if (answered?.kind !== 'question.answered' || answered.payload.answer !== false) {
-    findings.push('the journey’s question was not answered with false');
+  const question = asked.length === 1 && asked[0]?.kind === 'question.asked' ? asked[0].payload : undefined;
+  if (question !== undefined) {
+    const { input } = question;
+    const offered =
+      input.kind === 'choice' && !input.multiple && input.options.some((option) => option.value === expectedAnswer);
+    if (!offered) findings.push(`the journey’s question did not offer ${expected} as a single choice`);
+  }
+  const answers = journey.events.filter((event) => event.kind === 'question.answered');
+  const answer = answers.length === 1 && answers[0]?.kind === 'question.answered' ? answers[0].payload : undefined;
+  if (answer === undefined || answer.questionId !== question?.questionId || answer.answer !== expectedAnswer) {
+    findings.push(`the journey’s question was not answered with ${expected}`);
   }
   if (journey.snapshot.run.state.kind !== 'succeeded')
     findings.push(`the journey is ${journey.snapshot.run.state.kind}`);
   if (cancel.snapshot.run.state.kind !== 'cancelled')
     findings.push(`the second run is ${cancel.snapshot.run.state.kind}`);
   if (!kinds(cancel.events).includes('question.closed')) findings.push('the second run’s question was not closed');
-  if (requests.total > TRIAL.requestCeiling) findings.push(`${requests.total} model requests exceed the cap`);
+  if (requests.total > TRIAL.requestCeiling) {
+    findings.push(`the two runs’ ${requests.total} model requests exceed the cap of ${TRIAL.requestCeiling}`);
+  }
   return { passed: findings.length === 0, requests, findings };
 }

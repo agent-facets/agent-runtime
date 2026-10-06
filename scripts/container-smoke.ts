@@ -1,9 +1,14 @@
 // Isolated container smoke test. Builds the runtime image and starts a uniquely named Compose project
 // with fresh volumes, a synthetic workspace, an inert Tailscale namespace holder and internal networks only.
 // It never reads the owner's .env, joins a tailnet or contacts model providers.
-import { mkdtempSync, rmSync } from 'node:fs';
+//
+// It ends with an image-rollback rehearsal: a second image built from the same source snapshot, differing only in
+// the console page's title, replaces the first over the same database and private-state volumes, and the first is
+// then restored. Recorded runs, credentials and activity must be unchanged throughout. This shows a compatible
+// image can be rolled back on preserved storage; it is not a rollback of a live deployment.
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { assertSafeLaunch, fixtureEnv, runCommand } from './lib/fixture-env.ts';
 import { repoRoot } from './lib/workspace.ts';
 
@@ -12,11 +17,16 @@ assertSafeLaunch('test:container', process.argv.slice(2), process.env);
 const id = crypto.randomUUID().slice(0, 8);
 const project = `agent-runtime-smoke-${id}`;
 const image = `agent-runtime/runtime:smoke-${id}`;
+const nextImage = `agent-runtime/runtime:smoke-${id}-ui-next`;
 const fixtureDir = mkdtempSync(join(tmpdir(), `${project}-`));
 const workspaceDir = join(fixtureDir, 'workspace');
+const buildContext = join(fixtureDir, 'build-context');
+const helperDir = join(fixtureDir, 'helper');
 const envFile = join(fixtureDir, 'empty.env');
 const configFile = join(fixtureDir, 'config.json');
 const PUBLIC_HOST = 'agent-runtime.smoke.invalid';
+const TITLE = '<title>Agent runtime</title>';
+const NEXT_TITLE = '<title>Agent runtime (rollback fixture)</title>';
 await Bun.write(join(workspaceDir, 'README.md'), 'synthetic workspace fixture\n');
 await Bun.write(envFile, '');
 await Bun.write(
@@ -24,10 +34,37 @@ await Bun.write(
   JSON.stringify({
     version: 1,
     workspace: { id: 'smoke', label: 'Smoke workspace', root: '/workspace' },
-    providers: { anthropic: { authMode: 'subscription', model: 'smoke-model', profileId: 'claude-cli-2.1.280' } },
+    providers: {
+      anthropic: { authMode: 'subscription', model: 'smoke-model', profileId: 'claude-cli-2.1.280' },
+      openai: { authMode: 'subscription', model: 'smoke-model', profileId: 'codex-responses-v1' },
+    },
     defaultProvider: 'anthropic',
   }),
 );
+
+/** Copies what the Docker build context admits (see .dockerignore) into a disposable snapshot. */
+function snapshotBuildContext() {
+  const patterns = [
+    'package.json',
+    'bun.lock',
+    'bunfig.toml',
+    'tsconfig.base.json',
+    'Dockerfile',
+    '.dockerignore',
+    'packages/*/package.json',
+    'packages/*/tsconfig.json',
+    'packages/*/src/**',
+    'packages/anthropic-subscription/THIRD_PARTY_NOTICES.md',
+    'packages/anthropic-subscription/licenses/**',
+  ];
+  for (const pattern of patterns) {
+    for (const path of new Bun.Glob(pattern).scanSync({ cwd: repoRoot, onlyFiles: true, dot: true })) {
+      if (/(^|\/)(node_modules|dist|\.turbo)\//.test(path)) continue;
+      mkdirSync(dirname(join(buildContext, path)), { recursive: true });
+      copyFileSync(join(repoRoot, path), join(buildContext, path));
+    }
+  }
+}
 
 const env = fixtureEnv(process.env, {
   AGENT_RUNTIME_WORKSPACE: workspaceDir,
@@ -39,7 +76,12 @@ const env = fixtureEnv(process.env, {
 const composeBase = ['docker', 'compose', '--project-name', project, '--env-file', envFile, '-f', 'compose.yaml'];
 const composeSmoke = [...composeBase, '-f', 'tests/container/compose.smoke.yaml'];
 const run = (cmd: string[], allowFailure = false) => runCommand(cmd, { env, cwd: repoRoot, allowFailure });
+/** The same, with Compose selecting `runtimeImage` for the runtime service. */
+const runWith = (runtimeImage: string, cmd: string[]) =>
+  runCommand(cmd, { env: { ...env, AGENT_RUNTIME_IMAGE: runtimeImage }, cwd: repoRoot });
 
+/** A failed check stops the suite: later checks build on the state earlier ones established. */
+class CheckFailed extends Error {}
 let failures = 0;
 async function check(name: string, body: () => Promise<void>) {
   try {
@@ -48,6 +90,7 @@ async function check(name: string, body: () => Promise<void>) {
   } catch (error) {
     failures++;
     console.error(`(fail) ${name}\n  ${error instanceof Error ? error.message : String(error)}`);
+    throw new CheckFailed();
   }
 }
 function assert(condition: unknown, message: string): asserts condition {
@@ -56,6 +99,7 @@ function assert(condition: unknown, message: string): asserts condition {
 
 interface Inspection {
   Id: string;
+  Image: string;
   Config: { User: string };
   HostConfig: { NetworkMode: string; ReadonlyRootfs: boolean; PortBindings: Record<string, unknown> | null };
   NetworkSettings: { Ports: Record<string, unknown> | null; Networks: Record<string, { IPAddress: string }> };
@@ -127,8 +171,54 @@ try {
     assert(rendered.services.runtime?.network_mode === 'service:tailscale', 'runtime does not share the namespace');
   });
 
-  console.log(`building and starting isolated project ${project}`);
-  await run([...composeSmoke, 'up', '--detach', '--build', '--wait', '--wait-timeout', '180']);
+  console.log(`building images ${image} and ${nextImage} from one source snapshot`);
+  snapshotBuildContext();
+  await run(['docker', 'build', '--tag', image, buildContext]);
+  const page = join(buildContext, 'packages', 'ui', 'src', 'index.html');
+  const html = await Bun.file(page).text();
+  if (!html.includes(TITLE)) throw new Error('the console page title was not found in the build snapshot');
+  await Bun.write(page, html.replace(TITLE, NEXT_TITLE));
+  await run(['docker', 'build', '--tag', nextImage, buildContext]);
+  const imageId = async (tag: string) =>
+    (await run(['docker', 'image', 'inspect', '--format', '{{.Id}}', tag])).stdout.trim();
+  const [firstId, nextId] = [await imageId(image), await imageId(nextImage)];
+
+  await check('the rollback images are distinct but ship identical execution manifests', async () => {
+    assert(firstId.startsWith('sha256:') && nextId.startsWith('sha256:'), 'image IDs were not captured');
+    assert(firstId !== nextId, 'the two images are the same image');
+    const manifests = await Promise.all(
+      [firstId, nextId].map(
+        async (imageRef) =>
+          (
+            await run([
+              'docker',
+              'run',
+              '--rm',
+              '--network',
+              'none',
+              '--entrypoint',
+              'cat',
+              imageRef,
+              '/app/dist/execution-manifest.json',
+            ])
+          ).stdout,
+      ),
+    );
+    const [first, next] = manifests.map((text) => JSON.parse(text) as { providers: Record<string, unknown> });
+    assert(
+      JSON.stringify(Object.keys(first?.providers ?? {}).sort()) === JSON.stringify(['anthropic', 'openai']),
+      'the first image does not ship both provider manifests',
+    );
+    for (const provider of ['anthropic', 'openai']) {
+      assert(
+        JSON.stringify(first?.providers[provider]) === JSON.stringify(next?.providers[provider]),
+        `the ${provider} execution manifest differs between the images`,
+      );
+    }
+  });
+
+  console.log(`starting isolated project ${project}`);
+  await run([...composeSmoke, 'up', '--detach', '--wait', '--wait-timeout', '180']);
 
   await check('runtime shares the Tailscale network namespace', async () => {
     const [runtime, holder] = await Promise.all([inspect('runtime'), inspect('tailscale')]);
@@ -289,12 +379,159 @@ try {
     const epoch = Number(await ownerEpoch());
     assert(epoch >= 2, `ownership did not move to the replacement runtime (epoch ${epoch})`);
   });
+
+  // --- Image rollback over preserved storage -----------------------------------------------------------------
+
+  await check('every network of the fixture is internal, so nothing can reach a provider', async () => {
+    const networks = (
+      await run(['docker', 'network', 'ls', '--quiet', '--filter', `label=com.docker.compose.project=${project}`])
+    ).stdout
+      .trim()
+      .split('\n')
+      .filter((line) => line !== '');
+    assert(networks.length > 0, 'no fixture networks found');
+    const inspected = JSON.parse((await run(['docker', 'network', 'inspect', ...networks])).stdout) as {
+      Name: string;
+      Internal: boolean;
+    }[];
+    for (const network of inspected) assert(network.Internal, `${network.Name} is not internal`);
+  });
+
+  const helper = await Bun.build({
+    entrypoints: [join(repoRoot, 'tests', 'container', 'rollback-state.ts')],
+    target: 'bun',
+    outdir: helperDir,
+    naming: 'rollback-state.js',
+  });
+  if (!helper.success) throw new Error(`the rollback fixture helper did not build: ${helper.logs.join('\n')}`);
+  chmodSync(helperDir, 0o755);
+  chmodSync(join(helperDir, 'rollback-state.js'), 0o644);
+  /** Runs the helper in a one-off container of `runtimeImage`, on the runtime's own volumes and namespace. */
+  const fixtureState = async (runtimeImage: string, mode: 'seed' | 'inspect') => {
+    const result = await runWith(runtimeImage, [
+      ...composeSmoke,
+      'run',
+      '--rm',
+      '--no-deps',
+      '-T',
+      '--volume',
+      `${helperDir}:/fixture:ro`,
+      '--entrypoint',
+      'bun',
+      'runtime',
+      '/fixture/rollback-state.js',
+      mode,
+    ]);
+    return JSON.parse(result.stdout.trim().split('\n').at(-1) ?? '') as unknown;
+  };
+
+  interface State {
+    fingerprint: string;
+    counts: Record<string, number>;
+    runs: { runId: string; provider: string; state: string; consumed: number; unconfirmed: number }[];
+    credentials: { provider: string; kind: string; generation?: number; lifecycle?: string; sha256: string }[];
+  }
+  let seeded: Record<string, string> = {};
+  let baseline: State | undefined;
+  let storage: { runtimeState?: string; postgres: string; postgresData?: string } | undefined;
+  const volumeOf = (info: Inspection, destination: string) =>
+    info.Mounts.find((mount) => mount.Destination === destination)?.Name;
+
+  /** Everything the rehearsal requires of the running runtime, whichever image it runs. */
+  async function verifyRunning(expectedId: string, title: string) {
+    const [runtime, database] = await Promise.all([inspect('runtime'), inspect('postgres')]);
+    assert(runtime.Image === expectedId, `runtime runs ${runtime.Image}, not ${expectedId}`);
+    await awaitPersistenceReady(120_000);
+    const page = await request('/', { headers: { host: PUBLIC_HOST } });
+    assert(page.status === 200 && page.body.includes(title), `console page does not show ${title}`);
+
+    const now = { runtimeState: volumeOf(runtime, '/var/lib/agent-runtime'), postgres: database.Id };
+    assert(storage !== undefined, 'storage identities were not recorded');
+    assert(now.runtimeState === storage.runtimeState, 'the private-state volume changed');
+    assert(now.postgres === storage.postgres, 'the database container was replaced');
+    assert(volumeOf(database, '/var/lib/postgresql/data') === storage.postgresData, 'the database volume changed');
+
+    const state = (await fixtureState(expectedId === firstId ? image : nextImage, 'inspect')) as State;
+    assert(baseline !== undefined, 'no baseline state');
+    assert(
+      state.fingerprint === baseline.fingerprint,
+      `recorded state changed: ${JSON.stringify(state.counts)} vs ${JSON.stringify(baseline.counts)}`,
+    );
+    assert(state.counts.model_attempts === 0, 'a model attempt was recorded');
+
+    const options = await request('/api/v1/options', { headers: { host: PUBLIC_HOST } });
+    const readiness = (JSON.parse(options.body) as { providers: { provider: string; readiness: string }[] }).providers;
+    assert(
+      JSON.stringify(readiness.map((p) => [p.provider, p.readiness])) ===
+        JSON.stringify([
+          ['anthropic', 'ready'],
+          ['openai', 'ready'],
+        ]),
+      `provider readiness: ${JSON.stringify(readiness)}`,
+    );
+    for (const [provider, runId] of Object.entries(seeded)) {
+      const detail = await request(`/api/v1/runs/${runId}`, { headers: { host: PUBLIC_HOST } });
+      const run = (JSON.parse(detail.body) as { run: { provider: string; state: { kind: string } } }).run;
+      assert(detail.status === 200, `run ${runId} is not readable (${detail.status})`);
+      assert(run.provider === provider && run.state.kind === 'cancelled', `run ${runId}: ${JSON.stringify(run)}`);
+    }
+  }
+
+  await check('recorded runs and credentials are prepared on the first image, with nothing dispatched', async () => {
+    await run([...composeSmoke, 'stop', '--timeout', '10', 'runtime']);
+    seeded = ((await fixtureState(image, 'seed')) as { runs: Record<string, string> }).runs;
+    assert(Object.keys(seeded).sort().join() === 'anthropic,openai', `seeded runs: ${JSON.stringify(seeded)}`);
+    await run([...composeSmoke, 'up', '--detach', '--wait', '--wait-timeout', '120', '--no-deps', 'runtime']);
+    const [runtime, database] = await Promise.all([inspect('runtime'), inspect('postgres')]);
+    storage = {
+      runtimeState: volumeOf(runtime, '/var/lib/agent-runtime'),
+      postgres: database.Id,
+      postgresData: volumeOf(database, '/var/lib/postgresql/data'),
+    };
+    assert(storage.runtimeState !== undefined && storage.postgresData !== undefined, 'named volumes not found');
+    await awaitPersistenceReady(120_000);
+    baseline = (await fixtureState(image, 'inspect')) as State;
+    assert(baseline.counts.runs === 2 && baseline.counts.model_attempts === 0, JSON.stringify(baseline.counts));
+    assert(baseline.counts.tool_operations === 0 && baseline.counts.questions === 0, JSON.stringify(baseline.counts));
+    assert(
+      baseline.runs.every((r) => r.state === 'cancelled' && r.consumed === 0 && r.unconfirmed === 0),
+      JSON.stringify(baseline.runs),
+    );
+    assert(
+      baseline.credentials.every((c) => c.kind === 'record' && c.generation === 1 && c.lifecycle === 'usable'),
+      JSON.stringify(baseline.credentials),
+    );
+    await verifyRunning(firstId, TITLE);
+  });
+
+  const switchTo = async (tag: string) => {
+    const before = Number(await ownerEpoch());
+    await runWith(tag, [...composeSmoke, 'up', '--detach', '--wait', '--wait-timeout', '120', '--no-deps', 'runtime']);
+    await awaitPersistenceReady(120_000);
+    const after = Number(await ownerEpoch());
+    assert(after > before, `the runtime did not restart on ${tag} (epoch ${before} → ${after})`);
+  };
+
+  await check('a newer compatible image takes over the same storage without changing it', async () => {
+    await switchTo(nextImage);
+    await verifyRunning(nextId, NEXT_TITLE);
+  });
+
+  await check('rolling back to the earlier image keeps every recorded run, credential and outcome', async () => {
+    await switchTo(image);
+    await verifyRunning(firstId, TITLE);
+  });
+  console.log(
+    `rollback rehearsal: ${firstId} → ${nextId} → ${firstId}; state ${baseline?.fingerprint}; ${JSON.stringify(baseline?.counts)}`,
+  );
 } catch (error) {
-  failures++;
-  console.error(error instanceof Error ? error.message : String(error));
+  if (!(error instanceof CheckFailed)) {
+    failures++;
+    console.error(error instanceof Error ? error.message : String(error));
+  }
 } finally {
   await run([...composeSmoke, 'down', '--volumes', '--remove-orphans', '--timeout', '5'], true);
-  await run(['docker', 'image', 'rm', '--force', image], true);
+  await run(['docker', 'image', 'rm', '--force', image, nextImage], true);
   rmSync(fixtureDir, { recursive: true, force: true });
 }
 

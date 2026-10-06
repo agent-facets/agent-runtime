@@ -16,13 +16,12 @@ Implemented so far (`packages/runtime/src/providers/`, `packages/runtime/src/cre
   required operator configuration, never inferred from spike IDs. Readiness is one of `unconfigured`,
   `integration_unavailable`, `reauthorization_required`, `temporarily_unavailable` or `ready`, computed from stored
   credentials only (readiness never refreshes) and logged at startup. The service's provider assembly
-  (`providers/assembly.ts`) registers **Anthropic only** and builds each invocation's model from the run's stored
-  binding, refusing a profile the provider's integration does not implement. A configured OpenAI is
-  `integration_unavailable` whatever is stored for it (see OpenAI below). Ambient API keys are ignored, and the
-  LangSmith gateway is refused at startup.
+  (`providers/assembly.ts`) registers both and builds each invocation's model from the run's stored binding,
+  refusing a profile the provider's integration does not implement (for OpenAI, anything but `codex-responses-v1`)
+  whatever is stored for it. Ambient API keys are ignored, and the LangSmith gateway is refused at startup.
 - **Credential records.** Versioned, strictly decoded, per provider and slot: generation, lifecycle
   (`usable` or `reauthorization_required`), access/refresh tokens, expiry in epoch **milliseconds**, and required
-  account metadata (Anthropic: none; records written by the retired OpenAI integration carry an account ID). A rejected credential is stored without token material.
+  account metadata (Anthropic: none; OpenAI: the account ID). A rejected credential is stored without token material.
   Access and refresh tokens must have at least 16 printable, non-space ASCII characters: a runtime safety floor
   (exact-match screening cannot safely recognize shorter values), not a provider format. A stored record with a
   shorter token is invalid and is left untouched; a shorter issued token is never written. Live values are exposed
@@ -33,9 +32,11 @@ Implemented so far (`packages/runtime/src/providers/`, `packages/runtime/src/cre
   at each boundary).
 - **Coordination.** An in-process single flight per slot, plus a provider-scoped kernel `flock` held by the Bun
   process itself (acquired through the image's `/usr/bin/flock` on an inherited descriptor) and shared with operator
-  login. The lock covers reread → issuer refresh → partial merge → durable replacement, and the terminal login holds
-  it for its whole flow (including the owner's browser step). A console login takes it only once the code has
-  arrived, for the exchange and the write. Verified with two Bun processes: 64 concurrent callers produce one refresh; a refresh waiting behind a
+  login. The lock covers reread → issuer refresh → partial merge → durable replacement. The Anthropic terminal
+  login holds it for its whole flow, including the wait while the owner signs in and pastes the code. A console
+  Anthropic login takes it only once the code has arrived, and an OpenAI login (console or terminal) only once the
+  owner has approved the device code; both hold it just for the exchange and the write. Verified with two Bun
+  processes: 64 concurrent callers produce one refresh; a refresh waiting behind a
   login adopts it; a login waiting behind a refresh is written after it; a dead holder releases the lock; a paused
   one keeps it. A negative control without the lock produced two refreshes. A caller that is already cancelled
   (including one cancelled while the record is read, or during lock setup) starts no issuer call and launches no
@@ -82,26 +83,45 @@ completion and failure hooks, and to the credential coordinator through an exact
 operator command is `auth anthropic login|status`. A streamed response is used only after `message_stop` without an
 `error` event.
 
-**OpenAI: withdrawn (2026-10-06, design Decision 11).** From 2026-10-03 the runtime reached OpenAI by imitating
-the Codex CLI 0.151.0: a reimplemented device login and refresh against `auth.openai.com`, a measured request
-profile for the ChatGPT Codex backend (`codex-0.151.0`) under stock `ChatOpenAI`, and its own checks of the
+**OpenAI: restored (2026-10-06, design Decision 11).** History first. From 2026-10-03 the runtime reached OpenAI
+by imitating the Codex CLI 0.151.0: a reimplemented device login and refresh against `auth.openai.com`, a measured
+request profile for the ChatGPT Codex backend (`codex-0.151.0`) under stock `ChatOpenAI`, and its own checks of the
 response stream. Real login and renewal worked, but each of the four real model requests failed as an incomplete
-response, and the cause was not recorded
-([evidence](integration-evidence/mvp-01/g5-openai-live.md)). The owner chose to remove that code before choosing a
-replacement rather than keep it as a fallback. Removed: `providers/openai/`, the console device login and its
-routes, the OpenAI `auth` commands, the stream-ending and event-name diagnostic hooks it alone used in the shared
-terminal, the device-poll failure classification, and the `@langchain/openai`/`openai` dependencies.
+response, and the cause was not recorded ([evidence](integration-evidence/mvp-01/g5-openai-live.md)). That code was
+removed ([evidence](integration-evidence/mvp-01/openai-removal.md)); its request wrapper, stream parser and
+stream-ending hooks stay removed.
 
-What remains is what history and safety need. `openai` stays a valid provider in configuration, records and the
-browser contract. A configured OpenAI is `integration_unavailable` with no Connect action; starts are refused before
-any work, and no other provider or billing mode is substituted. Recorded OpenAI runs stay readable; answering a
-question one left waiting is refused through the ordinary continuation check (the stored binding cannot be rebuilt)
-and closes the run as `continuation_unavailable`. Each build ships an execution manifest only for providers it has an
-adapter for, so there is no OpenAI manifest. Saved OpenAI credential records are left as they are: never renewed,
-converted or sent; while OpenAI stays configured, owner input is still screened against them. `auth openai …`
-refuses without reading configuration or credentials. A replacement must use supported library APIs and a
-browser-only owner login, with its own design, verification and live authorization. The device-auth spike and the
-offline and live G5 records remain as history.
+The current build (`dbf7145`) restores the earlier device login and refresh (`providers/openai/auth.ts`,
+`credentials.ts`) on the same coordinator and store, and replaces the wrapper with stock configuration
+(`providers/openai/inference.ts`, `binding.ts`):
+
+- **Login and renewal.** The device protocol is project-owned TypeScript, not a library's: JSON initiation, polling
+  in which 403/404 mean "not approved yet" (never an inference rejection), the issuer-supplied PKCE verifier checked,
+  a code exchange, and refresh with the rotation rules above. Its three `auth.openai.com` endpoints are the only ones
+  the auth transport reaches. The account ID comes from the decoded ID token; its signature is not verified (it only
+  routes requests to the owner's own account). Existing OpenAI records were kept: they belong to the same
+  subscription sign-in, so no migration or conversion was needed.
+- **Inference.** Stock `ChatOpenAI` (`@langchain/openai` 1.6.2, `openai` 7.28.0, with `@langchain/core` 1.2.14) in
+  streaming Responses mode against `POST https://chatgpt.com/backend-api/codex/responses`, configured only through
+  public options: `store: false` with encrypted reasoning replayed, automatic tool choice without parallel calls,
+  non-strict tools, low reasoning effort and verbosity, retries off, SDK logging off, no organization or project.
+  The model holds an inert placeholder key; the terminal sets the bearer token and account header from one screened
+  generation. Requests identify the application as `agent_runtime` and carry the run as their session and thread,
+  without claiming a Codex client version. A 401 can take the terminal's one counted renewal retry.
+- **Completion.** The library parses the stream. Before the response is sanitized, checkpointed or acted on, the
+  model boundary requires its parsed status to be `completed`, with no error and no invalid tool call; otherwise the
+  run fails as `provider_failure` / `incomplete_response` and nothing from the response is kept. A body that never
+  finishes is ended by the full-body deadline.
+- **Compatibility.** Only `codex-responses-v1` is implemented. Runs recorded under `codex-0.151.0` stay readable;
+  answering a question one left waiting is refused through the ordinary continuation check and closes the run as
+  `continuation_unavailable`. Nothing is rebound or rewritten.
+
+The backend is the one the Codex CLI uses with a ChatGPT sign-in; it is not a vendor-documented third-party
+interface and can change without notice. The restored build's live trial in the Docker deployment (device login,
+one renewal, journeys, cancellation and restarts; nine successful model requests) was accepted by the owner with
+documented exceptions ([evidence](integration-evidence/mvp-01/g5-openai-recovery.md)); the phase's final
+acceptance is still pending. The device-auth spike and the earlier offline and live G5 records
+remain as history.
 
 **Console login (design Decision 16).** The owner connects Anthropic from the browser: the console starts an
 attempt, links to the same PKCE authorization URL, and posts the code Anthropic's fixed callback page shows to
@@ -113,7 +133,17 @@ claimed attempt's failure is final — rejected, throttled, unknown outcome, loc
 never sent again; success is reported only after durable replacement. Shutdown aborts an unfinished exchange and
 waits for its lock to be released. The terminal commands remain as a fallback.
 
-The operator command is bundled into the application image (`bun dist/auth.js anthropic login|status|renew`).
+OpenAI connects through its device login instead (`/api/v1/auth/openai/begin|status|cancel`, no completion
+endpoint): the console shows the official device page and a short user code, the owner approves there, and the
+runtime polls in the background, holding the provider lock only to exchange the approval once and store it. Only an
+attempt awaiting approval carries the page and code; the device identifiers, returned authorization code, verifier
+and tokens stay on the server. Attempts live in memory with the same bounds (one unfinished at a time, at most 32
+retained, a settled attempt forgotten ten minutes after it ends), but an attempt waits for approval until OpenAI's
+fifteen-minute device-code deadline rather than Anthropic's ten-minute attempt lifetime; once that deadline passes
+it is reported expired, its code is cleared and nothing more is polled. A restart discards an unfinished attempt
+without touching saved authorization; the new process does not know it and never exchanges its approval.
+
+The operator command is bundled into the application image (`bun dist/auth.js <anthropic|openai> login|status|renew`).
 `renew` forces exactly one refresh of the stored authorization and sends no model request, so a real renewal can
 be exercised deliberately. A 401 right after a renewal is treated as definitive: the renewed generation is durably
 marked as needing reauthorization, so later runs fail with authorization guidance without dispatching.
