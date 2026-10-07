@@ -2,46 +2,49 @@
 
 ## Why
 
-After phase 1, an agent's instructions and tools are fixed in runtime code, so every new workflow means changing the runtime. The owner already packages workflows, skills, agents, and MCP connections as facets for coding tools; letting the runtime run those facets makes workflows reusable, versioned, and editable without touching the runtime — and is what the PR-feedback workload in phase 4 needs.
+Phase 1 fixes agent instructions and tools in runtime code. Facet-backed workflows let the owner reuse versioned commands, skills, agents, and MCP connections without changing that code, while the runtime retains authority over permitted actions.
 
-This is phase 2 of [the framework MVP roadmap](../../roadmaps/framework-mvp.md). It depends on [`mvp-01-interactive-agent-execution`](../mvp-01-interactive-agent-execution/proposal.md).
+This is phase 2 of [the framework MVP roadmap](../../roadmaps/framework-mvp.md), building on the accepted phase-1 [execution specification](../../specs/execution/spec.md). It supplies the reusable workflow support needed by the later PR-feedback workload.
 
 ## What Changes
 
-- **Install facets for the runtime.** The owner installs facets with the existing `facet` CLI, and a runtime adapter materializes their skills, agents, commands, and MCP server declarations for the runtime. The runtime's installed facets are kept separate from any coding-tool installation on the same machine and are reproducible from the project's facet manifest and lockfile.
-- **Start a run from a command.** A user can start a run by choosing an installed facet command and supplying its arguments. The run shows which facets, commands, skills, agents, and versions it used, and keeps using those same definitions for its whole lifetime even if facets are updated meanwhile.
-- **Skills on demand.** An agent sees the installed skills available to it and loads a skill's full instructions only when it needs them.
-- **Named delegates.** An agent can hand a bounded task to a facet-defined agent and receive its result. The delegation and its outcome appear in the run's progress history.
-- **MCP tools.** A run can use tools from MCP servers declared by installed facets and approved by the owner. Tool calls and their outcomes appear in the run's progress history.
-- **Runtime-enforced permissions.** What a run, and each delegate, may do is decided by the runtime from the owner's configuration and the permissions a facet declares, and it can only be narrowed by a facet, never widened. Installing or approving a facet does not by itself grant it access to anything. A facet that requires behavior the runtime does not support is rejected with a clear explanation instead of running with that requirement silently ignored.
-- **Questions from any level.** A facet-defined agent or delegate that asks the user a question pauses the run in the same way as phase 1, and the answer returns to whoever asked.
-- **Visible failures.** A missing facet, an unavailable MCP server, a rejected tool call, or an unsupported facet requirement is reported to the user in the console with the facet and item responsible.
+- **Install facets for the runtime.** The owner SHALL install runtime facets through the existing `facet` CLI using a dedicated runtime manifest and lockfile, separate from coding-tool installations. The selected contributions SHALL be reproducible from the recorded installation inputs. The console SHALL identify installed commands, skills, agents, server declarations, versions, and refusals.
+- **Start from a command.** The owner SHALL be able to select an installed command and supply its arguments. Runs SHALL retain their selected definitions and inspectable provenance across facet updates or removal. Goal-only runs SHALL remain available. Retained definitions SHALL NOT bypass runtime compatibility checks or owner authorization.
+- **Skills on demand.** Agents SHALL discover skill names and descriptions, then load full instructions and bundled text references when needed. Loads SHALL be recorded. Reference access SHALL stay within the loaded skill's retained resources, without granting general filesystem access or code execution.
+- **Bounded named delegates.** An agent SHALL be able to delegate a task and receive its result or failure while the caller waits. Delegates SHALL use the run's provider and step budget, SHALL NOT exceed the caller's effective permissions, and SHALL remain subject to run cancellation and interruption. Their activity SHALL be attributable in history. Delegation limits SHALL be finite and documented.
+- **Approved MCP tools.** The runtime SHALL use only server configurations and scoped tools explicitly granted through owner configuration. Installation consent SHALL NOT authorize runtime access. Changed server declarations or advertised tool definitions SHALL require applicable reapproval. Matching calls SHALL be authorized by the configured grants without an additional generic per-call confirmation gate; workflow-specific approval requirements remain separate.
+- **Runtime-enforced permissions.** Facet and agent restrictions SHALL only narrow owner grants. Installing or approving a facet does not by itself grant it access to anything. Inspected content and model output SHALL NOT expand permissions. Unsupported behavioral requirements SHALL be refused visibly rather than ignored.
+- **Questions from delegates.** A delegate's question SHALL pause the same run and return the accepted answer to the original asker, including after an ordinary compatible restart.
+- **Visible failures.** Unusable command selections SHALL be refused before agent dispatch. Runtime capability problems SHALL identify the affected facet and item and remain distinguishable from successful results. Existing failure categories and credential-safe explanations SHALL be retained.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `capabilities`: Installing facet-provided workflows, skills, agents, commands, and MCP tools for the runtime, choosing which a run may use, and seeing which were used and what they were permitted to do.
+- `capabilities`: Installing and inspecting facet-provided workflows, skills, agents, commands, and MCP tools; selecting usable contributions; enforcing and inspecting their permitted scope.
 
 ### Modified Capabilities
 
-- `execution`: Runs can be started from a facet command, record the capability versions they used, and include delegate activity and MCP tool calls in their history. `execution` is introduced by `mvp-01-interactive-agent-execution`; this change's delta targets it once that change is archived.
+- `execution`: Add command starts, retained capability definitions, provenance, and delegate-question routing. Extend "Run history records ordered activity", "Agent steps have a visible finite budget", "The owner can cancel an unfinished run", "Active work interrupted by process death is reported", "Workspace reading and search are confined", and "Both subscription providers support the interactive journey". Rename and modify "Agent tools do not mutate the environment" as "Agent tools stay within explicitly authorized actions". Command prerequisite refusals SHALL precede dispatch.
 
 ## Impact
 
-- **Code:** a runtime adapter package built on the public `@agent-facets/adapter` SDK; runtime code that loads materialized assets, resolves commands and skills, runs delegates, manages MCP connections, and enforces permissions; console views for choosing commands and inspecting capabilities.
-- **Dependencies:** the `facet` CLI and its adapter SDK, pinned separately; the LangChain MCP adapters, subject to Bun verification. The private facet engine is not a dependency.
-- **Project files:** `facets.json` and `facets.lock` gain the runtime's own facet entries, managed by the CLI.
-- **Existing facets:** facets authored for coding tools are not promised to run unchanged. Their authored sources may need runtime-specific adapter settings or wording. Materialized `.opencode` copies are not used as input.
-- **Documentation:** no `docs/` directory exists; the root `README.md` covers only setup delivered by phase 1 and did not inform this proposal. The README gains instructions for installing facets for the runtime and approving MCP servers. The facet CLI, adapter SDK, and manifest documentation in the facets repository informed this proposal; `architecture/02-control-plane.md`, whose agent registry predates facets, is recorded in the roadmap for reconciliation.
+- **Code:** a runtime adapter using the public `@agent-facets/adapter` SDK; loading and resolution; bounded delegation; MCP lifecycle and permission enforcement; operator configuration, API contracts, and console views. Resume-critical loader and delegation code SHALL participate in existing compatibility checks.
+- **Dependencies:** the facet CLI and adapter SDK, pinned separately; LangChain MCP adapters and their required dependencies, subject to bounded Bun verification. The private facet engine SHALL NOT become a dependency.
+- **Project files:** a dedicated runtime installation directory with its own `facets.json` and `facets.lock`, managed by the CLI. The root editor-facing manifest and lockfile SHALL remain separate.
+- **Deployment:** materialized facets SHALL be supplied read-only. Locally launched MCP server executables SHALL be pinned and supplied reproducibly, not downloaded on demand at runtime. Design SHALL specify packaging, supported transports, lifecycle, and any narrowly writable destinations without making the workspace or root filesystem generally writable.
+- **Existing facets:** facets authored for coding tools are not promised to run unchanged. Their authored sources may need runtime-specific adapter settings or wording. Materialized `.opencode` copies SHALL NOT be used as input.
+- **Verification:** the command → skill → delegate → approved tool → question → result journey SHALL support both Anthropic and OpenAI. Bounded checks SHALL cover permissions, shared budgets, restart routing, and preservation of completed tool outcomes during continuation, without promising exactly-once external effects. Live checks and acceptance exceptions require explicit owner decisions; phase-1 acceptance is not reopened.
+- **Documentation:** no `docs/` directory exists. The root `README.md` informed this proposal, particularly Configuration, Authority boundaries, Agent execution, Browser console and API, and Deployment. Updates SHALL document installation, approvals, supported semantics, deployment, and usage, and remove milestone/progress narration rather than maintain status updates. `architecture/02-control-plane.md` and `architecture/08-execution-security.md` informed the lifecycle and authority boundaries and SHALL be reconciled where affected. Facet CLI, adapter SDK, and manifest documentation informed installation and compatibility requirements.
 
 ## Non-goals
 
-- **A facet registry, publishing workflow, or facet-management interface.** The existing CLI remains the installation tool.
-- **Composed facets.** Facets that depend on other facets are not supported; required facets are installed explicitly.
-- **Full parity with every coding tool's facet semantics.** Only a documented subset is supported; the rest is rejected visibly.
-- **Mutating tools by default.** A facet cannot grant itself file edits, shell access, or external changes; those remain outside the MVP except where the owner explicitly allows a specific tool.
-- **Secrets inside facets.** MCP credentials are supplied by the runtime's configuration, never by facet declarations.
-- **Parallel, background, or long-lived delegates**, multi-agent scheduling, or a general workflow-graph language.
-- **Changes to the PR-feedback or VIPER facets.** Those belong to phase 4.
-- **Memory of preferences or past runs.** Phase 3.
+- A facet registry, publishing workflow, or facet-management interface.
+- Automatic facet composition; required facets are installed explicitly.
+- Full parity with every coding tool's facet semantics.
+- Mutating tools by default or general shell/source-edit authority; only explicitly granted, scoped tool actions are permitted.
+- Secrets in facet declarations; MCP credentials come from private runtime configuration.
+- Parallel, background, or long-lived delegates, multi-agent scheduling, or a general workflow-graph language.
+- Sandboxing MCP server processes or a new broker service.
+- Changes to the PR-feedback or VIPER facets, which belong to phase 4.
+- Cross-run memory, which belongs to phase 3.

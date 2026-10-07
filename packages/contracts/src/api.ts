@@ -3,6 +3,13 @@
 // credential reference, saved-graph binding, owner epoch, invocation identity or provider reasoning.
 import { z } from 'zod';
 import {
+  actorRefSchema,
+  commandEventSchema,
+  delegationFinishedSchema,
+  delegationStartedSchema,
+  toolBindingSchema,
+} from './capabilities.ts';
+import {
   digestSchema,
   failureSchema,
   instantSchema,
@@ -56,8 +63,14 @@ const count = z.number().int().min(0).max(2_147_483_647);
 export const budgetSchema = z.strictObject({ maximum: count.min(1), consumed: count, unconfirmed: count });
 export type Budget = z.infer<typeof budgetSchema>;
 
+/** A pending question; `asker` is present for command runs and absent for root-only (native or legacy) runs. */
 export const questionViewSchema = z
-  .strictObject({ questionId: digestSchema, prompt: questionPromptSchema, input: questionInputSchema })
+  .strictObject({
+    questionId: digestSchema,
+    prompt: questionPromptSchema,
+    input: questionInputSchema,
+    asker: actorRefSchema.optional(),
+  })
   .refine(withinQuestionText, 'question text is too large');
 export type QuestionView = z.infer<typeof questionViewSchema>;
 
@@ -140,9 +153,12 @@ export const attemptStateSchema = z.discriminatedUnion('kind', [
 export const toolDispositionSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('started') }),
   z.strictObject({ kind: z.literal('paused'), questionId: digestSchema }),
+  /** The request may have been sent; this is not evidence that it was delivered. */
+  z.strictObject({ kind: z.literal('dispatching') }),
   z.strictObject({
     kind: z.literal('completed'),
-    outcome: z.enum(['ok', 'refused', 'error']),
+    /** `uncertain`: whether an external operation took effect cannot be established. */
+    outcome: z.enum(['ok', 'refused', 'error', 'uncertain']),
     /** The sanitized outcome the agent received. */
     result: z.record(z.string(), z.json()),
   }),
@@ -158,7 +174,11 @@ const envelope = <K extends string, P extends z.ZodType>(kind: K, payload: P) =>
     payload,
   });
 
-/** One committed history event. Events are ordered by `seq` within their run, and delivered at most once each. */
+/**
+ * One committed history event. Events are ordered by `seq` within their run, and delivered at most once each.
+ * Agent activity in command runs carries its `actor`; an absent actor means the run's root agent. Owner and system
+ * events are never attributed to an agent.
+ */
 export const runEventSchema = z.discriminatedUnion('kind', [
   envelope(
     'run.created',
@@ -167,23 +187,42 @@ export const runEventSchema = z.discriminatedUnion('kind', [
   envelope('run.status', z.strictObject({ state: runStateSchema })),
   envelope(
     'model.attempt',
-    z.strictObject({ attemptId: uuidSchema, ordinal: count.min(1), state: attemptStateSchema, budget: budgetSchema }),
+    z.strictObject({
+      attemptId: uuidSchema,
+      ordinal: count.min(1),
+      state: attemptStateSchema,
+      budget: budgetSchema,
+      actor: actorRefSchema.optional(),
+    }),
   ),
-  envelope('assistant.message', z.strictObject({ messageId: z.string().min(1).max(256), text: z.string() })),
+  envelope(
+    'assistant.message',
+    z.strictObject({ messageId: z.string().min(1).max(256), text: z.string(), actor: actorRefSchema.optional() }),
+  ),
   envelope(
     'tool.operation',
     z.strictObject({
       operationId: digestSchema,
       toolName: z.string().min(1).max(128),
       disposition: toolDispositionSchema,
+      actor: actorRefSchema.optional(),
+      binding: toolBindingSchema.optional(),
     }),
   ),
   envelope(
     'question.asked',
     z
-      .strictObject({ questionId: digestSchema, prompt: questionPromptSchema, input: questionInputSchema })
+      .strictObject({
+        questionId: digestSchema,
+        prompt: questionPromptSchema,
+        input: questionInputSchema,
+        actor: actorRefSchema.optional(),
+      })
       .refine(withinQuestionText, 'question text is too large'),
   ),
+  envelope('run.command', commandEventSchema),
+  envelope('delegation.started', delegationStartedSchema),
+  envelope('delegation.finished', delegationFinishedSchema),
   envelope(
     'question.answered',
     z

@@ -73,6 +73,7 @@ export class RunTimeline {
           questionId: event.payload.questionId,
           prompt: event.payload.prompt,
           input: event.payload.input,
+          ...(event.payload.actor === undefined ? {} : { asker: event.payload.actor }),
         };
         break;
       case 'question.answered':

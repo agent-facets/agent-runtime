@@ -6,7 +6,7 @@ import {
   type StartupStage,
 } from '../../packages/runtime/src/persistence/persistence.ts';
 import { RUNTIME_MIGRATIONS } from '../../packages/runtime/src/persistence/runtime-migrations.ts';
-import { pauseOnQuestion, seedWorkingRun } from '../support/run-records.ts';
+import { acceptAnswer, pauseOnQuestion, seedWorkingRun } from '../support/run-records.ts';
 import { createScratchDatabase, type ScratchDatabase } from '../support/scratch-database.ts';
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -60,16 +60,20 @@ describe('serialized schema setup', () => {
     expect(persistence.ownership.epoch).toBe('1');
 
     const snapshot = await schemaSnapshot(db);
-    expect(snapshot.tables).toEqual([
+    expect([...snapshot.tables].sort()).toEqual([
       'checkpoints.checkpoint_blobs',
       'checkpoints.checkpoint_migrations',
       'checkpoints.checkpoint_writes',
       'checkpoints.checkpoints',
+      'runtime.capability_snapshots',
       'runtime.events',
       'runtime.execution_definitions',
       'runtime.invocations',
+      'runtime.loaded_skills',
       'runtime.model_attempts',
       'runtime.questions',
+      'runtime.run_actors',
+      'runtime.run_capabilities',
       'runtime.runs',
       'runtime.runtime_owner',
       'runtime.schema_migrations',
@@ -158,16 +162,19 @@ describe('schema version refusal', () => {
   });
 });
 
+/** A database set up by an earlier build that shipped only the first `version` runtime migrations. */
+async function earlierDatabase(version: number): Promise<ScratchDatabase> {
+  const db = await scratch();
+  await (
+    await openPersistence({ url: db.url, onFault: () => {}, migrations: RUNTIME_MIGRATIONS.slice(0, version) })
+  ).close();
+  return db;
+}
+
 describe('upgrading recorded questions to byte limits (migration 3)', () => {
   /** A database migrated only through version 2, holding one question with the given prompt. */
   async function versionTwoDatabase(prompt: string): Promise<ScratchDatabase> {
-    const db = await scratch();
-    await (await openPersistence({ url: db.url, onFault: () => {} })).close();
-    await db.admin.unsafe(`
-      alter table runtime.questions drop constraint questions_prompt_bytes, drop constraint questions_text_bytes;
-      alter table runtime.events drop constraint events_question_text_bytes;
-      drop function runtime.question_text_bytes(text, jsonb);
-      delete from runtime.schema_migrations where version = 3;`);
+    const db = await earlierDatabase(2);
     await db.admin.begin(async (tx) => {
       const run = await seedWorkingRun(tx);
       await pauseOnQuestion(tx, run, 'call-legacy', { prompt });
@@ -183,7 +190,7 @@ describe('upgrading recorded questions to byte limits (migration 3)', () => {
   test('compliant history upgrades', async () => {
     const db = await versionTwoDatabase('é'.repeat(8192));
     await open(db);
-    expect(await journal(db)).toEqual([1, 2, 3]);
+    expect(await journal(db)).toEqual(RUNTIME_MIGRATIONS.map((migration) => migration.version));
   });
 
   test('a recorded prompt over the byte limit stops startup without rewriting history', async () => {
@@ -193,5 +200,65 @@ describe('upgrading recorded questions to byte limits (migration 3)', () => {
     expect(await journal(db)).toEqual([1, 2]);
     const [row] = await db.admin`select prompt from runtime.questions`;
     expect(row.prompt).toBe(prompt);
+  });
+});
+
+describe('capability records (migration 4)', () => {
+  /** Every phase-1 record column, as text, in a stable order. */
+  async function recordedHistory(db: ScratchDatabase) {
+    return {
+      runs: await db.admin`select run_id::text, create_request_id::text, input_digest, goal, workspace::text,
+        binding::text, definition_digest, budget_max, consumed, unconfirmed, state::text, revision::text,
+        last_seq::text, created_at::text from runtime.runs order by run_id`,
+      events: await db.admin`select run_id::text, seq::text, recorded_at::text, kind, payload::text, source_key
+        from runtime.events order by run_id, seq`,
+      operations: await db.admin`select run_id::text, operation_id, model_message_id, provider_tool_call_id, tool_name,
+        arguments::text, argument_digest, disposition::text from runtime.tool_operations order by run_id, operation_id`,
+      questions: await db.admin`select run_id::text, question_id, prompt, input::text, binding::text, binding_digest,
+        disposition::text from runtime.questions order by run_id, question_id`,
+      attempts: await db.admin`select run_id::text, attempt_id::text, ordinal, state::text
+        from runtime.model_attempts order by run_id, ordinal`,
+      definitions: await db.admin`select digest, manifest::text from runtime.execution_definitions order by digest`,
+    };
+  }
+
+  test('an upgraded database keeps every recorded byte and gives each existing run a root actor only', async () => {
+    const db = await earlierDatabase(3);
+    await db.admin.begin(async (tx) => {
+      const waiting = await seedWorkingRun(tx);
+      await pauseOnQuestion(tx, waiting, 'call-waiting');
+      const answered = await pauseOnQuestion(tx, await seedWorkingRun(tx), 'call-answered');
+      await acceptAnswer(tx, answered, false);
+      const working = await seedWorkingRun(tx, { budgetMax: 3 });
+      await tx`insert into runtime.model_attempts (run_id, attempt_id, invocation_id, ordinal, provider, model,
+          profile_id, state)
+        values (${working.runId}, ${crypto.randomUUID()}, ${working.invocationId}, 1, 'anthropic', 'claude-test',
+          'anthropic.subscription.v1', ${JSON.stringify({ kind: 'reserved' })}::text::jsonb)`;
+      await tx`update runtime.runs set unconfirmed = 1 where run_id = ${working.runId}`;
+    });
+    const before = await recordedHistory(db);
+
+    await open(db);
+    expect(await recordedHistory(db)).toEqual(before);
+    const actors = await db.admin`select run_id::text, actor_key, kind from runtime.run_actors order by run_id`;
+    expect(actors).toEqual(
+      before.runs.map((run: { run_id: string }) => ({ run_id: run.run_id, actor_key: 'root', kind: 'root' })),
+    );
+    const [counts] = await db.admin`select
+        (select count(*) from runtime.run_capabilities)::int as bindings,
+        (select count(*) from runtime.capability_snapshots)::int as snapshots,
+        (select count(*) from runtime.tool_operations where identity_version <> 1 or actor_key <> 'root')::int as v2,
+        (select count(*) from runtime.model_attempts where actor_key <> 'root')::int as attributed,
+        (select count(*) from runtime.questions where actor_key <> 'root')::int as delegated`;
+    expect(counts).toEqual({ bindings: 0, snapshots: 0, v2: 0, attributed: 0, delegated: 0 });
+  });
+
+  test('a build that knows only version 3 refuses an upgraded database before changing either schema', async () => {
+    const db = await scratch();
+    await (await open(db)).close();
+    const before = await schemaSnapshot(db);
+    const refused = openPersistence({ url: db.url, onFault: () => {}, migrations: RUNTIME_MIGRATIONS.slice(0, 3) });
+    expect(await codeOf(refused)).toBe('schema_incompatible');
+    expect(await schemaSnapshot(db)).toEqual(before);
   });
 });

@@ -1,4 +1,13 @@
+import type { ActorRef, ToolBinding } from '@agent-runtime/contracts';
 import type { TransactionSQL } from 'bun';
+import {
+  actorKeyOf,
+  type CapabilitySnapshot,
+  type CommandRunInput,
+  commandRunInputSchema,
+  openSnapshot,
+  sealSnapshot,
+} from '../capabilities/records.ts';
 import type { AppDatabase } from '../persistence/app-database.ts';
 import { sqlStateOf } from '../persistence/errors.ts';
 import { jsonText, parseJsonText } from '../persistence/json.ts';
@@ -10,12 +19,14 @@ import {
   attemptStateSchema,
   eventSchema,
   type Failure,
+  operationIdV2,
   type Provider,
   type ProviderBinding,
   providerBindingSchema,
   type QuestionBinding,
   type QuestionDisposition,
   type QuestionInput,
+  questionActorKey,
   questionBindingSchema,
   questionDispositionSchema,
   questionInputSchema,
@@ -76,9 +87,27 @@ export interface RunSnapshot {
   revision: string;
   createdAt: string;
   lastActivityAt: string;
-  pendingQuestion: { questionId: string; prompt: string; input: unknown } | undefined;
+  /** `asker` is recorded for version-2 questions only; a phase-1 question is the root's. */
+  pendingQuestion: { questionId: string; prompt: string; input: unknown; asker?: ActorRef } | undefined;
+  /** The command a command run was started from; absent for native goal runs. */
+  command: RunCommand | undefined;
   /** Every committed event up to and including this sequence belongs to this snapshot. */
   throughSeq: string;
+}
+
+export interface RunCommand {
+  commandId: string;
+  selectionRevision: string;
+  arguments: string;
+  snapshotDigest: string;
+}
+
+/** A command run's retained capability binding, revalidated against its content address when read. */
+export interface RunCapabilities {
+  input: CommandRunInput;
+  snapshotDigest: string;
+  maxDelegations: number;
+  snapshot: CapabilitySnapshot;
 }
 
 export interface RunSummary {
@@ -108,6 +137,11 @@ export interface CreateRunInput {
   binding: ProviderBinding;
   definition: { digest: string; manifest: Record<string, unknown> };
   budgetMax: number;
+  /**
+   * A command run's normalized submission and the definitions it retains. Its rendered goal is `goal`; the creation
+   * identity is the submission, not the rendering.
+   */
+  capability?: { input: CommandRunInput; snapshot: CapabilitySnapshot };
 }
 
 export type CreateRunResult = { created: true; snapshot: RunSnapshot } | { created: false; snapshot: RunSnapshot };
@@ -123,7 +157,10 @@ export interface TransitionInput {
   apply?: (tx: TransactionSQL) => Promise<void>;
 }
 
-/** A tool call's recorded identity (see execution/operations.ts). */
+/**
+ * A tool call's recorded identity (see execution/operations.ts). Without an actor it is a version-1 (root,
+ * phase-1) identity; with one it is version 2, scoped to that actor, and may record what the call was bound to.
+ */
 export interface ToolOperationIdentity {
   operationId: string;
   modelMessageId: string;
@@ -131,6 +168,8 @@ export interface ToolOperationIdentity {
   toolName: string;
   arguments: Record<string, unknown>;
   argumentDigest: string;
+  actor?: ActorRef;
+  binding?: ToolBinding;
 }
 
 export type ToolOperationStart =
@@ -181,8 +220,13 @@ export type CancellationResult =
 /** A recorded tool outcome: the complete object returned to the agent. */
 export type RecordedToolOutcome = Record<string, unknown> & { outcome: 'ok' | 'refused' | 'error' };
 
-/** Identity of a creation request: the submitted content only, never server defaults applied afterwards. */
-export function creationInputDigest(input: Pick<CreateRunInput, 'goal' | 'provider'>): string {
+/**
+ * Identity of a creation request: the submitted content only, never server defaults applied afterwards. A goal's
+ * identity is unchanged from phase 1; a command's covers the normalized submission (command, selection revision,
+ * raw arguments and provider), never a rendering against whatever is installed now.
+ */
+export function creationInputDigest(input: Pick<CreateRunInput, 'goal' | 'provider'> | CommandRunInput): string {
+  if ('kind' in input) return digestOf(commandRunInputSchema.parse(input));
   return digestOf({ goal: input.goal, provider: input.provider });
 }
 
@@ -213,7 +257,8 @@ export class RunStore {
 
   /** Creates a run for a request ID, or returns the run that request already created. */
   async createRun(input: CreateRunInput): Promise<CreateRunResult> {
-    const inputDigest = creationInputDigest(input);
+    const capability = input.capability === undefined ? undefined : this.#commandBinding(input);
+    const inputDigest = creationInputDigest(capability?.input ?? input);
     const workspace = workspaceSchema.parse(input.workspace);
     const binding = providerBindingSchema.parse(input.binding);
     if (binding.provider !== input.provider) throw new RangeError('binding provider differs from the request');
@@ -236,6 +281,14 @@ export class RunStore {
             ${jsonText(state)}::text::jsonb, 1)`;
         await tx`insert into runtime.invocations (run_id, invocation_id, owner_epoch, kind, disposition)
           values (${runId}, ${invocationId}, ${this.owner.epoch}, 'initial', 'active')`;
+        // The run's root actor is created with the run by the database.
+        if (capability !== undefined) {
+          await tx`insert into runtime.capability_snapshots (digest, payload)
+            values (${capability.digest}, ${capability.canonical}::text::jsonb) on conflict (digest) do nothing`;
+          await tx`insert into runtime.run_capabilities (run_id, input, snapshot_digest, max_delegations)
+            values (${runId}, ${jsonText(capability.input)}::text::jsonb, ${capability.digest},
+              ${capability.maxDelegations})`;
+        }
         await this.#append(tx, runId, [
           {
             event: {
@@ -249,6 +302,22 @@ export class RunStore {
             },
             sourceKey: `create:${input.requestId}`,
           },
+          ...(capability === undefined
+            ? []
+            : [
+                {
+                  event: {
+                    kind: 'run.command' as const,
+                    payload: {
+                      commandId: capability.input.commandId,
+                      selectionRevision: capability.input.selectionRevision,
+                      arguments: capability.input.arguments,
+                      snapshotDigest: capability.digest,
+                    },
+                  },
+                  sourceKey: 'command',
+                },
+              ]),
           { event: { kind: 'run.status', payload: { revision: '1', state } }, sourceKey: 'status:1' },
         ]);
       });
@@ -261,6 +330,46 @@ export class RunStore {
       throw error;
     }
     return { created: true, snapshot: await this.snapshot(runId) };
+  }
+
+  /**
+   * A command run's binding, checked before anything is written: the submission is normalized, the snapshot is
+   * sealed to its content address, and both must describe the same command, arguments, provider and goal.
+   */
+  #commandBinding(input: CreateRunInput) {
+    const submitted = commandRunInputSchema.parse(input.capability?.input);
+    const sealed = sealSnapshot(input.capability?.snapshot);
+    if (
+      submitted.provider !== input.provider ||
+      sealed.payload.command.id !== submitted.commandId ||
+      sealed.payload.input.arguments !== submitted.arguments ||
+      sealed.payload.input.renderedGoal !== input.goal
+    ) {
+      throw new RangeError('the capability snapshot does not describe this command submission');
+    }
+    return {
+      input: submitted,
+      digest: sealed.digest,
+      canonical: sealed.canonical,
+      maxDelegations: sealed.payload.limits.maxDelegations,
+    };
+  }
+
+  /** A command run's retained binding, or undefined for a native goal run. The snapshot is revalidated on read. */
+  async readCapabilities(runId: string): Promise<RunCapabilities | undefined> {
+    const [row] = await this.db.readOnly(
+      (tx) => tx`
+      select c.input::text as input, c.snapshot_digest, c.max_delegations, s.payload::text as payload
+      from runtime.run_capabilities c join runtime.capability_snapshots s on s.digest = c.snapshot_digest
+      where c.run_id = ${runId}`,
+    );
+    if (row === undefined) return undefined;
+    return {
+      input: commandRunInputSchema.parse(parseJsonText(row.input)),
+      snapshotDigest: row.snapshot_digest,
+      maxDelegations: Number(row.max_delegations),
+      snapshot: openSnapshot(row.snapshot_digest, parseJsonText(row.payload)),
+    };
   }
 
   /** Readback for creation: the run a request ID created, if that commit happened. */
@@ -326,17 +435,31 @@ export class RunStore {
     invocationId: string,
     identity: ToolOperationIdentity,
   ): Promise<ToolOperationStart> {
+    const actorKey = identity.actor === undefined ? 'root' : actorKeyOf(identity.actor);
+    const version = identity.actor === undefined ? 1 : 2;
+    if (
+      version === 2 &&
+      identity.operationId !== operationIdV2(runId, actorKey, identity.modelMessageId, identity.providerToolCallId)
+    ) {
+      throw new RangeError('the operation identity does not match its actor-scoped binding');
+    }
     return withOwnerFence(this.db, this.owner, async (tx) => {
       const run = await this.#lockRun(tx, runId);
       if (run.state.kind !== 'working' || run.state.invocationId !== invocationId) return { kind: 'not_dispatchable' };
       const [existing] = await tx`
-        select operation_id, tool_name, argument_digest, disposition::text as disposition
-        from runtime.tool_operations where run_id = ${runId} and provider_tool_call_id = ${identity.providerToolCallId}`;
+        select operation_id, tool_name, argument_digest, tool_binding::text as tool_binding,
+          disposition::text as disposition
+        from runtime.tool_operations
+        where run_id = ${runId} and actor_key = ${actorKey} and provider_tool_call_id = ${identity.providerToolCallId}`;
       if (existing !== undefined) {
+        // Replay is decided by the exact recorded binding, before anything about current permission: a matching
+        // completed call is answered from its record, and any difference is an invalid call, never a cache hit.
+        const recordedBinding = existing.tool_binding === null ? undefined : parseJsonText(existing.tool_binding);
         if (
           existing.operation_id !== identity.operationId ||
           existing.tool_name !== identity.toolName ||
-          existing.argument_digest !== identity.argumentDigest
+          existing.argument_digest !== identity.argumentDigest ||
+          canonicalJson(recordedBinding ?? null) !== canonicalJson(identity.binding ?? null)
         ) {
           throw new RunStoreError('tool_call_conflict', 'a provider tool-call ID was reused with a different binding');
         }
@@ -344,13 +467,21 @@ export class RunStore {
         if (disposition.kind === 'completed') {
           return { kind: 'reuse', outcome: disposition.result as RecordedToolOutcome };
         }
-        return disposition.kind === 'abandoned' ? { kind: 'not_dispatchable' } : { kind: 'execute' };
+        return disposition.kind === 'abandoned' || disposition.kind === 'dispatching'
+          ? { kind: 'not_dispatchable' }
+          : { kind: 'execute' };
+      }
+      if (actorKey !== 'root') {
+        const [actor] = await tx`select state ->> 'kind' as kind from runtime.run_actors
+          where run_id = ${runId} and actor_key = ${actorKey}`;
+        if (actor?.kind !== 'active') return { kind: 'not_dispatchable' };
       }
       await tx`insert into runtime.tool_operations (run_id, operation_id, model_message_id, provider_tool_call_id,
-          tool_name, arguments, argument_digest, disposition)
+          tool_name, arguments, argument_digest, disposition, identity_version, actor_key, tool_binding)
         values (${runId}, ${identity.operationId}, ${identity.modelMessageId}, ${identity.providerToolCallId},
           ${identity.toolName}, ${jsonText(identity.arguments)}::text::jsonb, ${identity.argumentDigest},
-          ${jsonText({ kind: 'started' })}::text::jsonb)`;
+          ${jsonText({ kind: 'started' })}::text::jsonb, ${version}, ${actorKey},
+          ${identity.binding === undefined ? null : jsonText(identity.binding)}::text::jsonb)`;
       await this.#append(tx, runId, [
         {
           event: {
@@ -359,6 +490,8 @@ export class RunStore {
               operationId: identity.operationId,
               toolName: identity.toolName,
               disposition: { kind: 'started' },
+              ...(await this.#attribution(tx, runId, actorKey)),
+              ...(identity.binding === undefined ? {} : { binding: identity.binding }),
             },
           },
           sourceKey: `tool:${identity.operationId}:started`,
@@ -366,6 +499,19 @@ export class RunStore {
       ]);
       return { kind: 'execute' };
     });
+  }
+
+  /**
+   * The actor to name on an agent event: always in a command run, so its root and delegate activity are
+   * distinguishable; never in a native run, whose history keeps its phase-1 shape and is the root's throughout.
+   */
+  async #attribution(tx: TransactionSQL, runId: string, actorKey: string): Promise<{ actor?: ActorRef }> {
+    const [row] = await tx`
+      select a.kind, a.agent_id, exists (select 1 from runtime.run_capabilities c where c.run_id = a.run_id) as command
+      from runtime.run_actors a where a.run_id = ${runId} and a.actor_key = ${actorKey}`;
+    if (row === undefined) throw new RunStoreError('invariant_violation', 'no such actor');
+    if (row.kind === 'delegate') return { actor: { kind: 'delegate', delegationId: actorKey, agentId: row.agent_id } };
+    return row.command === true ? { actor: { kind: 'root' } } : {};
   }
 
   /**
@@ -379,7 +525,8 @@ export class RunStore {
       const run = await this.#lockRun(tx, runId);
       if (TERMINAL_STATES.has(run.state.kind)) throw new RunStoreError('run_finished', 'the run has already finished');
       const [row] = await tx`
-        select disposition::text as disposition from runtime.tool_operations
+        select disposition::text as disposition, actor_key, tool_binding::text as tool_binding
+        from runtime.tool_operations
         where run_id = ${runId} and operation_id = ${identity.operationId} for update`;
       if (row === undefined) throw new RunStoreError('invariant_violation', 'the tool operation was never started');
       const current = toolDispositionSchema.parse(parseJsonText(row.disposition));
@@ -397,7 +544,13 @@ export class RunStore {
         {
           event: {
             kind: 'tool.operation',
-            payload: { operationId: identity.operationId, toolName: identity.toolName, disposition },
+            payload: {
+              operationId: identity.operationId,
+              toolName: identity.toolName,
+              disposition,
+              ...(await this.#attribution(tx, runId, row.actor_key)),
+              ...(row.tool_binding === null ? {} : { binding: parseJsonText(row.tool_binding) as ToolBinding }),
+            },
           },
           sourceKey: `tool:${identity.operationId}:completed`,
         },
@@ -417,11 +570,14 @@ export class RunStore {
       throw new RangeError('the binding does not belong to this question');
     }
     const bindingDigest = digestOf(binding);
+    const actorKey = questionActorKey(binding);
+    let attribution: { actor?: ActorRef } = {};
     const { revision } = await this.transition({
       runId: input.runId,
       expectedRevision: input.expectedRevision,
       next: { kind: 'waiting', questionId: input.questionId, bindingDigest },
       apply: async (tx) => {
+        attribution = await this.#attribution(tx, input.runId, actorKey);
         const [run] = await tx`select state::text as state from runtime.runs where run_id = ${input.runId}`;
         const state = runStateSchema.parse(parseJsonText(run.state));
         if (state.kind !== 'working' || state.invocationId !== input.invocationId) {
@@ -433,16 +589,16 @@ export class RunStore {
           returning operation_id`;
         if (paused.length !== 1) throw new RunStoreError('invariant_violation', 'the question call was not started');
         await tx`insert into runtime.questions (run_id, question_id, operation_id, prompt, input, binding,
-            payload_digest, binding_digest, disposition)
+            payload_digest, binding_digest, disposition, actor_key)
           values (${input.runId}, ${input.questionId}, ${input.questionId}, ${input.prompt},
             ${jsonText(input.input)}::text::jsonb, ${jsonText(binding)}::text::jsonb, ${binding.payloadDigest},
-            ${bindingDigest}, ${jsonText({ kind: 'pending' })}::text::jsonb)`;
+            ${bindingDigest}, ${jsonText({ kind: 'pending' })}::text::jsonb, ${actorKey})`;
         const settled = await tx`update runtime.invocations set disposition = 'settled', ended_at = now()
           where run_id = ${input.runId} and invocation_id = ${input.invocationId} and disposition = 'active'
           returning invocation_id`;
         if (settled.length !== 1) throw new RunStoreError('invariant_violation', 'the invocation is not active');
       },
-      events: [
+      events: () => [
         {
           event: {
             kind: 'tool.operation',
@@ -450,6 +606,7 @@ export class RunStore {
               operationId: input.questionId,
               toolName: 'mcp_AskUser',
               disposition: { kind: 'paused', questionId: input.questionId },
+              ...attribution,
             },
           },
           sourceKey: `tool:${input.questionId}:paused`,
@@ -457,7 +614,7 @@ export class RunStore {
         {
           event: {
             kind: 'question.asked',
-            payload: { questionId: input.questionId, prompt: input.prompt, input: input.input },
+            payload: { questionId: input.questionId, prompt: input.prompt, input: input.input, ...attribution },
           },
           sourceKey: `question:${input.questionId}`,
         },
@@ -595,12 +752,25 @@ export class RunStore {
    * within budget, where an unconfirmed admission still occupies capacity. The reservation is charged as
    * unconfirmed until dispatch is confirmed.
    */
-  async reserveAttempt(runId: string, invocationId: string): Promise<{ attemptId: string; ordinal: number }> {
+  async reserveAttempt(
+    runId: string,
+    invocationId: string,
+    actor: ActorRef = { kind: 'root' },
+  ): Promise<{ attemptId: string; ordinal: number }> {
     const attemptId = crypto.randomUUID();
+    const actorKey = actorKeyOf(actor);
     return withOwnerFence(this.db, this.owner, async (tx) => {
       const run = await this.#lockRun(tx, runId);
       if (run.state.kind !== 'working' || run.state.invocationId !== invocationId) {
         throw new RunStoreError('not_dispatchable', 'the run does not permit another model request');
+      }
+      if (actorKey !== 'root') {
+        // A delegate draws on the same run-wide budget, and only while it is running.
+        const [row] = await tx`select state ->> 'kind' as kind from runtime.run_actors
+          where run_id = ${runId} and actor_key = ${actorKey}`;
+        if (row?.kind !== 'active') {
+          throw new RunStoreError('not_dispatchable', 'the delegate does not permit another model request');
+        }
       }
       const [budget] = await tx`
         select budget_max, consumed, unconfirmed, binding::text as binding from runtime.runs where run_id = ${runId}`;
@@ -624,9 +794,9 @@ export class RunStore {
       const ordinal = Number(next.ordinal);
       const state: AttemptState = { kind: 'reserved' };
       await tx`insert into runtime.model_attempts (run_id, attempt_id, invocation_id, ordinal, provider, model,
-          profile_id, state)
+          profile_id, state, actor_key)
         values (${runId}, ${attemptId}, ${invocationId}, ${ordinal}, ${binding.provider}, ${binding.model},
-          ${binding.profileId}, ${jsonText(state)}::text::jsonb)`;
+          ${binding.profileId}, ${jsonText(state)}::text::jsonb, ${actorKey})`;
       await this.#attemptEvent(tx, runId, attemptId, ordinal, state, { unconfirmed: 1 });
       return { attemptId, ordinal };
     });
@@ -699,6 +869,8 @@ export class RunStore {
     const [budget] = await tx`
       update runtime.runs set consumed = consumed + ${delta.consumed ?? 0}, unconfirmed = unconfirmed + ${delta.unconfirmed ?? 0}
       where run_id = ${runId} returning budget_max, consumed, unconfirmed`;
+    const [attempt] = await tx`select actor_key from runtime.model_attempts
+      where run_id = ${runId} and attempt_id = ${attemptId}`;
     await this.#append(tx, runId, [
       {
         event: {
@@ -712,6 +884,7 @@ export class RunStore {
               consumed: Number(budget.consumed),
               unconfirmed: Number(budget.unconfirmed),
             },
+            ...(await this.#attribution(tx, runId, attempt.actor_key)),
           },
         },
         sourceKey: `attempt:${attemptId}:${state.kind}`,
@@ -755,6 +928,8 @@ export class RunStore {
               await tx`update runtime.questions
                 set disposition = ${jsonText({ kind: 'closed', reason: 'cancelled', closedAt: acceptedAt })}::text::jsonb
                 where run_id = ${runId} and question_id = ${state.questionId} and disposition_kind = 'pending'`;
+              // Nothing is running, so a delegate waiting on that question is abandoned with it.
+              await this.#settleActors(tx, runId, 'cancelled');
             }
           },
           next: () =>
@@ -829,6 +1004,7 @@ export class RunStore {
             finishedAt = now.at as string;
             await tx`update runtime.invocations set disposition = 'settled', ended_at = now()
               where run_id = ${runId} and disposition = 'active'`;
+            await this.#settleActors(tx, runId, 'cancelled');
             await tx`update runtime.tool_operations
               set disposition = ${jsonText({ kind: 'abandoned', reason: 'cancelled' })}::text::jsonb
               where run_id = ${runId} and disposition ->> 'kind' in ('started', 'paused')`;
@@ -963,8 +1139,10 @@ export class RunStore {
     const at = now.at as string;
     await tx`update runtime.invocations set disposition = ${invocationDisposition}, ended_at = now()
       where run_id = ${runId} and disposition = 'active'`;
+    const reason = invocationDisposition === 'interrupted' ? 'interrupted' : 'unfinished';
+    await this.#settleActors(tx, runId, reason);
     await tx`update runtime.tool_operations
-      set disposition = ${jsonText({ kind: 'abandoned', reason: invocationDisposition === 'interrupted' ? 'interrupted' : 'unfinished' })}::text::jsonb
+      set disposition = ${jsonText({ kind: 'abandoned', reason })}::text::jsonb
       where run_id = ${runId} and disposition ->> 'kind' in ('started', 'paused')`;
     const reserved = await tx`select attempt_id::text as attempt_id, ordinal from runtime.model_attempts
       where run_id = ${runId} and state_kind = 'reserved'`;
@@ -975,6 +1153,67 @@ export class RunStore {
       await this.#attemptEvent(tx, runId, row.attempt_id, Number(row.ordinal), unconfirmed, {});
     }
     return at;
+  }
+
+  /**
+   * Settles a run's capability records when its local work ends without a result for them, before unfinished
+   * operations are abandoned: an external call whose dispatch intent was recorded becomes uncertain (it may or may
+   * not have taken effect, and is never retried), and a delegate still running or waiting is abandoned. Completed
+   * outcomes are untouched. Each change is recorded in history.
+   */
+  async #settleActors(tx: TransactionSQL, runId: string, reason: 'interrupted' | 'unfinished' | 'cancelled') {
+    const intents = await tx`
+      select operation_id, tool_name, actor_key, tool_binding::text as tool_binding from runtime.tool_operations
+      where run_id = ${runId} and disposition ->> 'kind' = 'dispatching' order by created_at, operation_id`;
+    for (const row of intents as {
+      operation_id: string;
+      tool_name: string;
+      actor_key: string;
+      tool_binding: string;
+    }[]) {
+      const disposition = {
+        kind: 'completed' as const,
+        outcome: 'uncertain' as const,
+        result: {
+          outcome: 'uncertain',
+          code: 'mcp_outcome_unknown',
+          message: 'Whether this external operation took effect cannot be established. It was not retried.',
+        },
+      };
+      await tx`update runtime.tool_operations set disposition = ${jsonText(disposition)}::text::jsonb
+        where run_id = ${runId} and operation_id = ${row.operation_id}`;
+      await this.#append(tx, runId, [
+        {
+          event: {
+            kind: 'tool.operation',
+            payload: {
+              operationId: row.operation_id,
+              toolName: row.tool_name,
+              disposition,
+              ...(await this.#attribution(tx, runId, row.actor_key)),
+              binding: parseJsonText(row.tool_binding) as ToolBinding,
+            },
+          },
+          sourceKey: `tool:${row.operation_id}:completed`,
+        },
+      ]);
+    }
+    const delegates = await tx`
+      update runtime.run_actors set state = ${jsonText({ kind: 'abandoned', reason })}::text::jsonb
+      where run_id = ${runId} and state_kind in ('active', 'waiting')
+      returning actor_key`;
+    const abandoned = (delegates as { actor_key: string }[]).map((row) => row.actor_key).sort();
+    for (const delegationId of abandoned) {
+      await this.#append(tx, runId, [
+        {
+          event: {
+            kind: 'delegation.finished',
+            payload: { delegationId, outcome: 'abandoned', operationId: delegationId },
+          },
+          sourceKey: `delegation:${delegationId}:finished`,
+        },
+      ]);
+    }
   }
 
   /** Readback for publication: whether the run is waiting on this question. */
@@ -1047,8 +1286,14 @@ export class RunStore {
         from runtime.runs where run_id = ${runId}`;
       if (run === undefined) throw new RunStoreError('run_not_found', 'no such run');
       const [question] = await tx`
-        select question_id, prompt, input::text as input from runtime.questions
-        where run_id = ${runId} and disposition_kind = 'pending'`;
+        select q.question_id, q.prompt, q.input::text as input, q.binding ? 'version' as versioned, q.actor_key,
+          a.agent_id
+        from runtime.questions q join runtime.run_actors a on a.run_id = q.run_id and a.actor_key = q.actor_key
+        where q.run_id = ${runId} and q.disposition_kind = 'pending'`;
+      const [command] = await tx`
+        select input::text as input, snapshot_digest from runtime.run_capabilities where run_id = ${runId}`;
+      const commandInput =
+        command === undefined ? undefined : commandRunInputSchema.parse(parseJsonText(command.input));
       return {
         runId: run.run_id,
         createRequestId: run.create_request_id,
@@ -1072,6 +1317,23 @@ export class RunStore {
                 questionId: question.question_id,
                 prompt: question.prompt,
                 input: questionInputSchema.parse(parseJsonText(question.input)),
+                ...(question.versioned !== true
+                  ? {}
+                  : {
+                      asker:
+                        question.actor_key === 'root'
+                          ? { kind: 'root' as const }
+                          : { kind: 'delegate' as const, delegationId: question.actor_key, agentId: question.agent_id },
+                    }),
+              },
+        command:
+          commandInput === undefined
+            ? undefined
+            : {
+                commandId: commandInput.commandId,
+                selectionRevision: commandInput.selectionRevision,
+                arguments: commandInput.arguments,
+                snapshotDigest: command.snapshot_digest,
               },
         throughSeq: run.last_seq,
       };
