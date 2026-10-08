@@ -70,56 +70,56 @@ Commands below run from the repository root, prefixed with `mise exec --` when n
 - [x] 2.8 Verify: Run `bun run check:verify` and `bun run test:integration`; report passing migration, identity, atomicity, legacy-projection and startup cases before the delegate block, or stop with the first failure and retained evidence.
 
 ### Step 13 - Pause: Switch model for exploration
-- [ ] 2.9 Pause: Switch model for exploration; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
+- [x] 2.9 Pause: Switch model for exploration; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
 
 ## 3. Stock delegates and durable questions — Research
 
 ### Step 14 - Explore: Inspect stock child checkpoint behavior
-- [ ] 3.1 Explore: Inspect pinned `createAgent` child invocation and framework-provided namespace/resume behavior; deliver the exact public API path for stable task IDs and direct child inspection, distinguishing the existing MemorySaver observation from the still-unproven PostgreSQL/process boundary.
+- [x] 3.1 Explore: Inspect pinned `createAgent` child invocation and framework-provided namespace/resume behavior; deliver the exact public API path for stable task IDs and direct child inspection, distinguishing the existing MemorySaver observation from the still-unproven PostgreSQL/process boundary.
 
 ### Step 15 - Explore: Map delegate lifecycle and shared admission
-- [ ] 3.2 Explore: Inspect `controller.ts`, publication, saved-state inspection, answer acceptance, provider assembly, model admission and cancellation tracking; deliver an actor-aware wiring plan that shares one provider, run budget, owner epoch and root invocation without a second scheduler or model loop.
+- [x] 3.2 Explore: Inspect `controller.ts`, publication, saved-state inspection, answer acceptance, provider assembly, model admission and cancellation tracking; deliver an actor-aware wiring plan that shares one provider, run budget, owner epoch and root invocation without a second scheduler or model loop.
 
 ### Step 16 - Propose: Approve the durable delegate block
-- [ ] 3.3 Propose: Present the complete delegate slice and bounded PostgreSQL fixture plan, using synthetic retained definitions before public command admission exists; obtain approval for explicit root/child state validation, test process boundaries and failure classification without claiming an MCP transport pass.
+- [x] 3.3 Propose: Present the complete delegate slice and bounded PostgreSQL fixture plan, using synthetic retained definitions before public command admission exists; obtain approval for explicit root/child state validation, test process boundaries and failure classification without claiming an MCP transport pass.
 
 ### Step 17 - Pause: Switch model for implementation
-- [ ] 3.4 Pause: Switch model for implementation; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
+- [x] 3.4 Pause: Switch model for implementation; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
 
 ## 4. Stock delegates and durable questions — Implementation
 
 ### Step 18 - Implement: Add the minimal PostgreSQL child-resume probe
-- [ ] 4.1 Implement: Add `tests/integration/delegation-probe.integration.test.ts` using the existing isolated database fixture, pinned stock agents and official saver. A root tool invokes a child that reads a synthetic value and interrupts; direct inspection of a freshly reconstructed child at the framework namespace SHALL match the propagated interrupt. Resume a fresh root/child pair by interrupt ID with `{ answer: false }`; verify the read count stays one, the parent tool body is entered twice and the answer is preserved exactly. No production delegate implementation or provider request is required. Keep this probe distinct from the later production-controller/fresh-process witness.
+- [x] 4.1 Implement: Add `tests/integration/delegation-probe.integration.test.ts` using the existing isolated database fixture, pinned stock agents and official saver. A root tool invokes a child that reads a synthetic value and interrupts; direct inspection of a freshly reconstructed child at the framework namespace SHALL match the propagated interrupt. Resume a fresh root/child pair by interrupt ID with `{ answer: false }`; verify the read count stays one, the parent tool body is entered twice and the answer is preserved exactly. No production delegate implementation or provider request is required. Keep this probe distinct from the later production-controller/fresh-process witness.
 
 ### Step 19 - Verify: Check PostgreSQL child-resume compatibility first
-- [ ] 4.2 Verify: Run `bun run check:verify` and `bun run test:integration`, including the new probe, before implementing the remaining delegate steps. On failure, stop for an owner decision without repair, rerun, framework upgrade, replacement engine or dropping durable questions.
+- [x] 4.2 Verify: Run `bun run check:verify` and `bun run test:integration`, including the new probe, before implementing the remaining delegate steps. On failure, stop for an owner decision without repair, rerun, framework upgrade, replacement engine or dropping durable questions.
 
 ### Step 20 - Implement: Add bounded stock tool-invoked delegates
-- [ ] 4.3 Implement: Make agent construction actor-aware and implement `mcp_Delegate` with stock child `createAgent`, same run thread, framework namespace, stable delegation/tool-operation and task-message IDs, and bound task/instructions only. Add atomic begin/complete transitions; test caller-ceiling/agent restriction intersection, no caller-transcript inheritance or nested delegation tool, root-only parentage, depth one, default-eight/configurable-1–32 limits and replay not consuming another slot. Update execution-definition graph/protocol inputs and test per-provider manifest coverage as delegate modules land; representative delegate-code changes SHALL change the relevant digest. Follow the existing import closure and add explicit roots only for otherwise unreachable resume-critical code.
+- [x] 4.3 Implement: Make agent construction actor-aware and implement `mcp_Delegate` with stock child `createAgent`, same run thread, framework namespace, stable delegation/tool-operation and task-message IDs, and bound task/instructions only. Add atomic begin/complete transitions; test caller-ceiling/agent restriction intersection, no caller-transcript inheritance or nested delegation tool, root-only parentage, depth one, default-eight/configurable-1–32 limits and replay not consuming another slot. Update execution-definition graph/protocol inputs and test per-provider manifest coverage as delegate modules land; representative delegate-code changes SHALL change the relevant digest. Follow the existing import closure and add explicit roots only for otherwise unreachable resume-critical code.
 
 ### Step 21 - Implement: Attribute delegate activity and typed outcomes
-- [ ] 4.4 Implement: Extend boundary middleware for actor-scoped operation/message/event identity and exclusive `mcp_Delegate`/`mcp_AskUser` batches; test whole-batch refusal, same-named sequential delegates and cross-actor provider-call collisions. A safely handled delegate failure SHALL reach the parent as an identifiable failure, not a fabricated result, and allow caller continuation; typed terminal failures still stop the run. Test unknown-error termination and only a new root final result succeeding.
+- [x] 4.4 Implement: Extend boundary middleware for actor-scoped operation/message/event identity and exclusive `mcp_Delegate`/`mcp_AskUser` batches; test whole-batch refusal, same-named sequential delegates and cross-actor provider-call collisions. A safely handled delegate failure SHALL reach the parent as an identifiable failure, not a fabricated result, and allow caller continuation; typed terminal failures still stop the run. Test unknown-error termination and only a new root final result succeeding.
 
 ### Step 22 - Implement: Share provider and physical-request accounting
-- [ ] 4.5 Implement: Route child models through the existing selected-provider assembly, guarded terminal and run-wide admission counter; test shared physical-request ordinals, counted renewal retries, no fallback, exhausted-budget refusal and no extra model charge for tools or delegation creation.
+- [x] 4.5 Implement: Route child models through the existing selected-provider assembly, guarded terminal and run-wide admission counter; test shared physical-request ordinals, counted renewal retries, no fallback, exhausted-budget refusal and no extra model charge for tools or delegation creation.
 
 ### Step 23 - Implement: Inspect and publish delegated questions
-- [ ] 4.6 Implement: Implement version-2 root/delegate question publication and direct saved-child inspection using retained thread/namespace bindings; test atomic question/actor/run settlement, matching actor/task/operation/interrupt/payload/digests, missing or contradictory root/child state, no graph invocation during inspection, and the parent delegation operation remaining started rather than native-question paused.
+- [x] 4.6 Implement: Implement version-2 root/delegate question publication and direct saved-child inspection using retained thread/namespace bindings; test atomic question/actor/run settlement, matching actor/task/operation/interrupt/payload/digests, missing or contradictory root/child state, no graph invocation during inspection, and the parent delegation operation remaining started rather than native-question paused.
 
 ### Step 24 - Implement: Resume the original delegated asker
-- [ ] 4.7 Implement: Extend continuation compatibility and atomic answer acceptance to reconstruct retained child definitions, check loaded-skill membership and resume only the root interrupt-ID map; test exact negative/null/zero/permitted-empty answers, identical answer retries, stale answers after later questions, `cannot_verify` without mutation and confirmed loss producing `continuation_unavailable` without accepting the answer.
+- [x] 4.7 Implement: Extend continuation compatibility and atomic answer acceptance to reconstruct retained child definitions, check loaded-skill membership and resume only the root interrupt-ID map; test exact negative/null/zero/permitted-empty answers, identical answer retries, stale answers after later questions, `cannot_verify` without mutation and confirmed loss producing `continuation_unavailable` without accepting the answer.
 
 ### Step 25 - Implement: Settle delegated cancellation and interruption
-- [ ] 4.8 Implement: Track the child under existing in-flight cancellation and settlement; integration-test cancellation while active or waiting, accepted-cancel/late-result races, no orphan actor, no caller continuation after cancellation and process-death interruption without automatic recovery.
+- [x] 4.8 Implement: Track the child under existing in-flight cancellation and settlement; integration-test cancellation while active or waiting, accepted-cancel/late-result races, no orphan actor, no caller continuation after cancellation and process-death interruption without automatic recovery.
 
 ### Step 26 - Implement: Add the fresh-process delegate witness
-- [ ] 4.9 Implement: Add a provider-free PostgreSQL fresh-process witness through the production controller and official saver: two sequential questions from one delegate across restart, two calls to the same named agent, lost answer acknowledgement, exact negative answers and unchanged completed native/synthetic-external operation counts. Assert re-entry preserves saved state and genuinely new identical-argument calls remain new; label the external stand-in as synthetic, not a real MCP pass.
+- [x] 4.9 Implement: Add a provider-free PostgreSQL fresh-process witness through the production controller and official saver: two sequential questions from one delegate across restart, two calls to the same named agent, lost answer acknowledgement, exact negative answers and unchanged completed native/synthetic-external operation counts. Assert re-entry preserves saved state and genuinely new identical-argument calls remain new; label the external stand-in as synthetic, not a real MCP pass.
 
 ### Step 27 - Implement: Document delegates and restart routing
-- [ ] 4.10 Implement: Update `architecture/02-control-plane.md`, `architecture/09-data-model-and-lifecycle.md` and README execution/restart/budget guidance; verify they describe tool-invoked sequential children, explicit child inspection, recoverable delegate outcomes, root-only success and no manager/scheduler revival.
+- [x] 4.10 Implement: Update `architecture/02-control-plane.md`, `architecture/09-data-model-and-lifecycle.md` and README execution/restart/budget guidance; verify they describe tool-invoked sequential children, explicit child inspection, recoverable delegate outcomes, root-only success and no manager/scheduler revival.
 
 ### Step 28 - Verify: Check durable delegate behavior
-- [ ] 4.11 Verify: Run `bun run check:verify` and `bun run test:integration`, including the fresh-process delegate witness; its PostgreSQL/process-boundary pass is required before group 5 or any later feature block. Report evidence and stop on any failure without an engine replacement, framework upgrade or loss of durable-question behavior. Group 12 later adds the distinct full MCP replay gate.
+- [x] 4.11 Verify: Run `bun run check:verify` and `bun run test:integration`, including the fresh-process delegate witness; its PostgreSQL/process-boundary pass is required before group 5 or any later feature block. Report evidence and stop on any failure without an engine replacement, framework upgrade or loss of durable-question behavior. Group 12 later adds the distinct full MCP replay gate.
 
 ### Step 29 - Pause: Switch model for exploration
 - [ ] 4.12 Pause: Switch model for exploration; completion requires the fixed pause notice and an affirmative continuation, with no question tool.

@@ -5,12 +5,18 @@
 // was already completed is answered from the record instead of running again, while the same arguments under a
 // new call ID are new work. A reused provider call ID bound to a different message, tool or arguments is not a
 // cache hit but an invalid call.
+import type { ActorRef, ToolBinding } from '@agent-runtime/contracts';
+import { actorKeyOf } from '../capabilities/records.ts';
 import type { KeyedSerializer } from '../persistence/keyed-serializer.ts';
 import { canonicalJson, digestOf } from '../records/canonical.ts';
 import { type RecordedToolOutcome, type RunStore, RunStoreError } from '../records/run-store.ts';
-import { operationIdFor } from '../records/schemas.ts';
+import { operationIdFor, operationIdV2 } from '../records/schemas.ts';
 import { RESULT_TOO_LARGE, type ToolOutcome } from '../workspace/results.ts';
 
+/**
+ * A version-1 (root, phase-1) identity has no actor. A command run's identities are version 2: scoped to their
+ * actor, with the public binding the call was admitted under.
+ */
 export interface ToolCallIdentity {
   operationId: string;
   modelMessageId: string;
@@ -18,6 +24,8 @@ export interface ToolCallIdentity {
   toolName: string;
   arguments: Record<string, unknown>;
   argumentDigest: string;
+  actor?: ActorRef;
+  binding?: ToolBinding;
 }
 
 export type OperationStart =
@@ -47,17 +55,23 @@ export function identityFor(
   runId: string,
   modelMessageId: string,
   call: { id?: string; name: string; args: unknown },
+  scope?: { actor: ActorRef; binding?: ToolBinding },
 ): ToolCallIdentity | undefined {
   if (typeof call.id !== 'string') return undefined;
   if (typeof call.args !== 'object' || call.args === null || Array.isArray(call.args)) return undefined;
   try {
     return {
-      operationId: operationIdFor(runId, modelMessageId, call.id),
+      operationId:
+        scope === undefined
+          ? operationIdFor(runId, modelMessageId, call.id)
+          : operationIdV2(runId, actorKeyOf(scope.actor), modelMessageId, call.id),
       modelMessageId,
       providerToolCallId: call.id,
       toolName: call.name,
       arguments: call.args as Record<string, unknown>,
       argumentDigest: digestOf(call.args),
+      ...(scope === undefined ? {} : { actor: scope.actor }),
+      ...(scope?.binding === undefined ? {} : { binding: scope.binding }),
     };
   } catch {
     return undefined;

@@ -9,14 +9,25 @@
 //     other calls, is refused as a recorded outcome; a call already completed is answered from its record;
 //   - any failure is replaced by an ExecutionFailure with fixed text, because the graph records an exception's
 //     name and message; graph control flow (interrupts, commands) passes through unchanged.
+import { type ActorRef, agentIdSchema, nativeToolSchema, type ToolBinding } from '@agent-runtime/contracts';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { AIMessage, type BaseMessage, ToolMessage } from '@langchain/core/messages';
 import { isCommand, isGraphBubbleUp } from '@langchain/langgraph';
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
 import { createAgent, createMiddleware, ToolInvocationError } from 'langchain';
+import { actorKeyOf } from '../capabilities/records.ts';
 import type { ContentPolicy } from '../security/content-policy.ts';
 import type { ToolOutcome } from '../workspace/results.ts';
-import { ExecutionFailure, type ModelCallReports, type ModelFailureEvidence } from './failures.ts';
+import {
+  type AgentDefinition,
+  type AgentScope,
+  createDelegateTool,
+  DELEGATE_PROMPT,
+  DELEGATE_TOOL,
+  delegableAgents,
+  nativeToolsFor,
+} from './delegation.ts';
+import { ExecutionFailure, executionFailureOf, type ModelCallReports, type ModelFailureEvidence } from './failures.ts';
 import { sanitizeModelMessage } from './model-message.ts';
 import {
   identityFor,
@@ -56,6 +67,31 @@ export interface ExecutionAgentOptions extends ToolContext {
   reports?: ModelCallReports;
   /** The provider's check of a parsed response; a refusal reason fails the call before anything is stored. */
   responseRefusal?: (message: AIMessage) => string | undefined;
+  /**
+   * In a command run: the agent this graph acts for and the run's retained definitions. Absent for native goal
+   * runs, whose tools, prompt and version-1 identities are unchanged.
+   */
+  scope?: AgentScope;
+  /**
+   * Records a delegate's completed model message in history, attributed to it, before the graph stores it. (The
+   * controller records the root's from the graph's stream.)
+   */
+  recordMessage?: (message: AIMessage) => Promise<void>;
+}
+
+const SCOPES = new WeakMap<object, AgentScope>();
+
+/** The command-run scope an agent was built with; undefined for a native goal run's agent. */
+export function agentScope(agent: ExecutionAgent): AgentScope | undefined {
+  return SCOPES.get(agent);
+}
+
+/** The retained definition of a delegate actor. */
+function delegateDefinition(scope: AgentScope): AgentDefinition | undefined {
+  const actor = scope.actor;
+  return actor.kind === 'delegate'
+    ? scope.capabilities.snapshot.agents.find((agent) => agent.id === actor.agentId)
+    : undefined;
 }
 
 /** The TerminalError behind an error: provider SDKs wrap what their `fetch` throws (as `cause`). */
@@ -106,7 +142,13 @@ export function boundaryMiddleware(options: {
   modelCallSettled?: () => void;
   reports?: ModelCallReports;
   responseRefusal?: (message: AIMessage) => string | undefined;
+  /** A command-run actor: its calls get version-2 identities and recorded bindings. */
+  actor?: ActorRef;
+  /** The tools this agent may call; any other call is refused before it runs. Default: the native three. */
+  allowedTools?: readonly string[];
+  recordMessage?: (message: AIMessage) => Promise<void>;
 }) {
+  const allowed = options.allowedTools ?? TOOL_NAMES;
   return createMiddleware({
     name: 'ExecutionBoundary',
     wrapModelCall: async (request, handler) => {
@@ -143,7 +185,16 @@ export function boundaryMiddleware(options: {
         const sanitized = sanitizeModelMessage(options.contentPolicy(), response as AIMessage, {
           assignId: options.newMessageId,
         });
-        if (sanitized.kind === 'message') return sanitized.message;
+        if (sanitized.kind === 'message') {
+          if (options.recordMessage !== undefined) {
+            try {
+              await options.recordMessage(sanitized.message);
+            } catch {
+              throw new ExecutionFailure('history_unrecorded');
+            }
+          }
+          return sanitized.message;
+        }
         const codes = {
           unsafe: 'unsafe_model_output',
           unstorable: 'model_output_unstorable',
@@ -168,7 +219,12 @@ export function boundaryMiddleware(options: {
     handler: Parameters<NonNullable<Parameters<typeof createMiddleware>[0]['wrapToolCall']>>[1],
   ) {
     const call = request.toolCall;
-    const identity = callIdentity(options.runId, request.state.messages as BaseMessage[] | undefined, call);
+    const identity = callIdentity(
+      options.runId,
+      request.state.messages as BaseMessage[] | undefined,
+      call,
+      options.actor === undefined ? undefined : { actor: options.actor, binding: bindingFor(call, allowed) },
+    );
     const record = async (outcome: ToolOutcome<unknown>) => {
       const recorded = recordableOutcome(outcome);
       try {
@@ -190,7 +246,7 @@ export function boundaryMiddleware(options: {
     if (start.kind === 'not_dispatchable') throw new ExecutionFailure('dispatch_refused');
     if (start.kind === 'reuse') return toolMessage(identity, start.outcome);
 
-    const refusal = batchRefusal(request.state.messages as BaseMessage[] | undefined, identity);
+    const refusal = batchRefusal(request.state.messages as BaseMessage[] | undefined, identity, options.allowedTools);
     if (refusal !== undefined) return record(refusal);
 
     let result: unknown;
@@ -198,7 +254,9 @@ export function boundaryMiddleware(options: {
       result = await handler(request);
     } catch (error) {
       if (isGraphBubbleUp(error)) throw error;
-      if (error instanceof ExecutionFailure) throw error;
+      // A typed failure, including one a delegate's graph raised beneath this call, keeps its classification.
+      const typed = executionFailureOf(error);
+      if (typed !== undefined) throw typed;
       // Arguments that do not satisfy the tool's schema are the model's mistake: a safe refusal it can correct.
       if (error instanceof ToolInvocationError) {
         return record({
@@ -239,6 +297,7 @@ function callIdentity(
   runId: string,
   messages: readonly BaseMessage[] | undefined,
   call: { id?: string; name: string; args: unknown },
+  scope?: { actor: ActorRef; binding?: ToolBinding },
 ): ToolCallIdentity {
   const issuers = (messages ?? []).filter(
     (message): message is AIMessage =>
@@ -248,47 +307,96 @@ function callIdentity(
   const ids = (issuer?.tool_calls ?? []).map((candidate) => candidate.id);
   const identity =
     issuer !== undefined && typeof issuer.id === 'string' && new Set(ids).size === ids.length
-      ? identityFor(runId, issuer.id, call)
+      ? identityFor(runId, issuer.id, call, scope)
       : undefined;
   if (identity === undefined) throw new ExecutionFailure('tool_call_unrepresentable');
   return identity;
 }
 
+/** The public binding of an available call; an unavailable or malformed one records none. */
+function bindingFor(call: { name: string; args: unknown }, allowed: readonly string[]): ToolBinding | undefined {
+  if (!allowed.includes(call.name)) return undefined;
+  if (call.name === DELEGATE_TOOL) {
+    const agent = agentIdSchema.safeParse((call.args as { agent?: unknown } | null)?.agent);
+    return agent.success ? { kind: 'delegation', agentId: agent.data } : undefined;
+  }
+  const native = nativeToolSchema.safeParse(call.name);
+  return native.success ? { kind: 'native', name: native.data } : undefined;
+}
+
+/** Tools that must be the only call in their response: their caller waits on the owner or a delegate. */
+const EXCLUSIVE_TOOLS: readonly string[] = [ASK_TOOL, DELEGATE_TOOL];
+
 /**
  * Calls that are refused without running: a tool this agent does not have, and every call in a response that
- * asks a question alongside anything else (a question must be the sole call, so no sibling is run either).
+ * asks a question or delegates alongside anything else (such a call must be the sole one, so no sibling is run).
  */
 function batchRefusal(
   messages: readonly BaseMessage[] | undefined,
   identity: ToolCallIdentity,
+  allowedTools?: readonly string[],
 ): ToolOutcome<never> | undefined {
-  if (!TOOL_NAMES.includes(identity.toolName)) {
+  if (!(allowedTools ?? TOOL_NAMES).includes(identity.toolName)) {
     return {
       outcome: 'refused',
       code: 'tool_unavailable',
-      message: 'That tool is not available. Only reading, searching and asking the owner are permitted.',
+      message:
+        allowedTools === undefined
+          ? 'That tool is not available. Only reading, searching and asking the owner are permitted.'
+          : 'That tool is not available to this agent.',
     };
   }
   const issuer = (messages ?? []).find(
     (message): message is AIMessage => AIMessage.isInstance(message) && message.id === identity.modelMessageId,
   );
   const calls = issuer?.tool_calls ?? [];
-  if (calls.length > 1 && calls.some((candidate) => candidate.name === ASK_TOOL)) {
-    return {
-      outcome: 'refused',
-      code: 'question_not_alone',
-      message: 'A question must be the only tool call in its response; none of these calls was run. Ask separately.',
-    };
+  if (calls.length > 1 && calls.some((candidate) => EXCLUSIVE_TOOLS.includes(candidate.name))) {
+    return calls.some((candidate) => candidate.name === ASK_TOOL)
+      ? {
+          outcome: 'refused',
+          code: 'question_not_alone',
+          message:
+            'A question must be the only tool call in its response; none of these calls was run. Ask separately.',
+        }
+      : {
+          outcome: 'refused',
+          code: 'delegation_not_alone',
+          message:
+            'A delegation must be the only tool call in its response; none of these calls was run. Delegate separately.',
+        };
   }
   return undefined;
 }
 
 /** The exact parameters given to `createAgent`, exposed so the invocation contract can be checked. */
 export function executionAgentParams(options: ExecutionAgentOptions) {
+  const { scope } = options;
+  let tools = createExecutionTools(options);
+  let systemPrompt = SYSTEM_PROMPT;
+  if (scope !== undefined) {
+    const definition = delegateDefinition(scope);
+    if (scope.actor.kind === 'delegate' && definition === undefined) throw new ExecutionFailure('invariant_violation');
+    const natives: readonly string[] = nativeToolsFor(scope.capabilities, definition);
+    tools = createExecutionTools({ ...options, actorKey: actorKeyOf(scope.actor) }).filter((candidate) =>
+      natives.includes(candidate.name),
+    );
+    if (definition !== undefined) systemPrompt = `${DELEGATE_PROMPT}\n\n${definition.instructions}`;
+    const delegation = scope.delegation;
+    if (scope.actor.kind === 'root' && delegation !== undefined && delegableAgents(scope.capabilities).length > 0) {
+      tools = [
+        ...tools,
+        createDelegateTool({
+          scope: { ...scope, delegation },
+          contentPolicy: options.contentPolicy,
+          ...(options.track === undefined ? {} : { track: options.track }),
+        }) as unknown as (typeof tools)[number],
+      ];
+    }
+  }
   return {
     model: options.model,
-    tools: createExecutionTools(options),
-    systemPrompt: SYSTEM_PROMPT,
+    tools,
+    systemPrompt,
     checkpointer: options.checkpointer,
     middleware: [
       boundaryMiddleware({
@@ -300,6 +408,8 @@ export function executionAgentParams(options: ExecutionAgentOptions) {
         ...(options.modelCallSettled === undefined ? {} : { modelCallSettled: options.modelCallSettled }),
         ...(options.reports === undefined ? {} : { reports: options.reports }),
         ...(options.responseRefusal === undefined ? {} : { responseRefusal: options.responseRefusal }),
+        ...(scope === undefined ? {} : { actor: scope.actor, allowedTools: tools.map((candidate) => candidate.name) }),
+        ...(options.recordMessage === undefined ? {} : { recordMessage: options.recordMessage }),
       }),
     ],
     version: 'v2' as const,
@@ -307,7 +417,9 @@ export function executionAgentParams(options: ExecutionAgentOptions) {
 }
 
 export function createExecutionAgent(options: ExecutionAgentOptions) {
-  return createAgent(executionAgentParams(options));
+  const agent = createAgent(executionAgentParams(options));
+  if (options.scope !== undefined) SCOPES.set(agent, options.scope);
+  return agent;
 }
 
 export type ExecutionAgent = ReturnType<typeof createExecutionAgent>;

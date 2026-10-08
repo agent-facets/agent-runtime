@@ -12,7 +12,7 @@ import { AIMessage, type BaseMessage } from '@langchain/core/messages';
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
 import { failureFor } from '../domain/failures.ts';
 import type { KeyedSerializer } from '../persistence/keyed-serializer.ts';
-import { isAmbiguousCommitError, type RunStore } from '../records/run-store.ts';
+import { isAmbiguousCommitError, type RunCapabilities, type RunStore } from '../records/run-store.ts';
 import type { Failure, ProviderBinding, RunState } from '../records/schemas.ts';
 import type { ExecutionAgent } from './agent.ts';
 import type { ActiveInvocations } from './cancellation.ts';
@@ -20,6 +20,8 @@ import { InFlight } from './in-flight.ts';
 import type { InvocationExecutor, InvocationInput, InvocationSettlement, StreamChunk } from './invocation.ts';
 import { classifyInvocationFailure } from './outcomes.ts';
 import { publishSettledQuestion } from './publication.ts';
+
+type Attribution = { actor?: { kind: 'root' } };
 
 /** Raised after the service was told to fail stop; the outcome is left for startup reconciliation. */
 export class FailStop extends Error {
@@ -37,6 +39,8 @@ export interface InvocationWiring {
   inflight: InFlight;
   /** The invocation's service-owned signal, available once it has started. */
   signal: () => AbortSignal;
+  /** A command run's retained definitions, revalidated on read; absent for a native goal run. */
+  capabilities?: RunCapabilities;
 }
 
 export interface ControllerDeps {
@@ -60,6 +64,7 @@ export class RunController {
   async run(runId: string, invocationId: string, input: InvocationInput): Promise<RunState> {
     const { store, executor, active } = this.deps;
     const snapshot = await store.snapshot(runId);
+    const capabilities = snapshot.command === undefined ? undefined : await store.readCapabilities(runId);
     const inflight = new InFlight();
     let running: ReturnType<InvocationExecutor['start']> | undefined;
     const agent = this.deps.wire({
@@ -68,7 +73,10 @@ export class RunController {
       binding: snapshot.binding,
       inflight,
       signal: () => running?.signal ?? AbortSignal.abort(),
+      ...(capabilities === undefined ? {} : { capabilities }),
     });
+    // In a command run the root's messages are attributed, so they stay distinguishable from its delegates'.
+    const attribution: Attribution = capabilities === undefined ? {} : { actor: { kind: 'root' } };
     const before = new Set(await this.#messageIds(agent, runId));
 
     running = executor.start({
@@ -76,7 +84,7 @@ export class RunController {
       agent,
       input,
       budgetMax: snapshot.budget.maximum,
-      onChunk: (chunk) => this.#project(runId, chunk),
+      onChunk: (chunk) => this.#project(runId, chunk, attribution),
     });
     active.register(runId, running, inflight);
     const settlement = await running.settled;
@@ -120,7 +128,7 @@ export class RunController {
       const reason = input.kind === 'resume' && !producedWork ? 'no_op_continuation' : 'missing_final_result';
       return this.#finish(runId, invocationId, { kind: 'failed', failure: failureFor(reason, { provider }) });
     }
-    const recorded = await this.#recordMessage(runId, final);
+    const recorded = await this.#recordMessage(runId, final, attribution);
     return this.#finish(runId, invocationId, { kind: 'succeeded', resultSeq: recorded });
   }
 
@@ -153,21 +161,26 @@ export class RunController {
   }
 
   /** Projects completed assistant messages from the stream into history, in order, once each. */
-  async #project(runId: string, chunk: StreamChunk): Promise<void> {
+  async #project(runId: string, chunk: StreamChunk, attribution: Attribution): Promise<void> {
     if (chunk.mode !== 'updates' || chunk.data === null || typeof chunk.data !== 'object') return;
     for (const update of Object.values(chunk.data as Record<string, unknown>)) {
       const messages = (update as { messages?: unknown } | null)?.messages;
       if (!Array.isArray(messages)) continue;
       for (const message of messages) {
-        if (AIMessage.isInstance(message) && typeof message.id === 'string') await this.#recordMessage(runId, message);
+        if (AIMessage.isInstance(message) && typeof message.id === 'string') {
+          await this.#recordMessage(runId, message, attribution);
+        }
       }
     }
   }
 
-  async #recordMessage(runId: string, message: AIMessage): Promise<string> {
+  async #recordMessage(runId: string, message: AIMessage, attribution: Attribution): Promise<string> {
     const [event] = await this.deps.store.recordActivity(runId, [
       {
-        event: { kind: 'assistant.message', payload: { messageId: message.id as string, text: message.text } },
+        event: {
+          kind: 'assistant.message',
+          payload: { messageId: message.id as string, text: message.text, ...attribution },
+        },
         sourceKey: `message:${message.id}`,
       },
     ]);

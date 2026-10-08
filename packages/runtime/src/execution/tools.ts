@@ -5,7 +5,13 @@ import { AIMessage, type BaseMessage } from '@langchain/core/messages';
 import { interrupt } from '@langchain/langgraph';
 import { tool } from 'langchain';
 import { canonicalAnswer } from '../domain/questions.ts';
-import { type Answer, operationIdFor, type QuestionInput, questionDefinitionSchema } from '../records/schemas.ts';
+import {
+  type Answer,
+  operationIdFor,
+  operationIdV2,
+  type QuestionInput,
+  questionDefinitionSchema,
+} from '../records/schemas.ts';
 import type { ContentPolicy } from '../security/content-policy.ts';
 import { sanitizeToolOutcome } from '../security/pre-graph.ts';
 import type { WorkspacePolicy } from '../workspace/policy.ts';
@@ -102,6 +108,18 @@ export interface ToolContext {
   contentPolicy: () => ContentPolicy;
   /** Confirms the delivered answer is the one recorded as accepted for this question (Decision 5). */
   confirmAnswer?: (envelope: ResumeEnvelope) => boolean;
+  /**
+   * The storage key of the actor these tools belong to, in a command run: its question identities are then
+   * version 2 (actor-scoped). Absent for native runs, which keep version-1 identities.
+   */
+  actorKey?: string;
+}
+
+/** The operation ID of a call: version 1 without an actor, version 2 (actor-scoped) with one. */
+export function callOperationId(runId: string, actorKey: string | undefined, messageId: string, callId: string) {
+  return actorKey === undefined
+    ? operationIdFor(runId, messageId, callId)
+    : operationIdV2(runId, actorKey, messageId, callId);
 }
 
 interface ToolRuntimeView {
@@ -166,7 +184,7 @@ export function createExecutionTools(context: ToolContext) {
       }
       const payload: QuestionPayload = {
         protocolVersion: QUESTION_PROTOCOL_VERSION,
-        questionId: operationIdFor(threadId, messageId, toolCallId),
+        questionId: callOperationId(threadId, context.actorKey, messageId, toolCallId),
         prompt: parsed.data.prompt,
         input: parsed.data.input,
       };

@@ -360,9 +360,22 @@ loop; the runtime only constrains what crosses into graph state and what is disp
   forced off for every call. After a recoverable authorization rejection, one renewal retry is allowed, as another
   counted step. An unsuccessful response is classified into a safe provider code (rate limit, usage limit,
   authorization, unsupported model or profile, service unavailable) and reported with its attempt.
+- **Delegation (command runs only).** A command run's root agent can call `mcp_Delegate` with one of the run's
+  retained agents and a bounded task (8 KiB), as the only call in its response, and waits for it. The delegate is
+  another stock `createAgent`, invoked from inside that tool call on the run's thread, saver, provider binding,
+  invocation, cancellation and budget — not a separate run or scheduler. It receives the fixed delegate instructions,
+  its retained agent instructions and the task, not the caller's conversation; its tools are the caller's narrowed
+  by the agent's restrictions, and it has no delegation tool (one level deep). A run has at most 8 delegations by
+  default (1–32, retained with the run); a further one, or an unavailable agent, is refused before any work starts.
+  Each call to an agent is its own delegation, identified by its parent tool call. Its result, or an identified
+  failure (for example a result too large to return), is returned to the caller, which continues; budget, provider,
+  storage and unsafe-state failures still end the run. Only a new final message from the root can be the run's
+  result. Goal runs have no delegation and keep exactly the three native tools.
 - **Budget.** The default is 50 model requests. The run reports `{ maximum, consumed, unconfirmed }`; an admission
   whose dispatch was never confirmed stays charged as unconfirmed. Tool calls from the last permitted response still
   run; only another model request fails the run with `step_limit`. An answer can be accepted with no steps left.
+  Delegates' requests (and their renewal retries) are charged to the same budget with the same ordinals; delegating
+  itself and tool calls cost nothing.
 - **Questions.** A question becomes answerable only after the invocation has settled, read-only inspection has
   confirmed the saved interrupt, and one transaction has recorded it and moved the run to `waiting`. An answer
   names its run and question; an already-answered question acknowledges an identical answer (even after the run
@@ -371,7 +384,11 @@ loop; the runtime only constrains what crosses into graph state and what is disp
   the saved state without running the graph: a temporary inability to look accepts nothing and changes nothing,
   while confirmed missing, unusable or incompatible state closes the question and fails the run as
   `continuation_unavailable`. `false`, `null`, `0` and permitted empty text are answers. The accepted answer is
-  delivered once, to the saved interrupt by its ID.
+  delivered once, to the saved interrupt by its ID. A delegate's question pauses the whole run and names the
+  delegate that asked; the root's delegation call stays open meanwhile. Because the root's state does not reveal a
+  delegate invoked from a tool, verification rebuilds that delegate from the run's retained definition and inspects
+  its saved state directly, requiring both saved heads to agree. The answer is still delivered through the root, by
+  interrupt ID, and reaches the delegate that asked; completed tool calls are answered from their records.
 - **Compatibility.** The execution definition covers the Bun version, the exact package versions and integrity
   values used by the execution code, digests of that code's own import closure (line endings normalized), the
   generated graph, middleware, tool schemas, the prompt, protocol versions and the run's binding. There is one code
@@ -381,7 +398,8 @@ loop; the runtime only constrains what crosses into graph state and what is disp
   to the other. Browser code, documentation, tests and default settings are not inputs.
 - **Cancellation** is recorded before it is acknowledged and serialized with admissions, so nothing is dispatched
   after it. A waiting run is cancelled at once; a working run is `cancelling` until its request bodies, tool calls
-  and checkpoint writes have actually settled. An answer accepted earlier stays accepted.
+  and checkpoint writes — including a delegate's — have actually settled. An answer accepted earlier stays accepted.
+  A delegate active or waiting at cancellation is recorded abandoned, and its late result cannot resume the caller.
 - **Outcomes.** Success requires a new final assistant message from this invocation, recorded in history; a
   continuation that does nothing is a `runtime_failure`. Failures are classified from typed evidence only (see the
   categories in [`architecture/09`](architecture/09-data-model-and-lifecycle.md#phase-1-lifecycle-as-built)). If a
