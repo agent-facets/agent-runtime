@@ -1,0 +1,22 @@
+{
+  "name": "rt-collide",
+  "version": "1.0.0",
+  "description": "Synthetic name-collision fixture",
+  "skills": {
+    "notes": {
+      "description": "Synthetic notes skill",
+      "adapters": { "agent-runtime": { "runtimeVersion": 1 } }
+    }
+  },
+  "commands": {
+    "triage": {
+      "description": "A second command named triage",
+      "adapters": {
+        "agent-runtime": {
+          "runtimeVersion": 1,
+          "requires": [{ "kind": "skill", "facet": "rt-workflows", "name": "review" }]
+        }
+      }
+    }
+  }
+}

@@ -12,6 +12,10 @@ mise.local.toml
 .pr-reviews/
 .mcp.json
 
+# Runtime facet installation outputs: generated per owner installation, never committed
+.agent-runtime-export/
+deploy/runtime/facets/installation.json
+
 .env
 .env.*
 !.env.example

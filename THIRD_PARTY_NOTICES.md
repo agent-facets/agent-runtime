@@ -65,6 +65,9 @@ license.
 | `@openai/codex@0.151.0` | `spikes/openai-device-auth` (reference oracle) | Apache-2.0; <https://github.com/openai/codex> |
 | MCP Connector for Obsidian 2.4.0 | `spikes/obsidian` | MIT, Copyright (c) 2026 Stefano Ferri; <https://github.com/istefox/obsidian-mcp-connector> |
 | Node and Debian base images | Spike Dockerfiles | Their own licenses |
+| `@agent-facets/adapter@0.30.0` | `packages/facet-adapter` (install-time adapter and sealer; bundled into its locally built adapter, not into the runtime image) | MIT, Copyright (c) 2026 Agent Facets, Inc.; see the [repository license](https://github.com/agent-facets/facets/blob/main/LICENSE). The npm package carries no `license` field or license file. |
+| `yaml@2.9.0` | Dependency of `@agent-facets/adapter`, bundled with it | ISC; <https://github.com/eemeli/yaml> |
+| `facet` CLI 0.35.0 | Runtime facet installation, installed separately by the owner | The [Agent Facets repository license](https://github.com/agent-facets/facets/blob/main/LICENSE) (MIT); the binary's own terms were not separately verified |
 
 ### Obsidian
 

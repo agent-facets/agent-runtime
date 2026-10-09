@@ -1,0 +1,15 @@
+{
+  "name": "@agent-runtime/facet-adapter",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "bun src/build.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@agent-facets/adapter": "0.30.0",
+    "zod": "4.6.5"
+  }
+}

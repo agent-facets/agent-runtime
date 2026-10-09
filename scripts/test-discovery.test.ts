@@ -18,6 +18,7 @@ describe('bare root bun test discovery', () => {
         'spikes/historical/src/spike.test.ts',
         'tests/integration/database.integration.test.ts',
         'tests/container/smoke.test.ts',
+        'tests/facets/export.facet.test.ts',
         'tmp/scratch.test.ts',
         'packages/example/dist/bundled.test.ts',
         'packages/example/src/provider.live.test.ts',

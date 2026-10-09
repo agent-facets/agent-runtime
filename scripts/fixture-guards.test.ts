@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { FACET_FIXTURE_MARKER, requireFacetFixture } from '../tests/support/facet-fixture.ts';
 import { FIXTURE_DATABASE_PREFIX, requireIntegrationFixture } from '../tests/support/integration-fixture.ts';
 import { fixtureEnv, refusedOverrides } from './lib/fixture-env.ts';
 import { repoRoot } from './lib/workspace.ts';
@@ -70,6 +71,7 @@ describe('launcher environment policy', () => {
     'scripts/run-browser.ts',
     'scripts/run-console-offline.ts',
     'scripts/container-smoke.ts',
+    'scripts/run-facets.ts',
   ]) {
     test(`${script} refuses unsafe targets without starting anything`, async () => {
       for (const [args, env] of [
@@ -85,6 +87,53 @@ describe('launcher environment policy', () => {
       expect(existsSync(witness)).toBe(false);
     });
   }
+
+  test('scripts/run-facets.ts refuses ambient facet settings and a missing or unpinned CLI before running it', async () => {
+    for (const env of [{ FACET_DIR: join(scratch, 'owner-home') }, { FACET_TOKEN: 'x' }] as Record<string, string>[]) {
+      const result = await launch('scripts/run-facets.ts', [], env);
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toContain('refuses to start');
+    }
+
+    // PATH holds no facet CLI at all.
+    const missing = await launch('scripts/run-facets.ts', [], {});
+    expect(missing.code).not.toBe(0);
+    expect(missing.stderr).toContain('not on PATH');
+
+    // A binary that claims the pinned version is still refused by digest, without being executed.
+    const fakeFacetDir = join(scratch, 'fake-facet');
+    const facetWitness = join(scratch, 'facet-invocations');
+    mkdirSync(fakeFacetDir);
+    writeFileSync(join(fakeFacetDir, 'facet'), `#!/bin/sh\necho "$@" >> '${facetWitness}'\necho 0.35.0\n`);
+    chmodSync(join(fakeFacetDir, 'facet'), 0o755);
+    const proc = Bun.spawn([process.execPath, '--no-env-file', 'scripts/run-facets.ts'], {
+      cwd: repoRoot,
+      env: { PATH: `${fakeFacetDir}:${dirname(process.execPath)}:/usr/bin:/bin`, HOME: scratch },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(await proc.exited).not.toBe(0);
+    expect(await new Response(proc.stderr).text()).toContain('pinned SHA-256');
+    expect(existsSync(facetWitness)).toBe(false);
+  });
+});
+
+describe('facet fixture guard', () => {
+  test('refuses to run outside a launcher-provisioned scratch directory', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-runtime-facet-guard-'));
+    try {
+      expect(() => requireFacetFixture({})).toThrow();
+      expect(() => requireFacetFixture({ FACET_FIXTURE_DIR: dir, FACET_FIXTURE_CLI: '/bin/true' })).toThrow();
+      writeFileSync(join(dir, FACET_FIXTURE_MARKER), `${dir}\n`);
+      expect(requireFacetFixture({ FACET_FIXTURE_DIR: dir, FACET_FIXTURE_CLI: '/bin/true' })).toEqual({
+        scratch: dir,
+        cli: '/bin/true',
+      });
+      expect(() => requireFacetFixture({ FACET_FIXTURE_DIR: repoRoot, FACET_FIXTURE_CLI: '/bin/true' })).toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('integration fixture guard', () => {
