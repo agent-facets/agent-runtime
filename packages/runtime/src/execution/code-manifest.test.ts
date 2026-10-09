@@ -146,6 +146,16 @@ describe('execution code manifest', () => {
       // Delegation is resume-critical: it is reached through the agent and covered for both providers.
       expect(paths(manifest)).toContain('src/execution/delegation.ts');
       expect(paths(manifest)).toContain('src/capabilities/records.ts');
+      expect(paths(manifest)).toEqual(
+        expect.arrayContaining([
+          'src/capabilities/authority.ts',
+          'src/config/capabilities.ts',
+          'src/mcp/call.ts',
+          'src/mcp/schema.ts',
+          'src/mcp/session.ts',
+          'src/mcp/transport.ts',
+        ]),
+      );
       expect(paths(manifest)).toContain('src/security/pre-graph.ts');
       expect(paths(manifest).some((path) => path.startsWith('src/server') || path.includes('/ui/'))).toBe(false);
       for (const name of [
@@ -154,6 +164,8 @@ describe('execution code manifest', () => {
         '@langchain/langgraph',
         '@langchain/langgraph-checkpoint-postgres',
         'zod',
+        '@modelcontextprotocol/sdk',
+        'cross-spawn',
       ]) {
         expect(names(manifest)).toContain(name);
       }

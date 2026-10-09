@@ -85,6 +85,34 @@ part of the console block's offline acceptance (task 12.10). The screening corre
 after the block-6 acceptance; the lease-based retention was added in the provider block. Earlier acceptance
 evidence did not cover either.
 
+## Phase 2 MCP boundary (MVP 02)
+
+The [MVP 02 design](../openspec/changes/mvp-02-facet-backed-capabilities/design.md) (Decisions 4, 5 and 10) governs
+external tools. The trust tiers and broker below remain historical intent; there is no broker service.
+
+- **Grants are configuration.** Operator configuration approves a server connection (`serverDigest` over its
+  declaration and program binding) and individual tools (`definitionDigest` over each exact advertised definition),
+  with optional exact equality on named top-level arguments. Installing a facet or discovering a server grants
+  nothing. For each new call, authority is the run's captured ceiling intersected with current grants and the
+  command's and delegate's restrictions; grants load at startup, so revocation takes effect on restart and new
+  grants never widen an accepted run. A changed declaration blocks its server's tools; a changed definition blocks
+  that tool. There is no generic per-call confirmation; workflows ask their own questions.
+- **Launch.** Only `packages/runtime/src/mcp/transport.ts` starts a server: the owner-bound Bun bundle is checked
+  against its SHA-256 and run by the runtime's pinned Bun with installation, `.env` and project configuration
+  disabled, a fixed argument vector (no shell), an environment built from nothing (fixed identity, approved literals,
+  that server's credential slots), discarded stderr and a private, persistent `RUNTIME_STATE_DIR/mcp/<serverId>/`.
+  Static boundary tests keep SDK transport construction and process APIs out of every other capability module.
+- **Bounded protocol.** stdio only; no sampling, elicitation, roots, resource reads or tasks. Discovery has a
+  15-second deadline, page/tool limits and a closed input-schema language validated before the SDK's AJV compiles
+  anything. A call is one request with an absolute deadline; results are screened whole, clipped to 64 KiB, and an
+  unknown completion is recorded as uncertain rather than retried.
+- **Secrets.** MCP credentials are stdin-provisioned private slots, written only while the runtime is stopped
+  (under its singleton database ownership) and screened like provider credentials for the process's life. An
+  unusable configured slot makes owner-input screening fail closed.
+- **Not a sandbox.** Request restrictions bound what the runtime sends. A server is trusted code with the runtime
+  user's operating-system access, including other writable runtime locations; nothing here proves which resources
+  it touches or reverses an external effect.
+
 ## Threat model
 
 The adversary is our own model, plus anything it reads. A web page, a repository

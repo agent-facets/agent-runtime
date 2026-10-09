@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { FACET_FIXTURE_MARKER, requireFacetFixture } from '../tests/support/facet-fixture.ts';
 import { FIXTURE_DATABASE_PREFIX, requireIntegrationFixture } from '../tests/support/integration-fixture.ts';
+import { MCP_FIXTURE_MARKER, requireMcpFixture } from '../tests/support/mcp-fixture.ts';
 import { fixtureEnv, refusedOverrides } from './lib/fixture-env.ts';
 import { repoRoot } from './lib/workspace.ts';
 
@@ -163,5 +164,22 @@ describe('integration fixture guard', () => {
       { INTEGRATION_FIXTURE_FILE: join(repoRoot, 'package.json'), INTEGRATION_DATABASE_URL: databaseUrl },
     ];
     for (const env of cases) expect(() => requireIntegrationFixture(env)).toThrow();
+  });
+});
+
+describe('MCP fixture guard', () => {
+  test('process suites accept only the launcher-built program directory', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-runtime-mcp-guard-'));
+    try {
+      expect(() => requireMcpFixture({})).toThrow('test:integration');
+      expect(() => requireMcpFixture({ MCP_FIXTURE_PROGRAMS: dir })).toThrow();
+      expect(() => requireMcpFixture({ MCP_FIXTURE_PROGRAMS: 'relative/dir' })).toThrow();
+      writeFileSync(join(dir, MCP_FIXTURE_MARKER), `${dir}\n`);
+      writeFileSync(join(dir, 'manifest.json'), JSON.stringify({ version: 1, bun: Bun.version, programs: [] }));
+      expect(requireMcpFixture({ MCP_FIXTURE_PROGRAMS: dir }).manifest.programs).toEqual([]);
+      expect(() => requireMcpFixture({ MCP_FIXTURE_PROGRAMS: repoRoot })).toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

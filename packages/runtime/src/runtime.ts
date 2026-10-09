@@ -1,5 +1,7 @@
+import { configuredCredentialSlots } from './config/capabilities.ts';
 import type { RuntimeConfig } from './config.ts';
 import { type ConsoleFiles, loadConsole } from './console.ts';
+import { loadConfiguredMcpCredentials, McpCredentialStore } from './credentials/mcp-store.ts';
 import { PersistenceError } from './persistence/errors.ts';
 import type { OwnershipOptions } from './persistence/ownership.ts';
 import { openPersistence, type Persistence } from './persistence/persistence.ts';
@@ -142,6 +144,24 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
                 count: reconciled.interrupted + reconciled.cancelled,
               }),
             );
+            // Configured MCP credentials are read only now, under runtime ownership, so stopped-runtime
+            // provisioning cannot change a slot between this read and the service accepting input.
+            if (operator !== undefined && providers !== undefined) {
+              const loaded = await loadConfiguredMcpCredentials(
+                McpCredentialStore.forStateDir(options.config.stateDir),
+                configuredCredentialSlots(operator),
+              );
+              providers.admitMcpCredentials(loaded);
+              if (loaded.unusable.length > 0) {
+                log(
+                  formatDiagnostic({
+                    event: 'mcp_credentials_unusable',
+                    operation: 'startup',
+                    count: loaded.unusable.length,
+                  }),
+                );
+              }
+            }
             const configFile = options.config.configFile;
             if (operator !== undefined && providers !== undefined && configFile !== undefined) {
               runs = new RunService({

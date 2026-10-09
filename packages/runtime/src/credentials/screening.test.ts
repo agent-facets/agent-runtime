@@ -110,3 +110,18 @@ describe('screen scope', () => {
     expect((error as ScreenCapacityError).reason).toBe('credential_screen_full');
   });
 });
+
+describe('permanently screened MCP credentials', () => {
+  test('stay screened, take no lease and are never evicted by provider rotation', () => {
+    const screen = new CredentialScreen(2);
+    const mcp = 'synthetic-mcp-permanent-0001';
+    screen.screenPermanently([mcp]);
+    expect(screened(screen, mcp)).toBe(true);
+    for (let n = 1; n <= 10; n++) screen.lease(generation(n)).release();
+    expect(screened(screen, mcp)).toBe(true);
+    // Permanent values do not occupy provider capacity: two leased generations still fit.
+    screen.lease(generation(11));
+    expect(() => screen.lease(generation(12))).not.toThrow();
+    expect(screen.matcherIncluding([generation(13)]).spans(`${mcp}`)).toEqual([[0, mcp.length]]);
+  });
+});

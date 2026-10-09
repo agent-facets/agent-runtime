@@ -34,6 +34,12 @@ events for the browser console. Remote MCP, A2A, identity headers, app capabilit
 - **Browser connection is not run lifetime.** Runs are dispatched by the service; closing a stream or page never
   aborts work, and the console never infers an outcome from a closed connection.
 
+MVP 02 adds one outbound protocol: MCP over **stdio only**, to deployment-supplied local server bundles started by
+the runtime ([08-execution-security.md](08-execution-security.md#phase-2-mcp-boundary-mvp-02)). Remote MCP (HTTP,
+SSE), MCP OAuth and server-initiated sampling, elicitation and roots are not supported, and no MCP listener is
+exposed. Servers connect only to approved configurations; each connection belongs to one invocation (or one
+inspection) and is closed afterwards, so no MCP session state outlives it.
+
 The historical design follows.
 
 ## Ingress

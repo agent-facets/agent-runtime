@@ -22,6 +22,9 @@ const facetAdapterDir = join(repoRoot, 'packages', 'facet-adapter');
 const facetAdapterPackage = '@agent-runtime/facet-adapter';
 // Only the published adapter SDK entry points are public; the facet engine, protocol and CLI internals are private.
 const facetSdkEntries = new Set(['@agent-facets/adapter', '@agent-facets/adapter/api-version']);
+const mcpProgramsDir = join(repoRoot, 'packages', 'mcp-programs');
+const mcpProgramsPackage = '@agent-runtime/mcp-programs';
+const mcpSdkPackage = '@modelcontextprotocol/sdk';
 // The contracts package is shared with the browser: pure schemas and validation, no platform or server access.
 const platformAccess: [string, RegExp][] = [
   ['Bun API', /\bBun\s*\./],
@@ -83,6 +86,7 @@ describe('workspace import boundaries', () => {
       subscriptionPackage,
       contractsPackage,
       facetAdapterPackage,
+      mcpProgramsPackage,
       '@agent-runtime/runtime',
       '@agent-runtime/ui',
     ]);
@@ -185,6 +189,26 @@ describe('workspace import boundaries', () => {
   test('no package imports the facet adapter package', async () => {
     const violations = (await importsOf(join(repoRoot, 'packages'))).filter((record) =>
       record.specifier.startsWith(facetAdapterPackage),
+    );
+    expect(violations.map(describeImport)).toEqual([]);
+  });
+
+  test('the MCP program package builds with built-ins only; only its test servers use the MCP SDK', async () => {
+    const violations = (await importsOf(mcpProgramsDir)).filter((record) => {
+      if (record.specifier.startsWith('.') || /^node:[a-z_/]+$/.test(record.specifier)) return false;
+      if (/\.test\.ts$/.test(record.file) && record.specifier === 'bun:test') return false;
+      const testServer = isWithin(join(mcpProgramsDir, 'test-support'), record.file);
+      return !(
+        testServer &&
+        (record.specifier.startsWith(`${mcpSdkPackage}/server/`) || record.specifier === `${mcpSdkPackage}/types.js`)
+      );
+    });
+    expect(violations.map(describeImport)).toEqual([]);
+  });
+
+  test('no package imports the MCP program package', async () => {
+    const violations = (await importsOf(join(repoRoot, 'packages'))).filter((record) =>
+      record.specifier.startsWith(mcpProgramsPackage),
     );
     expect(violations.map(describeImport)).toEqual([]);
   });
@@ -323,9 +347,10 @@ describe('application database access', () => {
   });
 });
 
-// The agent's workspace tools only read, and the execution layer that runs the agent dispatches nothing but its
-// three tools and guarded model requests. Neither may reach process execution, dynamic evaluation or any
-// filesystem mutation; the tool and execution tests separately prove behavior with independent witnesses.
+// The agent's workspace tools only read, and the execution layer that runs the agent dispatches only its own tools
+// and guarded model requests. Neither may reach process execution, dynamic evaluation or any filesystem mutation;
+// the tool and execution tests separately prove behavior with independent witnesses. MCP server processes are
+// started only by the MCP transport boundary, checked separately below.
 const workspaceToolsDir = join(runtimeDir, 'src', 'workspace');
 const executionDir = join(runtimeDir, 'src', 'execution');
 const forbiddenInWorkspaceTools: [string, RegExp][] = [
@@ -435,10 +460,138 @@ describe('workspace dependency boundaries', () => {
     expect(dependencyFields.filter((field) => field !== 'dependencies' && adapter?.manifest[field])).toEqual([]);
   });
 
+  test('the MCP program package declares only the pinned SDK, for its synthetic test servers', () => {
+    const programs = packages.find((pkg) => pkg.manifest.name === mcpProgramsPackage);
+    expect(programs?.manifest.devDependencies).toEqual({ [mcpSdkPackage]: '1.32.1' });
+    expect(dependencyFields.filter((field) => field !== 'devDependencies' && programs?.manifest[field])).toEqual([]);
+    const dependents = packages.filter((pkg) =>
+      dependencyFields.some((field) => pkg.manifest[field]?.[mcpProgramsPackage] !== undefined),
+    );
+    expect(dependents).toEqual([]);
+  });
+
   test('only the runtime declares node-postgres', () => {
     const declaring = packages
       .filter((pkg) => dependencyFields.some((field) => pkg.manifest[field]?.pg !== undefined))
       .map((pkg) => pkg.manifest.name);
     expect(declaring).toEqual(['@agent-runtime/runtime']);
+  });
+});
+
+// MCP server processes start only through the runtime's own transport boundary (design Decision 5): the SDK stdio
+// transport is imported and constructed in exactly one module, capability and MCP modules never use process APIs
+// directly, and the adapter's own client manager (connections, restarts, retries) is never used. These are static
+// source checks over recognizable spellings, not a sandbox.
+const mcpTransportFile = join(runtimeDir, 'src', 'mcp', 'transport.ts');
+const mcpSdk = '@modelcontextprotocol/sdk';
+const sdkEntriesAnywhere = new Set(['/client/index', '/types', '/validation/ajv', '/shared/transport']);
+const capabilityDirs = [join(runtimeDir, 'src', 'mcp'), join(runtimeDir, 'src', 'capabilities')];
+const capabilityFiles = [join(runtimeDir, 'src', 'config', 'capabilities.ts')];
+const processAccess =
+  /\bBun\s*\.\s*(?:spawn|spawnSync)\b|\bBun\s*\.\s*\$|child_process|cross-spawn|(?<![.\w])(?:spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s*\(/;
+
+function mcpOwnershipViolations(file: string, source: string): string[] {
+  const violations: string[] = [];
+  const isTransport = file === mcpTransportFile;
+  let specifiers: string[];
+  try {
+    specifiers = importSpecifiers(source);
+  } catch {
+    return ['unparseable source'];
+  }
+  for (const specifier of specifiers) {
+    if (specifier === mcpSdk || specifier.startsWith(`${mcpSdk}/`)) {
+      const entry = specifier.slice(mcpSdk.length).replace(/\.js$/, '');
+      if (entry === '/client/stdio') {
+        if (!isTransport) violations.push(`stdio transport import ${specifier}`);
+      } else if (!sdkEntriesAnywhere.has(entry)) violations.push(`SDK entry ${specifier}`);
+    }
+    if (specifier.startsWith('@langchain/mcp-adapters/')) violations.push(`adapter internals ${specifier}`);
+    if (/^(?:node:)?child_process$/.test(specifier) || specifier === 'cross-spawn') {
+      violations.push(`process module ${specifier}`);
+    }
+  }
+  if (!isTransport && /\bStdioClientTransport\b/.test(source)) violations.push('stdio transport reference');
+  if (/\bMultiServerMCPClient\b/.test(source)) violations.push('adapter client manager');
+  const constructions = source.match(/\bnew\s+StdioClientTransport\s*\(/g)?.length ?? 0;
+  if (isTransport && constructions !== 1) violations.push(`stdio transport constructed ${constructions} times`);
+  return violations;
+}
+
+describe('MCP launch ownership', () => {
+  const elsewhere = join(runtimeDir, 'src', 'mcp', 'discovery.ts');
+
+  test('the detector recognizes each way around the transport boundary', () => {
+    const bypasses = [
+      "import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';",
+      "import { StdioClientTransport as Launcher } from '@modelcontextprotocol/sdk/client/stdio.js';",
+      "import * as stdio from '@modelcontextprotocol/sdk/client/stdio';",
+      "const { StdioClientTransport } = require('@modelcontextprotocol/sdk/client/stdio.js');",
+      "const stdio = await import('@modelcontextprotocol/sdk/client/stdio.js');",
+      "export { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';",
+      "import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';",
+      "import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';",
+      "import { MultiServerMCPClient } from '@langchain/mcp-adapters';",
+      "import { ConnectionManager } from '@langchain/mcp-adapters/connection';",
+      "import spawn from 'cross-spawn';",
+      "import { spawn } from 'node:child_process';",
+      'const t = new transports.StdioClientTransport(params);',
+    ];
+    for (const source of bypasses) expect(mcpOwnershipViolations(elsewhere, source)).not.toEqual([]);
+    expect(
+      mcpOwnershipViolations(
+        elsewhere,
+        "import { Client } from '@modelcontextprotocol/sdk/client/index.js';\nimport { loadMcpTools } from '@langchain/mcp-adapters';",
+      ),
+    ).toEqual([]);
+    expect(
+      mcpOwnershipViolations(
+        mcpTransportFile,
+        "import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';\nnew StdioClientTransport(a);\nnew StdioClientTransport(b);",
+      ),
+    ).toEqual(['stdio transport constructed 2 times']);
+    for (const sample of [
+      'Bun.spawn([bun])',
+      'Bun.$`bun x`',
+      'spawnSync(cmd)',
+      'execFile(cmd)',
+      "require('child_process')",
+    ]) {
+      expect(processAccess.test(sample)).toBe(true);
+    }
+    expect(processAccess.test('const match = PATTERN.exec(text);')).toBe(false);
+  });
+
+  test('only the transport module starts MCP server processes', async () => {
+    const violations: string[] = [];
+    for (const file of listSourceFiles(join(runtimeDir, 'src'))) {
+      if (/\.test\.ts$/.test(file)) continue;
+      const source = await Bun.file(file).text();
+      for (const violation of mcpOwnershipViolations(file, source))
+        violations.push(`${relative(repoRoot, file)}: ${violation}`);
+    }
+    expect(violations).toEqual([]);
+    expect(await Bun.file(mcpTransportFile).exists()).toBe(true);
+  });
+
+  test('capability and MCP modules use no process API of their own, the transport included', async () => {
+    const violations: string[] = [];
+    for (const file of [...capabilityDirs.flatMap((dir) => listSourceFiles(dir)), ...capabilityFiles]) {
+      if (/\.test\.ts$/.test(file)) continue;
+      const source = await Bun.file(file).text();
+      if (processAccess.test(source)) violations.push(relative(repoRoot, file));
+    }
+    expect(violations).toEqual([]);
+  });
+
+  test('only the runtime and the synthetic test servers depend on the MCP SDK and adapter', () => {
+    const declaring = packages
+      .filter((pkg) =>
+        dependencyFields.some(
+          (field) => pkg.manifest[field]?.[mcpSdk] !== undefined || pkg.manifest[field]?.['@langchain/mcp-adapters'],
+        ),
+      )
+      .map((pkg) => pkg.manifest.name);
+    expect(declaring.sort()).toEqual(['@agent-runtime/mcp-programs', '@agent-runtime/runtime']);
   });
 });

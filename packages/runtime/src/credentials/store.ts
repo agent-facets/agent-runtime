@@ -52,9 +52,9 @@ export interface WriteHooks {
   maxWriteBytes?: number;
 }
 
-const errno = (error: unknown) => (error as { code?: string } | null)?.code;
-const uid = () => process.getuid?.() ?? -1;
-const isPrivate = (mode: number | bigint) => (Number(mode) & 0o077) === 0;
+export const errno = (error: unknown) => (error as { code?: string } | null)?.code;
+export const uid = () => process.getuid?.() ?? -1;
+export const isPrivate = (mode: number | bigint) => (Number(mode) & 0o077) === 0;
 
 /** Credentials live in this directory of the private runtime state (RUNTIME_STATE_DIR). */
 export const CREDENTIALS_DIRECTORY = 'credentials';
@@ -212,7 +212,7 @@ export class CredentialStore {
   }
 }
 
-async function privateDirectory(path: string): Promise<'missing' | 'private' | 'unsafe'> {
+export async function privateDirectory(path: string): Promise<'missing' | 'private' | 'unsafe'> {
   try {
     const stat = await lstat(path);
     return stat.isDirectory() && stat.uid === uid() && isPrivate(stat.mode) ? 'private' : 'unsafe';
@@ -221,7 +221,7 @@ async function privateDirectory(path: string): Promise<'missing' | 'private' | '
   }
 }
 
-async function readAll(handle: FileHandle, limit: number): Promise<Uint8Array> {
+export async function readAll(handle: FileHandle, limit: number): Promise<Uint8Array> {
   const buffer = new Uint8Array(limit);
   let length = 0;
   while (length < limit) {
@@ -232,7 +232,7 @@ async function readAll(handle: FileHandle, limit: number): Promise<Uint8Array> {
   return buffer.subarray(0, length);
 }
 
-async function writeAll(handle: FileHandle, bytes: Uint8Array, hooks: WriteHooks): Promise<void> {
+export async function writeAll(handle: FileHandle, bytes: Uint8Array, hooks: WriteHooks): Promise<void> {
   const chunk = hooks.maxWriteBytes ?? bytes.byteLength;
   let offset = 0;
   let first = true;
@@ -247,7 +247,7 @@ async function writeAll(handle: FileHandle, bytes: Uint8Array, hooks: WriteHooks
   }
 }
 
-async function syncDirectory(directory: string): Promise<void> {
+export async function syncDirectory(directory: string): Promise<void> {
   const handle = await open(directory, constants.O_RDONLY | constants.O_DIRECTORY);
   try {
     await handle.sync();

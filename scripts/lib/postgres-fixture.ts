@@ -65,7 +65,11 @@ export async function withFixtureDatabase(
 }
 
 /** Runs `bun test <suite>` against a fresh fixture database and returns its exit code. */
-export function runSuiteWithFixture(suite: string, label: string): Promise<number> {
+export function runSuiteWithFixture(
+  suite: string,
+  label: string,
+  extraEnv: Record<string, string> = {},
+): Promise<number> {
   return withFixtureDatabase(label, async (fixture) => {
     const tests = Bun.spawn(
       // The CLI ignore pattern replaces the root configuration, which excludes tests/** from ordinary runs.
@@ -75,6 +79,7 @@ export function runSuiteWithFixture(suite: string, label: string): Promise<numbe
         env: fixtureEnv(process.env, {
           INTEGRATION_FIXTURE_FILE: fixture.markerPath,
           INTEGRATION_DATABASE_URL: fixture.databaseUrl,
+          ...extraEnv,
         }),
         stdout: 'inherit',
         stderr: 'inherit',
