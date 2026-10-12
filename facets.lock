@@ -1,5 +1,5 @@
 {
-  "lockfileVersion": 0.3,
+  "lockfileVersion": 0.4,
   "facets": {
     "@agentfacets/openspec-adversary": {
       "source": {
@@ -135,7 +135,8 @@
             }
           ]
         }
-      ]
+      ],
+      "servers": []
     },
     "@agentfacets/review-openspec-design": {
       "source": {
@@ -173,7 +174,8 @@
             }
           ]
         }
-      ]
+      ],
+      "servers": []
     },
     "chrome-devtools-headless": {
       "source": {
@@ -219,6 +221,15 @@
             }
           ]
         }
+      ],
+      "servers": [
+        {
+          "name": "chrome-devtools-headless",
+          "fingerprint": "sha256:7aab647cb75080466d932eaf1e6f18e1d04d5d46516a4a9ae585d8dc814d9bb3",
+          "materialization": {
+            "kind": "authored"
+          }
+        }
       ]
     },
     "facet-meta": {
@@ -243,7 +254,8 @@
             }
           ]
         }
-      ]
+      ],
+      "servers": []
     },
     "graphite": {
       "source": {
@@ -267,7 +279,8 @@
             }
           ]
         }
-      ]
+      ],
+      "servers": []
     },
     "openspec": {
       "source": {
@@ -641,7 +654,8 @@
             }
           ]
         }
-      ]
+      ],
+      "servers": []
     },
     "viper-plans": {
       "source": {
@@ -721,6 +735,15 @@
             }
           ]
         }
+      ],
+      "servers": [
+        {
+          "name": "viper-plans",
+          "fingerprint": "sha256:7550b39439e8eb891d0c99e829c144de8633f1c34001d7d1556f238f76a34be4",
+          "materialization": {
+            "kind": "authored"
+          }
+        }
       ]
     },
     "voice-to-text": {
@@ -745,7 +768,8 @@
             }
           ]
         }
-      ]
+      ],
+      "servers": []
     },
     "worktrunk": {
       "source": {
@@ -819,7 +843,8 @@
             }
           ]
         }
-      ]
+      ],
+      "servers": []
     }
   }
 }
