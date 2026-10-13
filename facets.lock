@@ -1,13 +1,66 @@
 {
   "lockfileVersion": 0.4,
   "facets": {
+    "@agentfacets/graphite-submit-branch": {
+      "source": {
+        "kind": "registry",
+        "registry": "https://api.agentfacets.io"
+      },
+      "version": "1.0.0",
+      "integrity": "sha256:5733e9753ea5b9e2a4ac1ff9f7d4f05ad6c6b2ac74fd1862cca8da2120d554c0",
+      "assets": [
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "graphite-submit-branch-rules",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/graphite-submit-branch-rules/SKILL.md",
+              "integrity": "sha256:c612d55c2104ff93da406f349b784a08ac975a5b49b726008b8ccc52d6da785a"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "submit-draft",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/submit-draft.md",
+              "integrity": "sha256:efa0b4d06f31c550e6b85297a1ed730a5d81cf5408b22b3b4a861572a2d8c310"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "submit-pr",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/submit-pr.md",
+              "integrity": "sha256:4fd5dd0a264a05a25b64cd58e0aa46034e82b5ac7166cd027b1875bed98834d9"
+            }
+          ]
+        }
+      ],
+      "servers": []
+    },
     "@agentfacets/openspec-adversary": {
       "source": {
         "kind": "registry",
         "registry": "https://api.agentfacets.io"
       },
-      "version": "3.2.3",
-      "integrity": "sha256:052beb4ab363e7c3b66f02ac7f9b2e3838c7bda7e3ef43d2061bf06e030059a1",
+      "version": "3.2.4",
+      "integrity": "sha256:a816167c353be058288f4b446dedd7949c1ba54d7ae102aea269bfed24650962",
       "assets": [
         {
           "scope": "project",
@@ -75,7 +128,7 @@
           "files": [
             {
               "path": "skills/openspec-adversary-status/SKILL.md",
-              "integrity": "sha256:83d578be4ef9fa7420d459af69e9be92292cb7c0f867a0131b7e627a8822dc08"
+              "integrity": "sha256:2c65961cfba88dd6a04ad1ee6cda4f2831a2120674be027866b3a48567373aa0"
             }
           ]
         },
@@ -89,7 +142,7 @@
           "files": [
             {
               "path": "agents/openspec-adversary.md",
-              "integrity": "sha256:8231f6aa7e1f2599052239ebceb0fb19cb8668a600a17805297f949ed99f55d1"
+              "integrity": "sha256:540c135d86b5d57210065010cd0600743606812018e9a6747caa93619622f9c2"
             }
           ]
         },
@@ -117,7 +170,7 @@
           "files": [
             {
               "path": "commands/run-adversary.md",
-              "integrity": "sha256:78bcf31303a4cff91aec7c7a60f5eb2d15ba5c89b7b431bbc682b80e606dd791"
+              "integrity": "sha256:b1269dd8659195e238d3d37663706c457a09d13e0b25a81969292f4d7b869844"
             }
           ]
         },
@@ -131,7 +184,7 @@
           "files": [
             {
               "path": "commands/run-inline-adversary.md",
-              "integrity": "sha256:80e79bc4333e024ad77cea0c8b7da98ed5c19e054ebf3545916f9924b55449b1"
+              "integrity": "sha256:7c5bf8f98e82fba9cc294d63494b59ce6517d3ce5b832dca067d7634b892216c"
             }
           ]
         }
@@ -287,8 +340,8 @@
         "kind": "registry",
         "registry": "https://api.agentfacets.io"
       },
-      "version": "0.1.2",
-      "integrity": "sha256:226a217ab5f7e172f1d464ca74dbd531c5dfe3bc1dad817b551ac37c1f779d65",
+      "version": "0.1.3",
+      "integrity": "sha256:939a3ff80ead9bb7b67303fbc2586b0dfeb9b03d679516411439abaf56d32caa",
       "assets": [
         {
           "scope": "project",
@@ -328,7 +381,7 @@
           "files": [
             {
               "path": "skills/openspec-artifact-status/SKILL.md",
-              "integrity": "sha256:1773a0865321b907b3a3955933aaccce918fd8108e05bddeafa2ce8a093e0a1d"
+              "integrity": "sha256:f09ea0eec0db5596bd782927ad5270400f60a9075b90a5d07fcd4b272214c79d"
             }
           ]
         },

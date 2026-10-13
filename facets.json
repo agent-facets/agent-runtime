@@ -3,12 +3,13 @@
   "facets": {
     "viper-plans": "1.3.1",
     "facet-meta": "1.0.0",
-    "openspec": "0.1.2",
-    "@agentfacets/openspec-adversary": "3.2.3",
+    "openspec": "0.1.3",
+    "@agentfacets/openspec-adversary": "3.2.4",
     "@agentfacets/review-openspec-design": "2.3.0",
     "worktrunk": "0.1.0",
     "graphite": "0.1.0",
     "voice-to-text": "1.1.1",
-    "chrome-devtools-headless": "1.0.1"
+    "chrome-devtools-headless": "1.0.1",
+    "@agentfacets/graphite-submit-branch": "1.0.0"
   }
 }
