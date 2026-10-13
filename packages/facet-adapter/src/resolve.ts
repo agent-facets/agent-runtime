@@ -1,6 +1,8 @@
 // Resolves explicitly declared references through the recorded alias/omission choices (design Decision 3). Nothing
 // is inferred from prose, nothing is installed, and installation order never chooses between candidates. A
-// contribution with an unusable prerequisite is refused; unrelated contributions are unaffected.
+// contribution with an unusable prerequisite is refused; unrelated contributions are unaffected. An MCP reference
+// names an authored server of a facet; it resolves through that facet's recorded server inventory to the effective
+// server, never by matching an effective name another facet happens to use.
 import type { AssetKind, AuthoredRequirement, AuthoredRestriction, RuntimeMetadata } from './metadata.ts';
 
 export interface ResolvableItem {
@@ -16,14 +18,22 @@ export interface ResolvableItem {
 export type ResolvedRequirement =
   | { kind: 'skill'; id: string }
   | { kind: 'agent'; id: string }
-  | { kind: 'native'; name: string };
+  | { kind: 'native'; name: string }
+  | { kind: 'mcp'; serverId: string; toolName: string };
 
 export interface ResolvedRestriction {
   native?: string[];
   skills?: string[];
   agents?: string[];
-  mcp?: [];
+  mcp?: { serverId: string; toolName: string }[];
 }
+
+/**
+ * Each facet's authored servers, keyed by `serverKey(facet, authoredName)`: the effective server name, or null when
+ * the project omits it. A server the facet does not declare has no entry.
+ */
+export type ServerIndex = ReadonlyMap<string, string | null>;
+export const serverKey = (facet: string, authoredName: string) => `${facet}\u0000${authoredName}`;
 
 export type Resolution =
   | { ok: true; requires: ResolvedRequirement[]; restrict?: ResolvedRestriction }
@@ -33,13 +43,17 @@ const keyOf = (facet: string, kind: string, name: string) => `${facet}\u0000${ki
 export const itemKey = (item: ResolvableItem) => keyOf(item.facet, item.kind, item.authoredName);
 const idOf = (item: ResolvableItem) => `${item.kind}:${item.effectiveName}`;
 const refLabel = (facet: string, kind: string, name: string) => `${kind}:${facet}/${name}`;
+const mcpLabel = (facet: string, server: string, tool: string) => `mcp:${facet}/${server}/${tool}`;
 
 /**
  * Resolves every item that exported as ready. Items that exported as refused have no resolution, so depending on
  * one is itself a refusal.
  */
-export function resolveReferences(items: readonly ResolvableItem[]): Map<string, Resolution> {
-  const index = new Map(items.map((item) => [itemKey(item), item]));
+export function resolveReferences(
+  items: readonly ResolvableItem[],
+  servers: ServerIndex = new Map(),
+): Map<string, Resolution> {
+  const index: Index = { items: new Map(items.map((item) => [itemKey(item), item])), servers };
   const results = new Map<string, Resolution>();
   const edges = new Map<string, string[]>();
 
@@ -63,7 +77,7 @@ export function resolveReferences(items: readonly ResolvableItem[]): Map<string,
       if (!results.get(key)?.ok) continue;
       const blocked = dependsOn.find((target) => !results.get(target)?.ok);
       if (blocked !== undefined) {
-        const target = index.get(blocked);
+        const target = index.items.get(blocked);
         results.set(key, {
           ok: false,
           reason: 'prerequisite_refused',
@@ -77,10 +91,15 @@ export function resolveReferences(items: readonly ResolvableItem[]): Map<string,
   return results;
 }
 
+interface Index {
+  items: Map<string, ResolvableItem>;
+  servers: ServerIndex;
+}
+
 function resolveLocal(
   item: ResolvableItem,
   runtime: RuntimeMetadata,
-  index: Map<string, ResolvableItem>,
+  index: Index,
 ): { resolution: Resolution; dependsOn: string[] } {
   const dependsOn: string[] = [];
   const requires: ResolvedRequirement[] = [];
@@ -110,16 +129,19 @@ type Resolved<T> = T | { refusal: string; subject?: string };
 function resolveRequirement(
   item: ResolvableItem,
   requirement: AuthoredRequirement,
-  index: Map<string, ResolvableItem>,
+  index: Index,
 ): Resolved<{ requirement: ResolvedRequirement; target?: string }> {
   if (requirement.kind === 'native') return { requirement: { kind: 'native', name: requirement.name } };
   if (requirement.kind === 'mcp') {
-    // TODO UPSTREAM-SERVER-PROVENANCE: revisit 9.1; complete 10.1; verify 10.2. Binding an authored server to its
-    // effective declaration needs public per-facet server provenance, so MCP references are refused for now.
-    return { refusal: 'server_provenance_unavailable', subject: `mcp:${requirement.server}/${requirement.tool}` };
+    const facet = requirement.facet ?? item.facet;
+    const subject = mcpLabel(facet, requirement.server, requirement.tool);
+    const serverId = index.servers.get(serverKey(facet, requirement.server));
+    if (serverId === undefined) return { refusal: 'prerequisite_missing', subject };
+    if (serverId === null) return { refusal: 'prerequisite_omitted', subject };
+    return { requirement: { kind: 'mcp', serverId, toolName: requirement.tool } };
   }
   const facet = requirement.facet ?? item.facet;
-  const target = index.get(keyOf(facet, requirement.kind, requirement.name));
+  const target = index.items.get(keyOf(facet, requirement.kind, requirement.name));
   const subject = refLabel(facet, requirement.kind, requirement.name);
   if (target === undefined) return { refusal: 'prerequisite_missing', subject };
   if (target.effectiveName === undefined) return { refusal: 'prerequisite_omitted', subject };
@@ -129,7 +151,7 @@ function resolveRequirement(
 function resolveRestriction(
   item: ResolvableItem,
   restrict: AuthoredRestriction,
-  index: Map<string, ResolvableItem>,
+  index: Index,
 ): Resolved<{ restrict: ResolvedRestriction }> {
   const resolved: ResolvedRestriction = {};
   if (restrict.native !== undefined) resolved.native = [...new Set(restrict.native)];
@@ -142,7 +164,7 @@ function resolveRestriction(
     const ids = new Set<string>();
     for (const ref of refs) {
       const facet = ref.facet ?? item.facet;
-      const target = index.get(keyOf(facet, kind, ref.name));
+      const target = index.items.get(keyOf(facet, kind, ref.name));
       if (target === undefined) return { refusal: 'reference_unresolved', subject: refLabel(facet, kind, ref.name) };
       // An omitted item is never available, so allowing it permits nothing; dropping it cannot widen access.
       if (target.effectiveName !== undefined) ids.add(idOf(target));
@@ -150,12 +172,16 @@ function resolveRestriction(
     resolved[field] = [...ids];
   }
   if (restrict.mcp !== undefined) {
-    const [first] = restrict.mcp;
-    if (first !== undefined) {
-      // TODO UPSTREAM-SERVER-PROVENANCE: revisit 9.1; complete 10.1; verify 10.2.
-      return { refusal: 'server_provenance_unavailable', subject: `mcp:${first.server}/${first.tool}` };
+    const tools = new Map<string, { serverId: string; toolName: string }>();
+    for (const ref of restrict.mcp) {
+      const facet = ref.facet ?? item.facet;
+      const serverId = index.servers.get(serverKey(facet, ref.server));
+      if (serverId === undefined)
+        return { refusal: 'reference_unresolved', subject: mcpLabel(facet, ref.server, ref.tool) };
+      // As with skills and agents, allowing an omitted server's tool permits nothing.
+      if (serverId !== null) tools.set(`${serverId}/${ref.tool}`, { serverId, toolName: ref.tool });
     }
-    resolved.mcp = [];
+    resolved.mcp = [...tools.values()];
   }
   return { restrict: resolved };
 }

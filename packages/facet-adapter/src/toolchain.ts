@@ -12,8 +12,8 @@ export interface PinnedCli {
 }
 
 export const PINNED_CLI: PinnedCli = Object.freeze({
-  version: '0.35.0',
-  sha256: Object.freeze({ 'linux-x64': 'd6590bb2c1af0119e2bdfcafbfc0dbafe98e6e9ef015ae524926e983fa9a2a46' }),
+  version: '0.36.0',
+  sha256: Object.freeze({ 'linux-x64': 'c7b781b1a7cac5ce459cccb41da4ad12d0e6545d5cc6381a18a90706feb8451a' }),
 });
 
 export interface CliIdentity {

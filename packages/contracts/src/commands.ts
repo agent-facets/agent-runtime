@@ -3,12 +3,20 @@
 // stripped. Credential screening of goals and answers happens on the server, which alone can recognize this
 // runtime's live credentials.
 import { z } from 'zod';
-import { providerSchema, uuidSchema } from './common.ts';
+import { commandIdSchema, TASK_TEXT_MAX_BYTES } from './capabilities.ts';
+import { digestSchema, providerSchema, uuidSchema } from './common.ts';
 import { isStorableText, utf8Bytes } from './text.ts';
 
 export const GOAL_MAX_BYTES = 8192;
+/** A command's raw argument text shares the goal limit; blank is allowed here and judged by the command. */
+export const COMMAND_ARGUMENTS_MAX_BYTES = TASK_TEXT_MAX_BYTES;
 
-export type CommandErrorCode = 'invalid_request' | 'goal_required' | 'goal_too_long' | 'goal_not_storable';
+export type CommandErrorCode =
+  | 'invalid_request'
+  | 'goal_required'
+  | 'goal_too_long'
+  | 'goal_not_storable'
+  | 'command_arguments_invalid';
 
 export type CommandResult<T> = { ok: true; value: T } | { ok: false; code: CommandErrorCode; field?: string };
 
@@ -24,6 +32,39 @@ export function parseStartRun(body: unknown): CommandResult<StartRunCommand> {
   if (!isStorableText(goal)) return { ok: false, code: 'goal_not_storable', field: 'goal' };
   if (utf8Bytes(goal) > GOAL_MAX_BYTES) return { ok: false, code: 'goal_too_long', field: 'goal' };
   return { ok: true, value: parsed.data };
+}
+
+const startCommandRunSchema = z.strictObject({
+  requestId: uuidSchema,
+  provider: providerSchema,
+  command: z.strictObject({ id: commandIdSchema, selectionRevision: digestSchema, arguments: z.string() }),
+});
+export type StartCommandRunCommand = z.infer<typeof startCommandRunSchema>;
+
+/** A start request is exactly one of a free-form goal or an installed command with its raw argument text. */
+export type StartRunRequest = ({ kind: 'goal' } & StartRunCommand) | ({ kind: 'command' } & StartCommandRunCommand);
+
+/**
+ * Parses either start form. Supplying both or neither is invalid, and a command start can carry nothing but the
+ * command's ID, the selection revision it was offered under and its raw arguments: no prompt, graph, path, grant,
+ * endpoint or credential reference. Arguments are kept exactly as submitted.
+ */
+export function parseStartRunRequest(body: unknown): CommandResult<StartRunRequest> {
+  const record = typeof body === 'object' && body !== null && !Array.isArray(body) ? body : undefined;
+  const hasGoal = record !== undefined && Object.hasOwn(record, 'goal');
+  const hasCommand = record !== undefined && Object.hasOwn(record, 'command');
+  if (hasGoal && hasCommand) return { ok: false, code: 'invalid_request', field: 'command' };
+  if (!hasCommand) {
+    const goal = parseStartRun(body);
+    return goal.ok ? { ok: true, value: { kind: 'goal', ...goal.value } } : goal;
+  }
+  const parsed = startCommandRunSchema.safeParse(body);
+  if (!parsed.success) return { ok: false, code: 'invalid_request', field: firstPath(parsed.error) };
+  const text = parsed.data.command.arguments;
+  if (!isStorableText(text) || utf8Bytes(text) > COMMAND_ARGUMENTS_MAX_BYTES) {
+    return { ok: false, code: 'command_arguments_invalid', field: 'command.arguments' };
+  }
+  return { ok: true, value: { kind: 'command', ...parsed.data } };
 }
 
 /**
@@ -51,7 +92,9 @@ export function parseCancelRun(body: unknown): CommandResult<CancelRunCommand> {
 
 /** Client-supplied field names are echoed only when they look like ordinary identifiers. */
 function safeField(name: string | undefined): string | undefined {
-  return name !== undefined && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(name) ? name : undefined;
+  return name !== undefined && /^[A-Za-z][A-Za-z0-9_]{0,63}(?:\.[A-Za-z][A-Za-z0-9_]{0,63}){0,2}$/.test(name)
+    ? name
+    : undefined;
 }
 
 function firstPath(error: z.ZodError): string | undefined {

@@ -268,6 +268,7 @@ export const ERROR_CODES = [
   'goal_required',
   'goal_too_long',
   'goal_not_storable',
+  'command_arguments_invalid',
   'answer_invalid',
   'credential_in_input',
   'invalid_cursor',
@@ -283,12 +284,19 @@ export const ERROR_CODES = [
   'cancellation_conflict',
   'run_finished',
   'cursor_ahead',
+  'capability_selection_changed',
+  'capability_unavailable',
   'cannot_verify',
   'screening_unavailable',
   'storage_unavailable',
   'acceptance_unknown',
+  'capabilities_unavailable',
+  'mcp_server_unavailable',
   'service_unavailable',
 ] as const;
+
+/** A safe public reference to the contribution or tool a capability refusal concerns, e.g. `skill:review`. */
+export const refusalSubjectSchema = z.string().regex(/^(?:command|skill|agent|mcp):[A-Za-z0-9@/._-]{1,255}$/);
 export const errorCodeSchema = z.enum(ERROR_CODES);
 export type ErrorCode = z.infer<typeof errorCodeSchema>;
 
@@ -305,6 +313,7 @@ export const errorEnvelopeSchema = z.strictObject({
     message: z.string().min(1).max(1024),
     runId: uuidSchema.optional(),
     questionId: digestSchema.optional(),
+    subject: refusalSubjectSchema.optional(),
     retryable: z.boolean(),
     acceptance: acceptanceSchema,
   }),

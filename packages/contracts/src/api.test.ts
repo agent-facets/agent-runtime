@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { questionViewSchema, runEventSchema } from './api.ts';
+import { errorEnvelopeSchema, questionViewSchema, runEventSchema } from './api.ts';
 
 const RUN = '00000000-0000-4000-8000-000000000001';
 const D = 'a'.repeat(64);
@@ -69,5 +69,28 @@ describe('pending questions', () => {
     expect(questionViewSchema.safeParse({ ...question, asker: delegate, binding: { taskId: 't' } }).success).toBe(
       false,
     );
+  });
+});
+
+describe('error envelope', () => {
+  const error = (extra: Record<string, unknown>) => ({
+    error: { code: 'capability_unavailable', message: 'x', retryable: false, acceptance: 'not_accepted', ...extra },
+  });
+
+  test('capability refusals may name the affected contribution or tool by safe public reference only', () => {
+    for (const subject of ['skill:review', 'command:triage', 'mcp:repo/list_prs', 'mcp:@team/tools/repo/list_prs']) {
+      expect(errorEnvelopeSchema.safeParse(error({ subject })).success).toBe(true);
+    }
+    for (const subject of ['review', 'mcp:', 'file:/etc/passwd x', 'slot:repo-token', `skill:${'a'.repeat(256)}`]) {
+      expect(errorEnvelopeSchema.safeParse(error({ subject })).success).toBe(false);
+    }
+    for (const code of [
+      'command_arguments_invalid',
+      'capability_selection_changed',
+      'capabilities_unavailable',
+      'mcp_server_unavailable',
+    ]) {
+      expect(errorEnvelopeSchema.safeParse(error({ code })).success).toBe(true);
+    }
   });
 });

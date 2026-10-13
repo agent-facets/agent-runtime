@@ -9,6 +9,7 @@ import {
   type DelegateState,
   delegateOutcomeSchema,
   delegateStateSchema,
+  type GoalRunInput,
   type LoadedSkill,
   loadedSkillSchema,
   openSnapshot,
@@ -231,8 +232,10 @@ export type RecordedToolOutcome = Record<string, unknown> & { outcome: 'ok' | 'r
  * identity is unchanged from phase 1; a command's covers the normalized submission (command, selection revision,
  * raw arguments and provider), never a rendering against whatever is installed now.
  */
-export function creationInputDigest(input: Pick<CreateRunInput, 'goal' | 'provider'> | CommandRunInput): string {
-  if ('kind' in input) return digestOf(commandRunInputSchema.parse(input));
+export function creationInputDigest(
+  input: Pick<CreateRunInput, 'goal' | 'provider'> | GoalRunInput | CommandRunInput,
+): string {
+  if ('kind' in input && input.kind === 'command') return digestOf(commandRunInputSchema.parse(input));
   return digestOf({ goal: input.goal, provider: input.provider });
 }
 
@@ -545,6 +548,22 @@ export class RunStore {
       } else {
         await tx`update runtime.tool_operations set disposition = ${jsonText(disposition)}::text::jsonb
           where run_id = ${runId} and operation_id = ${identity.operationId}`;
+        // A successful skill load and the actor's membership become visible together. The bound definition comes
+        // from the run's retained snapshot, never from the tool's output; a repeated load keeps the first record.
+        const loaded = row.tool_binding === null ? undefined : (parseJsonText(row.tool_binding) as ToolBinding);
+        if (loaded?.kind === 'skill_load' && outcome.outcome === 'ok') {
+          const [retained] = await tx`
+            select c.snapshot_digest, s.payload::text as payload from runtime.run_capabilities c
+            join runtime.capability_snapshots s on s.digest = c.snapshot_digest where c.run_id = ${runId}`;
+          if (retained === undefined) throw new RunStoreError('invariant_violation', 'only a command run loads skills');
+          const skill = openSnapshot(retained.snapshot_digest, parseJsonText(retained.payload)).skills.find(
+            (candidate) => candidate.id === loaded.skillId,
+          );
+          if (skill === undefined) throw new RunStoreError('invariant_violation', 'the loaded skill is not retained');
+          await tx`insert into runtime.loaded_skills (run_id, actor_key, skill_id, operation_id, definition_digest)
+            values (${runId}, ${row.actor_key}, ${loaded.skillId}, ${identity.operationId}, ${digestOf(skill)})
+            on conflict (run_id, actor_key, skill_id) do nothing`;
+        }
       }
       await this.#append(tx, runId, [
         {

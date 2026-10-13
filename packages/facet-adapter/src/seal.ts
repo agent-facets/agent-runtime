@@ -2,23 +2,44 @@
 // exports to the CLI-managed manifest and lockfile and refuses the whole installation when they disagree. Source
 // hashes recorded by the CLI and hashes of the transformed exports are kept as separate facts: the export of a
 // primary file is not its original bytes, so no source hash is ever recomputed from it.
+//
+// Servers are joined the same way: the lockfile's inventory says which servers are selected, under which effective
+// names and from which facets; every exported declaration is fingerprinted again and must match exactly, so a
+// deleted, extra or edited server export refuses the seal. Declaration fingerprints identify portable declarations
+// only; runtime approval digests, which also bind the program actually run, are a separate, later fact.
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
+import { computeMcpServerFingerprint } from '@agent-facets/protocol';
 import { canonicalBytes, sha256Hex } from './canonical.ts';
-import { EXPORT_DIR, type ExportRecord, exportRecordSchema, serversDocumentSchema } from './export-record.ts';
+import {
+  EXPORT_DIR,
+  type ExportRecord,
+  exportRecordSchema,
+  type ServerDeclarationExport,
+  serversDocumentSchema,
+} from './export-record.ts';
 import {
   checkInputsAgree,
   type Disposition,
   type FileRecord,
   InputError,
   type LockSource,
+  lockedServerInventory,
   parseLockfile,
   parseProjectManifest,
+  type ServerInventory,
   SUPPORTED_LOCKFILE_VERSION,
   SUPPORTED_MANIFEST_VERSION,
 } from './inputs.ts';
 import type { AssetKind } from './metadata.ts';
-import { itemKey, type Resolution, type ResolvableItem, resolveReferences } from './resolve.ts';
+import {
+  itemKey,
+  type Resolution,
+  type ResolvableItem,
+  resolveReferences,
+  type ServerIndex,
+  serverKey,
+} from './resolve.ts';
 import { ADAPTER_API, ADAPTER_NAME, ADAPTER_SDK_VERSION, type CliIdentity } from './toolchain.ts';
 
 /** The runtime's installation bounds (design Decision 10), checked here so refusals are attributable. */
@@ -31,6 +52,8 @@ export const SEAL_LIMITS = Object.freeze({
   instructionBytes: 48 * 1024,
   resourceBytes: 1024 * 1024,
   resources: 256,
+  servers: 8,
+  serverOrigins: 16,
 });
 
 export class SealError extends Error {
@@ -105,8 +128,28 @@ export interface InstallationItem {
   state: ItemState;
 }
 
+/** A facet that declares a selected server, under the authored name it declares it with. */
+export interface ServerOrigin extends Origin {
+  authoredName: string;
+}
+
+/** A selected server: its effective name, recorded declaration fingerprint, exported declaration and every origin. */
+export interface SealedServer {
+  serverId: string;
+  fingerprint: string;
+  declaration: ServerDeclarationExport;
+  origins: ServerOrigin[];
+}
+
+/** An authored server the project omits; recorded so an omission is distinguishable from no declaration. */
+export interface OmittedServer {
+  facet: string;
+  authoredName: string;
+  fingerprint: string;
+}
+
 export interface Installation {
-  format: 1;
+  format: 2;
   profile: 1;
   toolchain: {
     cli: CliIdentity;
@@ -115,8 +158,8 @@ export interface Installation {
   inputs: { manifestVersion: number; lockfileVersion: number; manifestSha256: string; lockSha256: string };
   facets: { facet: string; version: string; source: LockSource; integrity: string }[];
   items: InstallationItem[];
-  /** TODO UPSTREAM-SERVER-PROVENANCE: revisit 9.1; complete 10.1; verify 10.2. Server-bearing installs are refused. */
-  servers: [];
+  servers: SealedServer[];
+  omittedServers: OmittedServer[];
 }
 
 export interface SealInputs {
@@ -174,6 +217,7 @@ const renderSource = (source: LockSource) =>
 
 const effectiveName = (authored: string, disposition: Disposition) =>
   disposition.kind === 'omitted' ? undefined : disposition.kind === 'aliased' ? disposition.as : authored;
+const serverName = (authored: string, disposition: Disposition) => effectiveName(authored, disposition) ?? null;
 
 interface ExportFile {
   record: ExportRecord;
@@ -209,20 +253,93 @@ function readExports(projectDir: string): Map<string, ExportFile> {
   return exports;
 }
 
-function checkServerExports(projectDir: string): void {
+/** The adapter's server export; absent means no server was exported. */
+function readServerExports(projectDir: string): Record<string, ServerDeclarationExport> {
   const path = join(projectDir, EXPORT_DIR, 'servers.json');
-  if (!existsSync(path)) return;
-  const parsed = serversDocumentSchema.safeParse(JSON.parse(readFileSync(path, 'utf8')));
-  if (!parsed.success) throw new SealError('export_invalid', 'the server export is not valid');
-  const names = Object.keys(parsed.data.servers);
-  if (names.length > 0) {
-    // TODO UPSTREAM-SERVER-PROVENANCE: revisit 9.1; complete 10.1; verify 10.2. Public lockfile data does not yet
-    // record which facets contributed a server, so a server-bearing installation cannot be sealed truthfully.
+  if (!existsSync(path)) return {};
+  const bytes = readFileSync(path);
+  let document: ReturnType<typeof serversDocumentSchema.parse>;
+  try {
+    document = serversDocumentSchema.parse(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)));
+  } catch {
+    throw new SealError('export_invalid', 'the server export is not valid');
+  }
+  if (!Buffer.from(canonicalBytes(document)).equals(bytes)) {
+    throw new SealError('export_invalid', 'the server export is not canonically encoded');
+  }
+  return document.servers;
+}
+
+/**
+ * Joins the selected servers the lockfile records to the declarations the adapter exported. The complete sets must
+ * agree by effective name and by fingerprint recomputed from the exported declaration.
+ */
+function joinServers(
+  projectDir: string,
+  inventory: ServerInventory,
+  origins: ReadonlyMap<string, Origin>,
+): { servers: SealedServer[]; omittedServers: OmittedServer[] } {
+  const exported = readServerExports(projectDir);
+  const expected = new Map(inventory.selected.map((server) => [server.effectiveName, server]));
+  const missing = [...expected.keys()].filter((name) => !Object.hasOwn(exported, name)).sort(compare);
+  if (missing.length > 0) {
+    throw new SealError('server_export_missing', `selected servers have no export: ${missing.join(', ')}`);
+  }
+  const unexpected = Object.keys(exported)
+    .filter((name) => !expected.has(name))
+    .sort(compare);
+  if (unexpected.length > 0) {
     throw new SealError(
-      'server_provenance_unavailable',
-      `server declarations (${names.sort().join(', ')}) cannot be sealed until their originating facets can be verified`,
+      'server_export_unexpected',
+      `server exports are not part of the recorded installation: ${unexpected.join(', ')}`,
     );
   }
+  const changed = [...expected]
+    .filter(
+      ([name, server]) => computeMcpServerFingerprint(exported[name] as ServerDeclarationExport) !== server.fingerprint,
+    )
+    .map(([name]) => name)
+    .sort(compare);
+  if (changed.length > 0) {
+    throw new SealError(
+      'server_export_mismatch',
+      `exported declarations do not match their recorded fingerprints: ${changed.join(', ')}`,
+    );
+  }
+  if (
+    expected.size > SEAL_LIMITS.servers ||
+    inventory.selected.some((server) => server.origins.length > SEAL_LIMITS.serverOrigins)
+  ) {
+    throw new SealError('installation_too_large', 'the installation exceeds the supported server counts');
+  }
+  const originOf = (facet: string) => {
+    const origin = origins.get(facet);
+    if (origin === undefined) throw new SealError('input_invalid', `server origin ${facet} is not a locked facet`);
+    return origin;
+  };
+  return {
+    servers: inventory.selected
+      .map((server) => ({
+        serverId: server.effectiveName,
+        fingerprint: server.fingerprint,
+        declaration: exported[server.effectiveName] as ServerDeclarationExport,
+        origins: server.origins.map((origin) => ({ ...originOf(origin.facet), authoredName: origin.authoredName })),
+      }))
+      .sort((a, b) => compare(a.serverId, b.serverId)),
+    omittedServers: inventory.authored
+      .filter((server) => server.materialization.kind === 'omitted')
+      .map((server) => ({ facet: server.facet, authoredName: server.authoredName, fingerprint: server.fingerprint })),
+  };
+}
+
+/** Each facet's authored servers mapped to their effective names, or null where omitted. */
+function serverIndex(inventory: ServerInventory): ServerIndex {
+  return new Map(
+    inventory.authored.map((server) => [
+      serverKey(server.facet, server.authoredName),
+      serverName(server.authoredName, server.materialization),
+    ]),
+  );
 }
 
 /** The skill's companion files as the lock records them: everything under its authored root except SKILL.md. */
@@ -330,16 +447,18 @@ export function sealInstallation(inputs: SealInputs): Sealed {
   const lockBytes = readRequired(join(inputs.projectDir, 'facets.lock'));
   const adapter = readAdapterIdentity(inputs.facetDir);
   let lock: ReturnType<typeof parseLockfile>;
+  let inventory: ServerInventory;
   try {
     const manifest = parseProjectManifest(manifestBytes.toString('utf8'));
     lock = parseLockfile(lockBytes.toString('utf8'));
     checkInputsAgree(manifest, lock);
+    inventory = lockedServerInventory(lockBytes.toString('utf8'));
   } catch (error) {
     if (error instanceof InputError) throw new SealError(error.reason, error.message);
     throw error;
   }
-  checkServerExports(inputs.projectDir);
   const exports = readExports(inputs.projectDir);
+  const origins = new Map<string, Origin>();
 
   // Join every locked text asset to its export by effective name, enforcing the installer's namespaces.
   const claimed = new Map<string, string>();
@@ -349,6 +468,7 @@ export function sealInstallation(inputs: SealInputs): Sealed {
     const entry = lock.facets[facet];
     if (entry === undefined) continue;
     const origin = { facet, version: entry.version, source: renderSource(entry.source), integrity: entry.integrity };
+    origins.set(facet, origin);
     for (const asset of entry.assets) {
       counts[asset.type] += 1;
       const item = {
@@ -394,7 +514,8 @@ export function sealInstallation(inputs: SealInputs): Sealed {
     effectiveName: effectiveName(item.authoredName, item.materialization),
     runtime: exported?.record.state === 'ready' ? exported.record.runtime : undefined,
   }));
-  const resolutions = resolveReferences(resolvable);
+  const { servers, omittedServers } = joinServers(inputs.projectDir, inventory, origins);
+  const resolutions = resolveReferences(resolvable, serverIndex(inventory));
 
   const items: InstallationItem[] = joined.map(({ item, exported, origin }) => {
     const name = effectiveName(item.authoredName, item.materialization);
@@ -430,7 +551,7 @@ export function sealInstallation(inputs: SealInputs): Sealed {
   propagateLateRefusals(items);
 
   const installation: Installation = {
-    format: 1,
+    format: 2,
     profile: 1,
     toolchain: {
       cli: inputs.cli,
@@ -455,7 +576,8 @@ export function sealInstallation(inputs: SealInputs): Sealed {
         return { facet, version: entry.version, source: entry.source, integrity: entry.integrity };
       }),
     items,
-    servers: [],
+    servers,
+    omittedServers,
   };
   const bytes = canonicalBytes(installation);
   if (bytes.byteLength > SEAL_LIMITS.bundleBytes)

@@ -61,6 +61,19 @@ stock `createAgent`; delegation is an ordinary tool of it (`packages/runtime/src
   delegate's record and returns to the caller; run-ending failures (budget, provider, storage, unsafe state) still
   end the run, and only a new final root message can succeed.
 
+Command starts and skills (`packages/runtime/src/capabilities/`, `execution/skills.ts`; Decisions 3, 4 and 6):
+
+- **Acceptance.** The run service resolves a retried request by its normalized submission first; only a new start
+  reads the pinned installation, checks the selection revision, renders the goal, checks providers and workspace,
+  runs the bounded required-tool preflight and assembles the snapshot, which is committed with the run. The root
+  receives the rendered goal; it and its delegates are built from the retained snapshot only.
+- **Skills.** Root and delegates load retained skills through the operation ledger; a successful load and the
+  actor's membership commit together. Reference eligibility is frozen into each model response's runtime-owned
+  metadata before the graph stores it, so a sibling load cannot unlock a same-response reference.
+- **Current grants versus retained definitions.** Tools and descriptions are derived from the retained ceiling, so
+  the execution definition does not change when configuration does; the owner's current grants narrow each new
+  load, read or delegation after exact replay is resolved. New configuration never widens an accepted run.
+
 The historical design follows.
 
 The control plane owns orchestration. It decides what runs, tracks what

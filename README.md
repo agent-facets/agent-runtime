@@ -115,7 +115,7 @@ Run from the repository root (prefix with `mise exec --` if mise is not activate
 | `bun run test:integration` | Starts a disposable PostgreSQL fixture and runs `tests/integration` (persistence, ownership, run records, lifecycle, provider assembly, the API and the MCP/Bun process gate, whose synthetic server bundles it builds into a disposable directory first). Requires Docker. |
 | `bun run test:browser` | Starts a disposable PostgreSQL fixture and runs `tests/browser`: the built console in headless Chromium against the run service, with scripted providers, including the acceptance-trial rehearsal. Requires Docker and `bun run browser:install`. |
 | `bun run console:offline` | Runs the console on this machine at `http://127.0.0.1:4310/` (or a free port, printed) with nothing real behind it: a disposable PostgreSQL fixture, a synthetic workspace and credential, and a scripted model that reads a file, asks one question and reports your answer. Goals containing “text”, “several” or “fail” choose a text question, a multiple-choice question or a provider failure. No provider is contacted. Ctrl+C stops it and removes everything it created. Requires Docker. |
-| `bun run test:facets` | Runs `tests/facets` with the pinned `facet` CLI (on `PATH`): installs synthetic fixture facets into disposable runtime and editor homes, then checks exports, sealing, reproducibility, server-bearing refusal and isolation between the two installations. Refuses an unpinned CLI without running it. No Docker, model or MCP server is used. |
+| `bun run test:facets` | Runs `tests/facets` with the pinned `facet` CLI (on `PATH`): installs synthetic fixture facets into disposable runtime and editor homes, then checks exports, sealing (including the join of MCP server declarations to every facet that declares them), reproducibility and isolation between the two installations. Refuses an unpinned CLI without running it. No Docker, model or MCP server is used. |
 | `bun run browser:install` | Downloads the pinned Playwright headless Chromium (once, into Playwright's user cache). |
 | `bun run test:container` | Builds the image and smoke-tests the isolated Compose topology, including the served console and the Host/Origin checks, then rehearses an image rollback over preserved storage (below). Stops at the first failed check. Requires Docker. |
 | `bun run acceptance:anthropic` | The live trial's operator tool (Anthropic by default; `--provider openai --ceiling <n>` for OpenAI); use only as the [checklist](deploy/runtime/anthropic-acceptance.md) describes, after fresh authorization. Its `report` only reads two named runs. |
@@ -260,7 +260,8 @@ configuration.
 ### Capability configuration
 
 An optional `capabilities` section holds the owner's grants for facet-backed command runs. Without it the
-deployment is goal-only, exactly as before. Command runs are not offered, so these grants are not used by any run.
+deployment is goal-only, exactly as before, and goal runs never use these grants. The HTTP API accepts goal starts
+only; command runs are started through the run service (see [Agent execution](#agent-execution)).
 [`deploy/runtime/config.capabilities.example.json`](deploy/runtime/config.capabilities.example.json) shows every
 setting with placeholder digests:
 
@@ -314,10 +315,11 @@ manifest and lockfile and writes one canonical `installation.json`. The owner pi
   `facet.json`. Unsupported settings, missing prerequisites and requirement cycles refuse that contribution, with a
   reason, rather than being ignored. Facets written for coding tools usually need explicit runtime adaptation.
 - Installing a facet grants nothing. Installation never starts a run or launches a declared MCP server.
-- An installation that declares an MCP server cannot be sealed, because the lockfile does not record which facets
-  contributed each server. Omit such servers to seal the rest. Contributions that reference MCP tools are refused.
-- Generated exports and `installation.json` are local artifacts and are never committed. The server does not read
-  the bundle, and command runs are not offered.
+- The lockfile (version 0.4) records every MCP server each facet declares. The seal joins each selected server's
+  exported declaration to every facet that declares it and refuses any missing, extra or edited server export.
+  Selecting a server does not approve it; approval lives only in [operator configuration](#capability-configuration).
+- Generated exports and `installation.json` are local artifacts and are never committed. The runtime reads the
+  pinned bundle afresh for each new command start; an accepted run keeps the definitions it retained.
 
 ## Authority boundaries
 
@@ -472,6 +474,26 @@ loop; the runtime only constrains what crosses into graph state and what is disp
   failure (for example a result too large to return), is returned to the caller, which continues; budget, provider,
   storage and unsafe-state failures still end the run. Only a new final message from the root can be the run's
   result. Goal runs have no delegation and keep exactly the three native tools.
+- **Command runs.** A command start names an installed command, the selection revision it was offered under (a
+  digest of the pinned installation and the command ID, so any installation change makes older selections stale)
+  and raw argument text. A retried request is resolved by that normalized submission before anything current is
+  read, so it returns the original run even after the installation changed or vanished, or a provider or server
+  became unavailable. A new start then requires: arguments free of credential material; the current revision; a
+  usable command; a rendered goal (the literal `$ARGUMENTS` replaced by the text, or the text appended under an
+  `## Owner input` heading; required arguments must be non-blank, and the result at most 8 KiB, never truncated);
+  provider and workspace readiness; and, for each MCP tool the command requires, a connection-approved server whose
+  current declaration and program match the approved digest and a grant for the tool's current definition, checked
+  by one bounded inspection (start, initialize, list, close; nothing is called). Servers needed only by optional
+  tools are not started. The run then retains, atomically with its acceptance, every definition it may use — the
+  ready skills and agents currently allowed and their own prerequisites, unloaded skill instructions and resources,
+  bound tool definitions and the authority ceiling — so it never needs the installation again. A refused start
+  never becomes a free-form goal or another command.
+- **Skills (command runs only).** An actor sees its skills by ID and description in `mcp_LoadSkill`. Loading one
+  returns its retained instructions and reference paths, and records the actor's membership in the same commit as
+  the outcome (repeated loads keep the first). `mcp_ReadSkillReference` returns numbered lines of a loaded skill's
+  UTF-8 reference from the retained bytes (never the filesystem), screened as a whole before paging (at most 2,000
+  lines and 64 KiB per call). Eligibility is the membership frozen on the response that issued the call, so a skill
+  loaded in the same response can be read from the next one. Loading grants nothing else.
 - **Budget.** The default is 50 model requests. The run reports `{ maximum, consumed, unconfirmed }`; an admission
   whose dispatch was never confirmed stays charged as unconfirmed. Tool calls from the last permitted response still
   run; only another model request fails the run with `step_limit`. An answer can be accepted with no steps left.
@@ -496,7 +518,11 @@ loop; the runtime only constrains what crosses into graph state and what is disp
   manifest per provider — the common execution closure plus that provider's adapter, following workspace packages
   into their source (so the Anthropic manifest includes the subscription package's files) — written at build time
   beside the bundle (`dist/execution-manifest.json`). A change to one provider's adapter does not refuse runs bound
-  to the other. Browser code, documentation, tests and default settings are not inputs.
+  to the other. Browser code, documentation, tests and default settings are not inputs. A command run's definition
+  also covers its retained snapshot digest and the delegation and skill protocols, but not the owner's current
+  grants: those are checked when a new load, read or delegation runs, after any recorded replay, so a revocation
+  takes effect on restart without making waiting runs incompatible. Updating or removing the installation does not
+  affect accepted runs.
 - **Cancellation** is recorded before it is acknowledged and serialized with admissions, so nothing is dispatched
   after it. A waiting run is cancelled at once; a working run is `cancelling` until its request bodies, tool calls
   and checkpoint writes — including a delegate's — have actually settled. An answer accepted earlier stays accepted.
@@ -728,7 +754,6 @@ part of readiness: an unauthorized provider is shown in the console and refuses 
 - Read-only mounts and path checks are not a sandbox against hostile processes on the host; the workspace is
   assumed to be owner-controlled.
 - Ordinary restarts are in scope; host-reboot and disaster-recovery guarantees are not.
-- Runtime facet installations that declare MCP servers cannot be sealed (see [Runtime facets](#runtime-facets)).
 
 ## License
 

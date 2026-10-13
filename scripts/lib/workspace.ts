@@ -1,5 +1,5 @@
 import { readdirSync, statSync } from 'node:fs';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { join, resolve } from 'node:path';
 
 export const repoRoot = resolve(import.meta.dir, '..', '..');
 
@@ -53,19 +53,4 @@ export function listSourceFiles(dir: string): string[] {
     else if (entry.isFile() && sourceExtensions.test(entry.name)) files.push(path);
   }
   return files.sort();
-}
-
-const transpiler = new Bun.Transpiler({ loader: 'tsx' });
-
-export function importSpecifiers(source: string): string[] {
-  return transpiler.scanImports(source).map((entry) => entry.path);
-}
-
-export function isWithin(parent: string, child: string): boolean {
-  const path = relative(parent, child);
-  return path === '' || (!path.startsWith('..') && !path.startsWith(sep) && path !== '..');
-}
-
-export function resolveRelative(fromFile: string, specifier: string): string | undefined {
-  return specifier.startsWith('.') ? resolve(dirname(fromFile), specifier) : undefined;
 }

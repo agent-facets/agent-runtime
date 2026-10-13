@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { normalizeRunInput } from '../capabilities/records.ts';
 import { canonicalJson, digestOf, parseSequence } from './canonical.ts';
 import { creationInputDigest, isAmbiguousCommitError, RunStoreError } from './run-store.ts';
 
@@ -22,6 +23,36 @@ describe('canonical JSON', () => {
   test('a phase-1 goal creation identity is unchanged', () => {
     expect(creationInputDigest({ goal: 'Inspect', provider: 'anthropic' })).toBe(
       'c9133c96b51d81430dc92ff2df5b7e8781832390333a893f568a2fa8143fcb79',
+    );
+    // The normalized goal input keeps that identity.
+    expect(
+      creationInputDigest(
+        normalizeRunInput({
+          kind: 'goal',
+          requestId: '00000000-0000-4000-8000-000000000001',
+          goal: 'Inspect',
+          provider: 'anthropic',
+        }),
+      ),
+    ).toBe('c9133c96b51d81430dc92ff2df5b7e8781832390333a893f568a2fa8143fcb79');
+  });
+
+  test('a normalized command start keeps the submission verbatim and nothing derived from it', () => {
+    const normalized = normalizeRunInput({
+      kind: 'command',
+      requestId: '00000000-0000-4000-8000-000000000001',
+      provider: 'openai',
+      command: { id: 'command:triage', selectionRevision: 'a'.repeat(64), arguments: '  owner/repo-a\n' },
+    });
+    expect(normalized).toEqual({
+      kind: 'command',
+      commandId: 'command:triage',
+      selectionRevision: 'a'.repeat(64),
+      arguments: '  owner/repo-a\n',
+      provider: 'openai',
+    });
+    expect(creationInputDigest(normalized)).not.toBe(
+      creationInputDigest({ kind: 'goal', goal: '  owner/repo-a\n', provider: 'openai' }),
     );
   });
 

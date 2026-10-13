@@ -23,6 +23,10 @@ const COMMAND_ERRORS: Record<CommandErrorCode, { code: ErrorCode; message: strin
   goal_required: { code: 'goal_required', message: 'A goal is required.' },
   goal_too_long: { code: 'goal_too_long', message: 'The goal is longer than 8 KiB.' },
   goal_not_storable: { code: 'goal_not_storable', message: 'The goal contains text that cannot be stored.' },
+  command_arguments_invalid: {
+    code: 'command_arguments_invalid',
+    message: 'The command arguments are longer than 8 KiB or contain text that cannot be stored.',
+  },
 };
 
 export const RESPONSE_HEADERS = Object.freeze({

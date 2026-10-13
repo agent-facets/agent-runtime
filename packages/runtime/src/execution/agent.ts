@@ -9,7 +9,14 @@
 //     other calls, is refused as a recorded outcome; a call already completed is answered from its record;
 //   - any failure is replaced by an ExecutionFailure with fixed text, because the graph records an exception's
 //     name and message; graph control flow (interrupts, commands) passes through unchanged.
-import { type ActorRef, agentIdSchema, nativeToolSchema, type ToolBinding } from '@agent-runtime/contracts';
+import {
+  type ActorRef,
+  agentIdSchema,
+  nativeToolSchema,
+  resourcePathSchema,
+  skillIdSchema,
+  type ToolBinding,
+} from '@agent-runtime/contracts';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { AIMessage, type BaseMessage, ToolMessage } from '@langchain/core/messages';
 import { isCommand, isGraphBubbleUp } from '@langchain/langgraph';
@@ -37,6 +44,7 @@ import {
   ToolCallConflict,
   type ToolCallIdentity,
 } from './operations.ts';
+import { createSkillTools, LOAD_SKILL_TOOL, LOADED_SKILLS_METADATA, READ_REFERENCE_TOOL } from './skills.ts';
 import { type FailedResponse, TerminalError } from './terminal.ts';
 import { ASK_TOOL, createExecutionTools, TOOL_NAMES, type ToolContext } from './tools.ts';
 
@@ -147,6 +155,11 @@ export function boundaryMiddleware(options: {
   /** The tools this agent may call; any other call is refused before it runs. Default: the native three. */
   allowedTools?: readonly string[];
   recordMessage?: (message: AIMessage) => Promise<void>;
+  /**
+   * An actor with skill tools: its recorded loaded skills, read before each model request and frozen into the
+   * response's runtime-owned metadata, so the skills a response may read references of cannot change afterwards.
+   */
+  loadedSkills?: () => Promise<string[]>;
 }) {
   const allowed = options.allowedTools ?? TOOL_NAMES;
   return createMiddleware({
@@ -154,6 +167,14 @@ export function boundaryMiddleware(options: {
     wrapModelCall: async (request, handler) => {
       options.reports?.callStarted();
       try {
+        let frozen: string[] | undefined;
+        if (options.loadedSkills !== undefined) {
+          try {
+            frozen = [...(await options.loadedSkills())].sort();
+          } catch {
+            throw new ExecutionFailure('tool_handling_failed');
+          }
+        }
         let response: AIMessage | unknown;
         try {
           // Framework retries stay off whatever call options arrive: a retry is a new physical request, and only
@@ -186,6 +207,13 @@ export function boundaryMiddleware(options: {
           assignId: options.newMessageId,
         });
         if (sanitized.kind === 'message') {
+          if (frozen !== undefined) {
+            // Replaces anything a provider put under the same key: eligibility is only ever the runtime's record.
+            sanitized.message.response_metadata = {
+              ...sanitized.message.response_metadata,
+              [LOADED_SKILLS_METADATA]: frozen,
+            };
+          }
           if (options.recordMessage !== undefined) {
             try {
               await options.recordMessage(sanitized.message);
@@ -320,6 +348,14 @@ function bindingFor(call: { name: string; args: unknown }, allowed: readonly str
     const agent = agentIdSchema.safeParse((call.args as { agent?: unknown } | null)?.agent);
     return agent.success ? { kind: 'delegation', agentId: agent.data } : undefined;
   }
+  if (call.name === LOAD_SKILL_TOOL || call.name === READ_REFERENCE_TOOL) {
+    const args = (call.args ?? {}) as { skill?: unknown; path?: unknown };
+    const skill = skillIdSchema.safeParse(args.skill);
+    if (!skill.success) return undefined;
+    if (call.name === LOAD_SKILL_TOOL) return { kind: 'skill_load', skillId: skill.data };
+    const path = resourcePathSchema.safeParse(args.path);
+    return path.success ? { kind: 'skill_reference', skillId: skill.data, path: path.data } : undefined;
+  }
   const native = nativeToolSchema.safeParse(call.name);
   return native.success ? { kind: 'native', name: native.data } : undefined;
 }
@@ -381,6 +417,22 @@ export function executionAgentParams(options: ExecutionAgentOptions) {
       natives.includes(candidate.name),
     );
     if (definition !== undefined) systemPrompt = `${DELEGATE_PROMPT}\n\n${definition.instructions}`;
+    const skills = scope.skills;
+    if (skills !== undefined) {
+      const actorKey = actorKeyOf(scope.actor);
+      tools = [
+        ...tools,
+        ...(createSkillTools({
+          scope: {
+            snapshot: scope.capabilities.snapshot,
+            ...(definition === undefined ? {} : { agent: definition }),
+            current: skills.current,
+            loaded: () => skills.loaded(actorKey),
+          },
+          contentPolicy: options.contentPolicy,
+        }) as unknown as typeof tools),
+      ];
+    }
     const delegation = scope.delegation;
     if (scope.actor.kind === 'root' && delegation !== undefined && delegableAgents(scope.capabilities).length > 0) {
       tools = [
@@ -409,6 +461,9 @@ export function executionAgentParams(options: ExecutionAgentOptions) {
         ...(options.reports === undefined ? {} : { reports: options.reports }),
         ...(options.responseRefusal === undefined ? {} : { responseRefusal: options.responseRefusal }),
         ...(scope === undefined ? {} : { actor: scope.actor, allowedTools: tools.map((candidate) => candidate.name) }),
+        ...(scope?.skills !== undefined && tools.some((candidate) => candidate.name === LOAD_SKILL_TOOL)
+          ? { loadedSkills: () => (scope.skills as NonNullable<AgentScope['skills']>).loaded(actorKeyOf(scope.actor)) }
+          : {}),
         ...(options.recordMessage === undefined ? {} : { recordMessage: options.recordMessage }),
       }),
     ],

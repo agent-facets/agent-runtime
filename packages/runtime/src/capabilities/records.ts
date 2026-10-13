@@ -14,6 +14,7 @@ import {
   providerSchema,
   reasonCodeSchema,
   resourcePathSchema,
+  type StartRunRequest,
   scalarSchema,
   serverIdSchema,
   skillIdSchema,
@@ -308,6 +309,29 @@ export const commandRunInputSchema = z.strictObject({
   provider: providerSchema,
 });
 export type CommandRunInput = z.infer<typeof commandRunInputSchema>;
+
+/** A goal run's submitted input; its identity keeps the phase-1 formula over `{ goal, provider }`. */
+export const goalRunInputSchema = z.strictObject({
+  kind: z.literal('goal'),
+  goal: z.string(),
+  provider: providerSchema,
+});
+export type GoalRunInput = z.infer<typeof goalRunInputSchema>;
+
+/** Exactly one start mode: a free-form goal or an installed command. */
+export type RunInput = GoalRunInput | CommandRunInput;
+
+/** The normalized submission of a parsed start request: owner input only, nothing derived from current state. */
+export function normalizeRunInput(request: StartRunRequest): RunInput {
+  if (request.kind === 'goal') return { kind: 'goal', goal: request.goal, provider: request.provider };
+  return commandRunInputSchema.parse({
+    kind: 'command',
+    commandId: request.command.id,
+    selectionRevision: request.command.selectionRevision,
+    arguments: request.command.arguments,
+    provider: request.provider,
+  });
+}
 
 export const delegateOutcomeSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('result'), text: boundedText(65_536) }),

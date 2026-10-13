@@ -2,7 +2,10 @@
 // trusted only when its bytes match the owner-pinned SHA-256 and their canonical encoding; any corrupt or unverifiable
 // input makes the whole catalog unavailable. Within a well-formed bundle, a contribution the runtime cannot use is
 // refused on its own and unrelated contributions stay usable. Nothing here rewrites or reseals an installation.
-import { digestSchema, effectiveNameSchema } from '@agent-runtime/contracts';
+//
+// Server declarations carry every facet that declares them, as the installer recorded. Selecting a server here is
+// not approval to run it: connection approval and tool grants live only in operator configuration.
+import { digestSchema, effectiveNameSchema, serverIdSchema } from '@agent-runtime/contracts';
 import { z } from 'zod';
 import { canonicalJson } from '../records/canonical.ts';
 import { agentDefinitionSchema, CAPABILITY_LIMITS, commandDefinitionSchema, skillDefinitionSchema } from './records.ts';
@@ -61,6 +64,31 @@ const itemSchema = z.discriminatedUnion('kind', [
 ]);
 export type InstallationItem = z.infer<typeof itemSchema>;
 
+/** Portable declarations as exported, optional collections explicit; only stdio ones can ever be launched. */
+const declarationSchema = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('stdio'),
+    command: safeText(4096),
+    args: z.array(z.string().max(4096)).max(64),
+    env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string().max(4096)),
+  }),
+  z.strictObject({ type: z.literal('http'), url: safeText(4096) }),
+]);
+const serverOriginSchema = z.strictObject({
+  facet: facetSchema,
+  version: z.string().regex(/^[0-9]+\.[0-9]+\.[0-9]+$/),
+  source: safeText(1024),
+  integrity: safeText(256),
+  authoredName: effectiveNameSchema,
+});
+export const installedServerSchema = z.strictObject({
+  serverId: serverIdSchema,
+  fingerprint: fileIntegritySchema,
+  declaration: declarationSchema,
+  origins: z.array(serverOriginSchema).min(1).max(16),
+});
+export type InstalledServer = z.infer<typeof installedServerSchema>;
+
 const lockSourceSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('registry'), registry: safeText(1024) }),
   z.strictObject({ kind: z.literal('git'), url: safeText(1024), commit: z.string().regex(/^[0-9a-f]{8,64}$/) }),
@@ -68,7 +96,7 @@ const lockSourceSchema = z.discriminatedUnion('kind', [
 ]);
 
 export const installationSchema = z.strictObject({
-  format: z.literal(1),
+  format: z.literal(2),
   profile: z.literal(1),
   toolchain: z.strictObject({
     cli: z.strictObject({ version: safeText(64), platform: safeText(64), sha256: digestSchema }),
@@ -96,9 +124,10 @@ export const installationSchema = z.strictObject({
     )
     .max(CAPABILITY_LIMITS.contributions),
   items: z.array(itemSchema).max(CAPABILITY_LIMITS.contributions),
-  // TODO UPSTREAM-SERVER-PROVENANCE: revisit 9.1; complete 10.1; verify 10.2. Server declarations join the format
-  // once their originating facets can be verified; until then a bundle carries none.
-  servers: z.array(z.never()).max(0),
+  servers: z.array(installedServerSchema).max(CAPABILITY_LIMITS.servers),
+  omittedServers: z
+    .array(z.strictObject({ facet: facetSchema, authoredName: effectiveNameSchema, fingerprint: fileIntegritySchema }))
+    .max(CAPABILITY_LIMITS.contributions),
 });
 export type Installation = z.infer<typeof installationSchema>;
 
@@ -199,6 +228,27 @@ function checkConsistency(installation: Installation): string | undefined {
       }
     }
   }
+  // Every server origin is a recorded facet, and each authored server is either selected once or omitted.
+  const servers = new Set<string>();
+  const authoredServers = new Set<string>();
+  const claim = (facet: string, authoredName: string) => {
+    const key = `${facet}\u0000${authoredName}`;
+    if (authoredServers.has(key)) return false;
+    authoredServers.add(key);
+    return facets.has(facet);
+  };
+  for (const server of installation.servers) {
+    if (servers.has(server.serverId)) return 'installation_invalid';
+    servers.add(server.serverId);
+    for (const origin of server.origins) {
+      const facet = facets.get(origin.facet);
+      if (!claim(origin.facet, origin.authoredName)) return 'installation_invalid';
+      if (facet?.version !== origin.version || facet.integrity !== origin.integrity) return 'installation_invalid';
+    }
+  }
+  for (const omitted of installation.omittedServers) {
+    if (!claim(omitted.facet, omitted.authoredName)) return 'installation_invalid';
+  }
   if (
     perKind.skill > CAPABILITY_LIMITS.skills ||
     perKind.agent > CAPABILITY_LIMITS.agents ||
@@ -211,6 +261,7 @@ function checkConsistency(installation: Installation): string | undefined {
 
 function contributionsOf(installation: Installation): CatalogContribution[] {
   const versions = new Map(installation.facets.map((entry) => [entry.facet, entry.version]));
+  const servers = new Map(installation.servers.map((server) => [server.serverId, server]));
   const contributions: CatalogContribution[] = [];
   for (const item of installation.items) {
     const name = effectiveName(item);
@@ -274,10 +325,28 @@ function contributionsOf(installation: Installation): CatalogContribution[] {
           fields: ['requires'],
         };
         changed = true;
-      } else if (contribution.availability.definition.requires.some((requirement) => requirement.kind === 'mcp')) {
-        // TODO UPSTREAM-SERVER-PROVENANCE: revisit 9.1; complete 10.1; verify 10.2.
-        contribution.availability = { kind: 'refused', reason: 'server_provenance_unavailable', fields: ['requires'] };
-        changed = true;
+      } else {
+        // A required tool's server must be installed and of a launchable kind. Whether the owner approved it, and
+        // whether it still advertises the tool, is decided when a run is started, not here.
+        for (const requirement of contribution.availability.definition.requires) {
+          if (requirement.kind !== 'mcp') continue;
+          const server = servers.get(requirement.serverId);
+          const reason =
+            server === undefined
+              ? 'prerequisite_missing'
+              : server.declaration.type !== 'stdio'
+                ? 'server_transport_unsupported'
+                : undefined;
+          if (reason === undefined) continue;
+          contribution.availability = {
+            kind: 'refused',
+            reason,
+            subject: `mcp:${requirement.serverId}/${requirement.toolName}`,
+            fields: ['requires'],
+          };
+          changed = true;
+          break;
+        }
       }
     }
   }
