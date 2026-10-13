@@ -22,6 +22,10 @@ export type ExecutionFailureCode =
   | 'dispatch_refused'
   /** Agent activity could not be recorded in the run's history, so it was not used. */
   | 'history_unrecorded'
+  /** An external call may have taken effect but its completion cannot be established; nothing more is dispatched. */
+  | 'mcp_outcome_unknown'
+  /** Whether a required record was committed cannot be established; nothing may be done under this ownership. */
+  | 'commit_unknown'
   /** A runtime invariant was violated. */
   | 'invariant_violation';
 
@@ -34,6 +38,8 @@ const MESSAGES: Record<ExecutionFailureCode, string> = {
   tool_handling_failed: 'A tool call could not be handled safely; the requested action was not performed.',
   dispatch_refused: 'The run no longer permits new work; nothing was dispatched.',
   history_unrecorded: 'Agent activity could not be recorded, so it was not used.',
+  mcp_outcome_unknown: 'Whether an external tool call took effect cannot be established; nothing more was dispatched.',
+  commit_unknown: 'Whether a required record was stored cannot be established.',
   invariant_violation: 'The runtime detected an internal inconsistency.',
 };
 
@@ -74,6 +80,8 @@ export class ExecutionFailure extends Error {
   constructor(
     readonly code: ExecutionFailureCode,
     readonly evidence?: ModelFailureEvidence,
+    /** The tool operation the failure concerns, when it concerns one. */
+    readonly operationId?: string,
   ) {
     super(MESSAGES[code]);
   }

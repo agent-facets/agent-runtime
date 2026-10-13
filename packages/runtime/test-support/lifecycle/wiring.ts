@@ -19,6 +19,7 @@ import { InFlight, trackedSaver } from '../../src/execution/in-flight.ts';
 import { InvocationExecutor } from '../../src/execution/invocation.ts';
 import { runOperationLedger } from '../../src/execution/operations.ts';
 import { type CredentialRenewal, createTerminal, type RequestAdmission } from '../../src/execution/terminal.ts';
+import { InvocationConnections } from '../../src/mcp/connections.ts';
 import { KeyedSerializer } from '../../src/persistence/keyed-serializer.ts';
 import type { Persistence } from '../../src/persistence/persistence.ts';
 import { type CreateRunInput, type RunCapabilities, RunStore } from '../../src/records/run-store.ts';
@@ -340,6 +341,7 @@ export function createWiring(persistence: Persistence, options: WiringOptions) {
         binding: BINDING,
         inflight: new InFlight(),
         signal: () => new AbortController().signal,
+        connections: new InvocationConnections(),
       });
     },
     /** Queues the script of the next invocation to start. */

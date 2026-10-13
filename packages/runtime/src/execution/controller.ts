@@ -11,6 +11,7 @@
 import { AIMessage, type BaseMessage } from '@langchain/core/messages';
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
 import { failureFor } from '../domain/failures.ts';
+import { InvocationConnections } from '../mcp/connections.ts';
 import type { KeyedSerializer } from '../persistence/keyed-serializer.ts';
 import { isAmbiguousCommitError, type RunCapabilities, type RunStore } from '../records/run-store.ts';
 import type { Failure, ProviderBinding, RunState } from '../records/schemas.ts';
@@ -41,6 +42,8 @@ export interface InvocationWiring {
   signal: () => AbortSignal;
   /** A command run's retained definitions, revalidated on read; absent for a native goal run. */
   capabilities?: RunCapabilities;
+  /** The MCP connections this invocation owns; closed when it settles. */
+  connections: InvocationConnections;
 }
 
 export interface ControllerDeps {
@@ -66,6 +69,7 @@ export class RunController {
     const snapshot = await store.snapshot(runId);
     const capabilities = snapshot.command === undefined ? undefined : await store.readCapabilities(runId);
     const inflight = new InFlight();
+    const connections = new InvocationConnections();
     let running: ReturnType<InvocationExecutor['start']> | undefined;
     const agent = this.deps.wire({
       runId,
@@ -73,6 +77,7 @@ export class RunController {
       binding: snapshot.binding,
       inflight,
       signal: () => running?.signal ?? AbortSignal.abort(),
+      connections,
       ...(capabilities === undefined ? {} : { capabilities }),
     });
     // In a command run the root's messages are attributed, so they stay distinguishable from its delegates'.
@@ -86,6 +91,9 @@ export class RunController {
       budgetMax: snapshot.budget.maximum,
       onChunk: (chunk) => this.#project(runId, chunk, attribution),
     });
+    // Registered before anything else waits on settlement, so whoever then waits for this invocation's tracked
+    // work (this controller, or cancellation) also waits for its connections to close.
+    void running.settled.then(() => inflight.track(connections.closeAll()));
     active.register(runId, running, inflight);
     const settlement = await running.settled;
     await inflight.settled();

@@ -109,6 +109,13 @@ export const FAILURE_REASONS = {
     category: 'tool_failure',
     message: 'A tool call could not be handled safely; the requested action was not performed.',
   },
+  mcp_outcome_unknown: {
+    category: 'tool_failure',
+    message:
+      'An external tool call may have been sent, but whether it took effect cannot be established. It was not retried.',
+    remediation:
+      'Check the external system for the effect before deciding what to do. The recorded history is preserved; start a new run to continue.',
+  },
   no_op_continuation: {
     category: 'runtime_failure',
     message: 'The continuation finished without new agent work, a result or a question.',

@@ -5,9 +5,13 @@
 import { utf8Bytes } from '../domain/text.ts';
 import { ToolProblem } from './filesystem.ts';
 
+/**
+ * `uncertain` is recorded only for an external call whose request may have been sent but whose completion cannot be
+ * established; it is never returned to a model as a result.
+ */
 export type ToolOutcome<T> =
   | { outcome: 'ok'; result: T }
-  | { outcome: 'refused' | 'error'; code: string; message: string };
+  | { outcome: 'refused' | 'error' | 'uncertain'; code: string; message: string };
 
 /** Headroom reserved for a result's envelope fields (paths, counters, cursors, flags). */
 export const ENVELOPE_RESERVE_BYTES = 8_192;

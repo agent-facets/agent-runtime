@@ -133,6 +133,7 @@ describe('actor-aware agents', () => {
       snapshotDigest: run.snapshotDigest,
       delegationProtocol: 1,
       skillProtocol: 1,
+      mcpProtocol: 1,
     });
     const other = capabilities({ input: { arguments: 'owner/repo-b', renderedGoal: 'Triage owner/repo-b' } });
     expect((await definitionOf({ actor: { kind: 'root' }, capabilities: other, delegation: port })).digest).not.toBe(

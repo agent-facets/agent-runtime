@@ -36,6 +36,22 @@ export const toolTurn = (id: string, toolId: string, name: string, input: unknow
   event('content_block_stop', { index: 0 }) +
   closing('tool_use');
 
+/** One response issuing several tool calls, in order. */
+export const toolsTurn = (id: string, calls: [toolId: string, name: string, input: unknown][]) =>
+  opening(id) +
+  calls
+    .map(
+      ([toolId, name, input], index) =>
+        event('content_block_start', { index, content_block: { type: 'tool_use', id: toolId, name, input: {} } }) +
+        event('content_block_delta', {
+          index,
+          delta: { type: 'input_json_delta', partial_json: JSON.stringify(input) },
+        }) +
+        event('content_block_stop', { index }),
+    )
+    .join('') +
+  closing('tool_use');
+
 export const YES_NO_QUESTION = {
   prompt: 'Proceed?',
   input: {

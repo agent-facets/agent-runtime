@@ -19,6 +19,7 @@ import {
 import { AIMessage, type BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { tool } from 'langchain';
 import { z } from 'zod';
+import { effectiveAgents } from '../capabilities/authority.ts';
 import type { CapabilitySnapshot, DelegateOutcome, DelegateState, LoadedSkill } from '../capabilities/records.ts';
 import type { CapabilityConfig } from '../config/capabilities.ts';
 import type { KeyedSerializer } from '../persistence/keyed-serializer.ts';
@@ -29,6 +30,7 @@ import { sanitizeToolOutcome } from '../security/pre-graph.ts';
 import type { ToolOutcome } from '../workspace/results.ts';
 import type { ExecutionAgent } from './agent.ts';
 import { ExecutionFailure } from './failures.ts';
+import type { McpPort } from './mcp.ts';
 import { recordableOutcome } from './operations.ts';
 import { issuingMessageId, TOOL_NAMES } from './tools.ts';
 
@@ -68,6 +70,10 @@ export interface AgentScope {
     current: CapabilityConfig | undefined;
     loaded(actorKey: string): Promise<string[]>;
   };
+  /** The actor's approved MCP tools: current grants and the invocation's connections; absent offers none. */
+  mcp?: McpPort;
+  /** The owner's current grants for starting new delegations; absent applies no current-grant check. */
+  grants?: { current: CapabilityConfig | undefined };
 }
 
 /** The run's delegation records and delegate construction, for the root of one invocation (or its inspection). */
@@ -221,6 +227,16 @@ export function createDelegateTool(context: {
         throw new ExecutionFailure('tool_call_unrepresentable');
       }
       const delegationId = operationIdV2(threadId, 'root', messageId, toolCallId);
+      // The owner's current grants decide whether a new delegation may start; re-entering a recorded one (on
+      // resume) is not a new delegation and continues whatever it was doing.
+      const grants = scope.grants;
+      if (
+        grants !== undefined &&
+        !effectiveAgents(scope.capabilities.snapshot, grants.current).includes(definition.id) &&
+        (await scope.delegation.readDelegate(delegationId)) === undefined
+      ) {
+        return JSON.stringify(refusal('agent_not_permitted', 'That agent is no longer permitted.'));
+      }
       const begun = await scope.delegation.start({
         delegationId,
         agentId: definition.id,

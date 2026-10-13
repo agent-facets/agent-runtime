@@ -34,7 +34,32 @@ export type OperationStart =
   /** The call already completed; its recorded outcome is the result. */
   | { kind: 'reuse'; outcome: ToolOutcome<unknown> }
   /** The run no longer permits new work (for example, cancellation was accepted). */
-  | { kind: 'not_dispatchable' };
+  | { kind: 'not_dispatchable' }
+  /** An external call's dispatch intent was recorded but its outcome never was; it is never sent again. */
+  | { kind: 'unresolved' };
+
+/**
+ * Admission of an external call. `admitted`: this call recorded the dispatch intent and the request was handed to
+ * the transport before the dispatch gate was released. `unresolved`: an intent exists but this call did not send it.
+ * `not_recorded`: nothing was recorded and nothing sent.
+ */
+export type ExternalAdmission = 'admitted' | 'not_dispatchable' | 'unresolved' | 'not_recorded';
+
+/** Whether recording an external call's outcome committed cannot be established, so it must be treated as unknown. */
+export class OutcomeUnconfirmed extends Error {
+  override readonly name = 'OutcomeUnconfirmed';
+  constructor() {
+    super('whether the external outcome was recorded cannot be established');
+  }
+}
+
+/** Whether a dispatch-intent commit took effect cannot be established: nothing more may be done under ownership. */
+export class AdmissionUnknown extends Error {
+  override readonly name = 'AdmissionUnknown';
+  constructor() {
+    super('whether the dispatch intent was recorded cannot be established');
+  }
+}
 
 export class ToolCallConflict extends Error {
   override readonly name = 'ToolCallConflict';
@@ -48,6 +73,16 @@ export interface OperationLedger {
   start(identity: ToolCallIdentity): Promise<OperationStart>;
   /** Records the outcome that is returned to the agent. */
   complete(identity: ToolCallIdentity, outcome: ToolOutcome<unknown>): Promise<void>;
+  /**
+   * External calls: records the started call's dispatch intent under the run's dispatch gate and, only if this call
+   * recorded it, runs `send` before the gate is released. Throws AdmissionUnknown when that cannot be established.
+   */
+  admitExternal?(identity: ToolCallIdentity, send: () => void): Promise<ExternalAdmission>;
+  /**
+   * External calls after dispatch: records the outcome, resolving an ambiguous commit by readback. Throws
+   * OutcomeUnconfirmed unless the exact outcome is known to be recorded.
+   */
+  completeExternal?(identity: ToolCallIdentity, outcome: ToolOutcome<unknown>): Promise<void>;
 }
 
 /** The identity of a call, or undefined when it cannot be represented (no ID, oversized or non-JSON arguments). */
@@ -113,7 +148,10 @@ export function outcomeContent(outcome: ToolOutcome<unknown>): string {
 
 /** The durable ledger for one invocation: starts go through the run's short dispatch gate. */
 export function runOperationLedger(options: {
-  store: Pick<RunStore, 'startToolOperation' | 'completeToolOperation'>;
+  store: Pick<
+    RunStore,
+    'startToolOperation' | 'completeToolOperation' | 'admitExternalCall' | 'readToolDisposition' | 'withCommitCertainty'
+  >;
   gates: KeyedSerializer;
   runId: string;
   invocationId: string;
@@ -133,5 +171,51 @@ export function runOperationLedger(options: {
     },
     complete: (identity, outcome) =>
       store.completeToolOperation(runId, identity, outcome as unknown as RecordedToolOutcome),
+    async admitExternal(identity, send) {
+      let decided: Awaited<ReturnType<RunStore['admitExternalCall']>> | undefined;
+      try {
+        const certain = await store.withCommitCertainty(
+          () =>
+            gates.run(runId, async () => {
+              decided = await store.admitExternalCall(runId, invocationId, identity.operationId);
+              // Still inside the gate, and only after this call's own intent committed.
+              if (decided === 'admitted') send();
+              return decided;
+            }),
+          // The commit's outcome was unknown, so nothing was sent: a recorded intent is unresolved, never sent now.
+          async () =>
+            (await store.readToolDisposition(runId, identity.operationId))?.kind === 'dispatching'
+              ? ('unresolved' as const)
+              : undefined,
+        );
+        return certain.committed ? certain.value : 'not_recorded';
+      } catch (error) {
+        if (error instanceof RunStoreError && error.code === 'acceptance_unknown') throw new AdmissionUnknown();
+        // The intent committed but handing the request over failed: whether anything was sent is unknown.
+        if (decided === 'admitted') return 'unresolved';
+        throw error;
+      }
+    },
+    async completeExternal(identity, outcome) {
+      const recorded = outcome as unknown as RecordedToolOutcome;
+      let certain: { committed: boolean };
+      try {
+        certain = await store.withCommitCertainty(
+          async () => {
+            await store.completeToolOperation(runId, identity, recorded);
+            return true;
+          },
+          async () => {
+            const disposition = await store.readToolDisposition(runId, identity.operationId);
+            return disposition?.kind === 'completed' && canonicalJson(disposition.result) === canonicalJson(recorded)
+              ? true
+              : undefined;
+          },
+        );
+      } catch {
+        throw new OutcomeUnconfirmed();
+      }
+      if (!certain.committed) throw new OutcomeUnconfirmed();
+    },
   };
 }

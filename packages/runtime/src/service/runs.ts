@@ -26,8 +26,10 @@ import {
 import { type CommandStart, prepareCommandStart } from '../capabilities/command.ts';
 import { type CatalogLoad, readInstallation } from '../capabilities/installation.ts';
 import { type CommandRunInput, normalizeRunInput, type RunInput } from '../capabilities/records.ts';
+import type { LaunchDeps } from '../capabilities/server-access.ts';
 import { assembleSnapshot, type BoundTools, NO_BOUND_TOOLS, type SnapshotAssembly } from '../capabilities/snapshot.ts';
 import { type OperatorConfig, providerSettingsFor } from '../config/operator.ts';
+import { McpCredentialStore } from '../credentials/mcp-store.ts';
 import { type FailureReason, failureFor } from '../domain/failures.ts';
 import { runAdmission } from '../execution/admission.ts';
 import { createExecutionAgent, type ExecutionAgentOptions, executionAgentParams } from '../execution/agent.ts';
@@ -40,9 +42,11 @@ import { executionDefinition } from '../execution/definition.ts';
 import { type DelegateRef, delegateMessageRecorder, runDelegationPort } from '../execution/delegation.ts';
 import { InFlight, trackedSaver } from '../execution/in-flight.ts';
 import { InvocationExecutor, type InvocationInput } from '../execution/invocation.ts';
+import type { McpPort } from '../execution/mcp.ts';
 import { runOperationLedger } from '../execution/operations.ts';
 import { AdmissionRefused, type RequestAdmission } from '../execution/terminal.ts';
 import type { ResumeEnvelope } from '../execution/tools.ts';
+import { InvocationConnections } from '../mcp/connections.ts';
 import { PersistenceError, sqlStateOf } from '../persistence/errors.ts';
 import { KeyedSerializer } from '../persistence/keyed-serializer.ts';
 import type { Persistence } from '../persistence/persistence.ts';
@@ -176,6 +180,8 @@ export interface RunServiceOptions {
   catalog?: () => Promise<CatalogLoad | { kind: 'unconfigured' }>;
   /** Binds a new command's approved required MCP tools (by bounded discovery); never runs for a retried request. */
   preflight?: McpPreflight;
+  /** How approved servers are started; by default from the private state directory with this process's Bun. */
+  mcpLaunch?: LaunchDeps;
 }
 
 export type McpPreflight = (input: {
@@ -268,6 +274,7 @@ export class RunService {
   readonly #code: NonNullable<RunServiceOptions['code']>;
   readonly #catalog: NonNullable<RunServiceOptions['catalog']>;
   readonly #preflight: McpPreflight;
+  readonly #mcpLaunch: LaunchDeps;
   readonly #log: (line: string) => void;
 
   readonly #deps: RunServiceOptions;
@@ -291,6 +298,11 @@ export class RunService {
           ? { kind: 'unconfigured' as const }
           : readInstallation(installation.path, installation.sha256));
     this.#preflight = options.preflight ?? NO_MCP_PREFLIGHT;
+    this.#mcpLaunch = options.mcpLaunch ?? {
+      stateDir: options.locations.stateDir,
+      bunPath: process.execPath,
+      readCredential: (slot) => McpCredentialStore.forStateDir(options.locations.stateDir).read(slot),
+    };
     this.#log = options.log ?? (() => {});
     this.login = new AnthropicLogin({
       slot: providerSettingsFor(options.operator, 'anthropic')?.credentialSlot,
@@ -326,6 +338,7 @@ export class RunService {
               }),
             signal: wiring.signal,
             inflight: wiring.inflight,
+            connections: wiring.connections,
             ...(wiring.capabilities === undefined ? {} : { capabilities: wiring.capabilities }),
           }),
         );
@@ -879,6 +892,7 @@ export class RunService {
       admission: (actor?: DelegateRef) => RequestAdmission;
       signal: () => AbortSignal;
       inflight: InFlight;
+      connections: InvocationConnections;
       capabilities?: RunCapabilities;
     },
     /** A delegate of a command run; the root when undefined. */
@@ -897,17 +911,22 @@ export class RunService {
     if ('unavailable' in wired) throw new WiringUnavailable(wired.unavailable);
     const { capabilities } = wiring;
     // Skill tools are advertised from the retained definitions; current grants narrow only new loads and reads.
+    const current = this.#deps.operator.capabilities;
     const skills = {
-      current: this.#deps.operator.capabilities,
+      current,
       loaded: async (actorKey: string) =>
         (await this.store.readLoadedSkills(runId, actorKey)).map((loaded) => loaded.skillId),
     };
+    // MCP tools, too, are advertised from the retained definitions; current grants narrow only new calls, and the
+    // invocation's connections are shared by its root and delegates.
+    const mcp: McpPort = { current, connections: wiring.connections, launch: this.#mcpLaunch, signal: wiring.signal };
+    const grants = { current };
     const scope =
       capabilities === undefined
         ? {}
         : actor !== undefined
           ? {
-              scope: { actor, capabilities, skills },
+              scope: { actor, capabilities, skills, mcp, grants },
               recordMessage: delegateMessageRecorder(this.store, runId, actor),
             }
           : {
@@ -915,6 +934,8 @@ export class RunService {
                 actor: { kind: 'root' as const },
                 capabilities,
                 skills,
+                mcp,
+                grants,
                 delegation: runDelegationPort({
                   store: this.store,
                   gates: this.gates,
@@ -952,6 +973,7 @@ export class RunService {
         admission: () => refuseInspection,
         signal: () => AbortSignal.abort(),
         inflight: new InFlight(),
+        connections: new InvocationConnections(),
         ...(capabilities === undefined ? {} : { capabilities }),
       },
     );

@@ -9,6 +9,7 @@ import type { ExecutionAgent, executionAgentParams } from './agent.ts';
 import { agentScope, SYSTEM_PROMPT } from './agent.ts';
 import type { CodeManifest } from './code-manifest.ts';
 import { DELEGATION_PROTOCOL_VERSION } from './delegation.ts';
+import { MCP_PROTOCOL_VERSION } from './mcp.ts';
 import { SKILL_PROTOCOL_VERSION } from './skills.ts';
 import { QUESTION_PROTOCOL_VERSION } from './tools.ts';
 
@@ -42,8 +43,8 @@ export async function executionDefinition(input: {
   workspacePolicyDigest: string;
   runtimeVersion?: string;
 }): Promise<ExecutionDefinition> {
-  // A command run continues from its retained definitions: their content address and the delegation and skill
-  // protocols are part of how it continues. Current owner grants are not; they are checked when a new operation
+  // A command run continues from its retained definitions: their content address and the delegation, skill and
+  // MCP protocols (including the external-tool instructions) are part of how it continues. Current owner grants are not; they are checked when a new operation
   // runs, so revoking one never changes this definition. Native runs have none of these.
   const scope = agentScope(input.agent);
   const manifest = {
@@ -54,6 +55,7 @@ export async function executionDefinition(input: {
             snapshotDigest: scope.capabilities.snapshotDigest,
             delegationProtocol: DELEGATION_PROTOCOL_VERSION,
             skillProtocol: SKILL_PROTOCOL_VERSION,
+            mcpProtocol: MCP_PROTOCOL_VERSION,
           },
         }),
     protocolVersion: PROTOCOL_VERSIONS,
