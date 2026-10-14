@@ -52,7 +52,12 @@ describe('history events', () => {
 
   test('tool events distinguish dispatch intent and uncertainty from completion', () => {
     const tool = (disposition: unknown, binding?: unknown) =>
-      parses('tool.operation', { operationId: D, toolName: 'mcp_ext_x', disposition, ...(binding ? { binding } : {}) });
+      parses('tool.operation', {
+        operationId: D,
+        toolName: 'mcp_github_list_issues',
+        disposition,
+        ...(binding ? { binding } : {}),
+      });
     const mcp = { kind: 'mcp', serverId: 'github', toolName: 'list_issues', definitionDigest: D };
     expect(tool({ kind: 'dispatching' }, mcp)).toBe(true);
     expect(tool({ kind: 'completed', outcome: 'uncertain', result: {} }, mcp)).toBe(true);

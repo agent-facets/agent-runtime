@@ -12,7 +12,6 @@ import { parseOperatorConfig } from '../../packages/runtime/src/config/operator.
 import { NO_KNOWN_CREDENTIALS } from '../../packages/runtime/src/credentials/matcher.ts';
 import { loadConfiguredMcpCredentials, McpCredentialStore } from '../../packages/runtime/src/credentials/mcp-store.ts';
 import { CredentialStore } from '../../packages/runtime/src/credentials/store.ts';
-import { externalToolName } from '../../packages/runtime/src/mcp/adapt.ts';
 import { inspectServer } from '../../packages/runtime/src/mcp/discovery.ts';
 import { planLaunch } from '../../packages/runtime/src/mcp/transport.ts';
 import type { Persistence } from '../../packages/runtime/src/persistence/persistence.ts';
@@ -21,7 +20,7 @@ import { canonicalJson } from '../../packages/runtime/src/records/canonical.ts';
 import { RunStore } from '../../packages/runtime/src/records/run-store.ts';
 import { createContentPolicy } from '../../packages/runtime/src/security/content-policy.ts';
 import { RunService, type RunServiceOptions } from '../../packages/runtime/src/service/runs.ts';
-import { inferenceNetwork } from './anthropic-network.ts';
+import { inferenceNetwork, offeredName, type SentInference } from './anthropic-network.ts';
 import { requireMcpFixture } from './mcp-fixture.ts';
 
 const D = 'd'.repeat(64);
@@ -31,7 +30,8 @@ const origin = { facet: 'workflows', version: '1.0.0', source: 'local:./facets/w
 export const SLOT_VALUE = 'synthetic-dispatch-slot-value-0001';
 export const SERVER = 'synthetic';
 export const declaration = { type: 'stdio', command: './synthetic', args: [], env: { REPO_MODE: 'read' } };
-export const wire = (tool: string) => externalToolName(SERVER, tool);
+/** The name the given request offered the synthetic server's tool under. */
+export const wire = (request: SentInference, tool: string) => offeredName(request, SERVER, tool);
 
 const definition = (kind: string, name: string, extra: Record<string, unknown>) => ({
   kind,
@@ -165,6 +165,8 @@ export interface HarnessOptions {
   allowAgents?: string[];
   allowSkills?: string[];
   maxDelegationsPerRun?: number;
+  /** The approved server's call deadline; 60 seconds unless given. */
+  toolTimeoutSeconds?: number;
   /** Reuse an existing private state directory (a restart of the same deployment). */
   stateDir?: string;
   store?: RunServiceOptions['store'];
@@ -185,7 +187,7 @@ export async function mcpService(options: HarnessOptions) {
     programId: SERVER,
     literalEnv: {},
     credentialEnv: { REPO_TOKEN: 'repo-token' },
-    toolTimeoutSeconds: 60,
+    toolTimeoutSeconds: options.toolTimeoutSeconds ?? 60,
     approval: {
       kind: 'approved',
       serverDigest: connectionDigest,
@@ -278,6 +280,11 @@ export async function mcpService(options: HarnessOptions) {
       calls: lines.filter((line) => line.startsWith('call ')).map((line) => line.slice('call '.length)),
     };
   };
+  /** The process IDs the server reported starting with, in order. */
+  const spawns = () =>
+    (existsSync(witnessPath) ? readFileSync(witnessPath, 'utf8').trim().split('\n') : [])
+      .filter((line) => line.startsWith('spawn '))
+      .map((line) => line.slice('spawn '.length));
   const start = (args: string, requestId = crypto.randomUUID()) =>
     service.createRun({
       kind: 'command',
@@ -289,5 +296,5 @@ export async function mcpService(options: HarnessOptions) {
         arguments: args,
       },
     });
-  return { service, net, witness, start, stateDir, logs, digests, operator };
+  return { service, net, witness, spawns, start, stateDir, logs, digests, operator };
 }

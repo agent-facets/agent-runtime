@@ -9,6 +9,7 @@ import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import { MemoryLedger } from '../../../test-support/memory-ledger.ts';
 import { persistedText } from '../../../test-support/scripted-model.ts';
+import { DOTTED, PLAIN, toolNameAgent } from '../../../test-support/tool-name-agent.ts';
 import { createFixture } from '../../../test-support/workspace.ts';
 import { CredentialCoordinator, type IssuerOutcome, REFRESH_MARGIN_MS } from '../../credentials/coordinator.ts';
 import { CredentialScreen } from '../../credentials/screening.ts';
@@ -245,6 +246,7 @@ async function harness(options: {
     modelCallSettled: wired.modelCallSettled,
     reports: wired.reports,
     ...(wired.responseRefusal === undefined ? {} : { responseRefusal: wired.responseRefusal }),
+    toolNames: wired.toolNames,
   });
   const executor = new InvocationExecutor(new KeyedSerializer());
   const run = () => executor.start({ runId, agent, input: { kind: 'initial', goal: GOAL }, budgetMax: 10 });
@@ -540,4 +542,136 @@ describe('credentials and failures', () => {
     await expect(model.invoke('hi')).rejects.toThrow();
     expect(safe.sent).toHaveLength(1);
   }, 20_000);
+});
+
+// --- Tool names: canonical inside, the SDK's function-name form on the wire, through the production binding -------
+
+function callTurn(id: string, callId: string, name: string, args: Record<string, unknown>): string {
+  const call = {
+    id: `fc_${id}`,
+    type: 'function_call',
+    call_id: callId,
+    name,
+    arguments: JSON.stringify(args),
+    status: 'completed',
+  };
+  return (
+    data('response.created', { response: response(id, 'in_progress', []) }) +
+    data('response.output_item.added', { output_index: 0, item: { ...call, arguments: '', status: 'in_progress' } }) +
+    data('response.function_call_arguments.delta', { output_index: 0, item_id: call.id, delta: call.arguments }) +
+    data('response.output_item.done', { output_index: 0, item: call }) +
+    data('response.completed', { response: response(id, 'completed', [call]) })
+  );
+}
+
+async function translated(replies: (Response | (() => Response))[]) {
+  const state = join(scratch, `state-${++runs}`);
+  mkdirSync(state, { mode: 0o700 });
+  const store = new CredentialStore(join(state, 'credentials'));
+  await store.replace({
+    version: 1,
+    provider: 'openai',
+    authMode: 'subscription',
+    slot: 'default',
+    generation: 1,
+    updatedAtMs: NOW,
+    lifecycle: 'usable',
+    accessToken: access(1),
+    refreshToken: refresh(1),
+    expiresAtMs: NOW + 3_600_000,
+    account: { accountId: account(1) },
+  });
+  const coordinator = new CredentialCoordinator({
+    store,
+    provider: 'openai',
+    slot: 'default',
+    issuer: { refresh: async () => ({ kind: 'unavailable' }) },
+  });
+  const net = network(replies);
+  const screen = new CredentialScreen();
+  const runId = `00000000-0000-4000-8000-${String(runs).padStart(12, '0')}`;
+  const admitted: string[] = [];
+  const wired = wireOpenAIInvocation({
+    binding: {
+      provider: 'openai',
+      authMode: 'subscription',
+      model: MODEL,
+      profileId: OPENAI_PROFILE_ID,
+      credentialSlot: 'default',
+    },
+    runId,
+    coordinator,
+    screen,
+    admission: {
+      async admit(_request, begin): Promise<AdmissionTicket> {
+        admitted.push(`attempt-${admitted.length + 1}`);
+        begin();
+        return {
+          attemptId: `00000000-0000-4000-8000-${String(admitted.length).padStart(12, '0')}`,
+          dispatched: async () => {},
+          completed: async () => {},
+          abandoned: async () => {},
+          unconfirmed: async () => {},
+        };
+      },
+    },
+    signal: () => new AbortController().signal,
+    track: () => {},
+    deadlineMs: 30_000,
+    transport: net.fetchImpl,
+  });
+  if ('unavailable' in wired) throw new Error(wired.unavailable);
+  const agent = toolNameAgent({
+    runId,
+    model: wired.model,
+    toolNames: wired.toolNames,
+    contentPolicy: () => createContentPolicy(screen.matcher()),
+    reports: wired.reports,
+    modelCallSettled: wired.modelCallSettled,
+    ...(wired.responseRefusal === undefined ? {} : { responseRefusal: wired.responseRefusal }),
+  });
+  const offered = (name: string) =>
+    (net.sent.at(-1)?.body.tools as { name: string; description: string }[]).find(
+      (tool) => tool.description === `repo / ${name}`,
+    )?.name as string;
+  return { ...agent, net, admitted, offered };
+}
+
+describe('canonical tool names on the OpenAI wire', () => {
+  test('an accepted canonical name is sent unchanged; another travels under an alias and returns canonical', async () => {
+    const h = await translated([
+      () => sse(callTurn('resp_1', 'call_1', h.offered(DOTTED), { repository: 'owner/a' })),
+      () => sse(callTurn('resp_2', 'call_2', PLAIN, {})),
+      () => sse(textTurn('resp_3', 'Done.')),
+    ]);
+    await h.invoke('List and count.');
+    expect(h.net.sent).toHaveLength(3);
+    expect(h.admitted).toHaveLength(3);
+    const alias = h.offered(DOTTED);
+    expect(alias).toMatch(/^mcp_Alias_\d+$/);
+    for (const sent of h.net.sent) {
+      expect((sent.body.tools as { name: string }[]).map((tool) => tool.name).sort()).toEqual([alias, PLAIN].sort());
+    }
+    expect(h.calls).toEqual([
+      { name: DOTTED, args: { repository: 'owner/a' } },
+      { name: PLAIN, args: {} },
+    ]);
+    // History is replayed from the stored response output under the same wire names, IDs and arguments.
+    const calls = (h.net.sent[2]?.body.input ?? []).filter((item) => item.type === 'function_call');
+    expect(calls.map((item) => [item.call_id, item.name, item.arguments])).toEqual([
+      ['call_1', alias, JSON.stringify({ repository: 'owner/a' })],
+      ['call_2', PLAIN, '{}'],
+    ]);
+    const outputs = (h.net.sent[2]?.body.input ?? []).filter((item) => item.type === 'function_call_output');
+    expect(outputs.map((item) => item.call_id)).toEqual(['call_1', 'call_2']);
+    expect(persistedText(h.saver)).not.toContain('mcp_Alias_');
+  });
+
+  test('a canonical name offered only under its alias fails the call; nothing runs', async () => {
+    const h = await translated([() => sse(callTurn('resp_1', 'call_1', DOTTED, {}))]);
+    const failure = await h.invoke('List.').catch((error: unknown) => error);
+    expect(executionFailureOf(failure)?.evidence).toMatchObject({ reason: 'tool_name_unrecognized' });
+    expect(h.calls).toEqual([]);
+    expect(h.net.sent).toHaveLength(1);
+  });
 });

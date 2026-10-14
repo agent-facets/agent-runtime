@@ -167,11 +167,9 @@ describe('required-tool preflight', () => {
       },
     ]);
     // The other granted tool is bound too; an advertised tool without a grant is not.
-    expect(
-      result.bound.tools.map((tool) => [tool.toolName, tool.definitionDigest, tool.adapted.name.slice(0, 8)]),
-    ).toEqual([
-      ['list_prs', digestOf(listTool), 'mcp_ext_'],
-      ['comment', digestOf(commentTool), 'mcp_ext_'],
+    expect(result.bound.tools.map((tool) => [tool.toolName, tool.definitionDigest, tool.adapted.name])).toEqual([
+      ['list_prs', digestOf(listTool), 'mcp_repo_list_prs'],
+      ['comment', digestOf(commentTool), 'mcp_repo_comment'],
     ]);
     expect(result.bound.tools[0]?.raw).toEqual(listTool);
     expect(result.bound.authority).toEqual([
@@ -246,6 +244,90 @@ describe('required-tool preflight', () => {
     optional.advertise([listTool, { ...commentTool, description: 'Changed.' }]);
     const result = await optional.run(needs('list_prs'));
     expect(result.ok && result.bound.tools.map((tool) => tool.toolName)).toEqual(['list_prs']);
+  });
+
+  test('tools of different servers with one canonical name are never bound; requiring one refuses the start', async () => {
+    // `a_b`/`c_d` and `a`/`b_c_d` are both `mcp_a_b_c_d`; `a_b`/`ping` and `a`/`zed` are unrelated.
+    const advertised: Record<string, unknown[]> = {
+      a_b: [
+        { ...commentTool, name: 'c_d' },
+        { ...commentTool, name: 'ping' },
+      ],
+      a: [
+        { ...commentTool, name: 'b_c_d' },
+        { ...commentTool, name: 'zed' },
+      ],
+    };
+    const stateDir = join(scratch, `state-${++counter}`);
+    mkdirSync(stateDir, { mode: 0o700 });
+    const programDir = join(scratch, `programs-${counter}`);
+    mkdirSync(programDir, { recursive: true });
+    const bytes = 'console.log("collide");\n';
+    const sha256 = new Bun.CryptoHasher('sha256').update(bytes).digest('hex');
+    writeFileSync(join(programDir, `${sha256}.js`), bytes);
+    const program = { bundlePath: join(programDir, `${sha256}.js`), sha256 };
+    const catalog = catalogWith([installed('a'), installed('a_b')]);
+    const servers = catalog.installation.servers.map((server) => {
+      const base: ServerAccess = {
+        serverId: server.serverId,
+        programId: server.serverId,
+        literalEnv: {},
+        credentialEnv: {},
+        toolTimeoutSeconds: 60,
+        approval: { kind: 'denied' },
+      };
+      return {
+        ...base,
+        approval: {
+          kind: 'approved' as const,
+          serverDigest: serverDigest(server, base, program),
+          tools: (advertised[server.serverId] ?? []).map((raw) => ({
+            name: (raw as { name: string }).name,
+            definitionDigest: digestOf(raw),
+            argumentEquals: {},
+          })),
+        },
+      };
+    });
+    const grants: CapabilityConfig = {
+      installation: { path: '/etc/agent-runtime/facets/installation.json', sha256: D },
+      allowSkills: [],
+      allowAgents: [],
+      maxDelegationsPerRun: 8,
+      localPrograms: { a: program, a_b: program },
+      servers,
+    };
+    const { judgeTool } = await import('../mcp/discovery.ts');
+    const preflight = createMcpPreflight({
+      stateDir,
+      bunPath: '/usr/local/bin/bun',
+      readCredential: async () => ({ kind: 'missing' }),
+      inspect: (async (input: Parameters<typeof inspectServer>[0]) => {
+        const serverId = (input.params as { cwd: string }).cwd.split('/').at(-1) as string;
+        return {
+          ok: true,
+          tools: (advertised[serverId] ?? []).map((raw) => judgeTool(raw as Record<string, unknown>, policy)),
+        };
+      }) as typeof inspectServer,
+    });
+    const run = (requires: CapabilitySnapshot['command']['requires']) =>
+      preflight({ command: { requires } as CapabilitySnapshot['command'], grants, catalog, policy });
+
+    // Only `a_b` is needed, so `a` is never inspected and nothing collides.
+    const one = await run(needs('ping', 'a_b'));
+    expect(one.ok && one.bound.tools.map((tool) => tool.adapted.name)).toEqual(['mcp_a_b_c_d', 'mcp_a_b_ping']);
+    // Both servers needed: neither colliding tool is bound (nor renamed, nor chosen by order); the rest are.
+    const both = await run([...needs('zed', 'a'), ...needs('ping', 'a_b')]);
+    if (!both.ok) throw new Error(both.reason);
+    expect(both.bound.tools.map((tool) => `${tool.serverId}/${tool.toolName}`)).toEqual(['a/zed', 'a_b/ping']);
+    expect(both.bound.authority.map((server) => server.tools.map((grant) => grant.name))).toEqual([['zed'], ['ping']]);
+    // A command that requires a colliding tool is refused, naming it.
+    expect(await run([...needs('b_c_d', 'a'), ...needs('ping', 'a_b')])).toEqual({
+      ok: false,
+      code: 'capability_unavailable',
+      reason: 'name_collision',
+      subject: 'mcp:a/b_c_d',
+    });
   });
 
   test('the server digest binds program, arguments and bindings, never credential values', () => {

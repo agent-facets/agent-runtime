@@ -259,7 +259,7 @@ describe('events and identities', () => {
     const tool = (binding: unknown, disposition: unknown = { kind: 'started' }) =>
       eventSchema.safeParse({
         kind: 'tool.operation',
-        payload: { operationId: digest, toolName: 'mcp_ext_x', disposition, binding },
+        payload: { operationId: digest, toolName: 'mcp_github_list_issues', disposition, binding },
       }).success;
     for (const binding of [
       { kind: 'native', name: 'mcp_Search' },

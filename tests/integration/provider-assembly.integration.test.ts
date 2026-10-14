@@ -226,6 +226,7 @@ async function service(options: {
     modelCallSettled: wired.modelCallSettled,
     reports: wired.reports,
     ...(wired.responseRefusal === undefined ? {} : { responseRefusal: wired.responseRefusal }),
+    toolNames: wired.toolNames,
   });
   const wire = (
     runId: string,

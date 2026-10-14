@@ -38,7 +38,17 @@ MVP 02 adds one outbound protocol: MCP over **stdio only**, to deployment-suppli
 the runtime ([08-execution-security.md](08-execution-security.md#phase-2-mcp-boundary-mvp-02)). Remote MCP (HTTP,
 SSE), MCP OAuth and server-initiated sampling, elicitation and roots are not supported, and no MCP listener is
 exposed. Servers connect only to approved configurations; each connection belongs to one invocation (or one
-inspection) and is closed afterwards, so no MCP session state outlives it.
+inspection) and is closed afterwards, so no MCP session state outlives it. A server is always called with its own
+tool name, from the server/tool pair the run retained.
+
+Model requests carry tool names in each provider's own wire form. The runtime names tools canonically (`mcp_Read`,
+`mcp_<serverId>_<toolName>`); a provider integration that cannot send a name translates it for that one model call —
+offered tools, an explicit tool choice and earlier calls in the request go out under short aliases, and the stock
+model's parsed response comes back with canonical names before anything screens, stores or dispatches it
+(`packages/runtime/src/providers/tool-names.ts`). Only structured name fields change; call IDs, arguments, results
+and text, and the bytes of the response stream, are untouched. Anthropic sends its profile's `mcp_` + capital-letter
+names; OpenAI the SDK-documented function-name form. These wire rules are local choices, not live-verified provider
+limits.
 
 The historical design follows.
 

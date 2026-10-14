@@ -21,7 +21,7 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { AIMessage, type BaseMessage, ToolMessage } from '@langchain/core/messages';
 import { isCommand, isGraphBubbleUp } from '@langchain/langgraph';
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
-import { createAgent, createMiddleware, ToolInvocationError } from 'langchain';
+import { type AgentMiddleware, createAgent, createMiddleware, ToolInvocationError } from 'langchain';
 import { actorKeyOf } from '../capabilities/records.ts';
 import type { ContentPolicy } from '../security/content-policy.ts';
 import type { ToolOutcome } from '../workspace/results.ts';
@@ -82,6 +82,11 @@ export interface ExecutionAgentOptions extends ToolContext {
   reports?: ModelCallReports;
   /** The provider's check of a parsed response; a refusal reason fails the call before anything is stored. */
   responseRefusal?: (message: AIMessage) => string | undefined;
+  /**
+   * The provider's tool-name translation, run inside the boundary: the boundary and everything it stores see only
+   * canonical names.
+   */
+  toolNames?: AgentMiddleware;
   /**
    * In a command run: the agent this graph acts for and the run's retained definitions. Absent for native goal
    * runs, whose tools, prompt and version-1 identities are unchanged.
@@ -191,7 +196,9 @@ export function boundaryMiddleware(options: {
           response = await handler({ ...request, modelSettings: { ...request.modelSettings, maxRetries: 0 } });
         } catch (error) {
           if (isGraphBubbleUp(error)) throw error;
-          if (error instanceof ExecutionFailure) throw error;
+          // Including one the provider's tool-name translation raised, which the framework wraps.
+          const typed = executionFailureOf(error);
+          if (typed !== undefined) throw typed;
           throw new ExecutionFailure('model_request_failed', modelFailureEvidence(error, options.reports?.last()));
         }
         if (isCommand(response)) throw new ExecutionFailure('invariant_violation');
@@ -516,6 +523,8 @@ export function executionAgentParams(options: ExecutionAgentOptions) {
           : {}),
         ...(options.recordMessage === undefined ? {} : { recordMessage: options.recordMessage }),
       }),
+      // Inner to the boundary: what it sanitizes, records and dispatches carries canonical names.
+      ...(options.toolNames === undefined ? [] : [options.toolNames]),
     ],
     version: 'v2' as const,
   };

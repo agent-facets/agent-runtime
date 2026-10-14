@@ -78,15 +78,29 @@ export const sse = (body: string, stall = false) =>
 
 export interface SentInference {
   headers: Record<string, string>;
-  body: { model: string; messages: { role: string; content: unknown }[] };
+  body: {
+    model: string;
+    messages: { role: string; content: unknown }[];
+    tools?: { name: string; description?: string }[];
+  };
 }
 
 /**
- * Replies in order, or by what each request contains; an unscripted request fails the way a lost connection
- * would.
+ * The name a request offered a tool under, found by the description the runtime gives it (`<server> / <tool>: …`);
+ * a provider may send a canonical name under an alias.
+ */
+export function offeredName(request: SentInference, serverId: string, toolName: string): string {
+  const found = request.body.tools?.find((tool) => tool.description?.startsWith(`${serverId} / ${toolName}:`));
+  if (found === undefined) throw new Error(`the request did not offer ${serverId} / ${toolName}`);
+  return found.name;
+}
+
+/**
+ * Replies in order, each given the request it answers, or by what each request contains; an unscripted request
+ * fails the way a lost connection would.
  */
 export function inferenceNetwork(
-  replies: (() => Response)[] | ((request: SentInference) => Response | Promise<Response>),
+  replies: ((request: SentInference) => Response)[] | ((request: SentInference) => Response | Promise<Response>),
 ) {
   const sent: SentInference[] = [];
   const fetchImpl = (async (_url: string, init: RequestInit) => {
@@ -95,7 +109,7 @@ export function inferenceNetwork(
     if (typeof replies === 'function') return replies(request);
     const reply = replies.shift();
     if (reply === undefined) throw new Error('unscripted inference request');
-    return reply();
+    return reply(request);
   }) as unknown as typeof fetch;
   return { sent, replies, fetchImpl };
 }

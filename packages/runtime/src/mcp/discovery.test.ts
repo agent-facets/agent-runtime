@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import { mcpCanonicalToolName, TOOL_CALL_NAME_MAX } from '@agent-runtime/contracts';
 import { exactSecretMatcher } from '../credentials/matcher.ts';
 import { digestOf } from '../records/canonical.ts';
 import { createContentPolicy } from '../security/content-policy.ts';
-import { adaptDefinitions, externalToolName } from './adapt.ts';
+import { adaptDefinitions } from './adapt.ts';
 import { deadline } from './deadline.ts';
 import { DISCOVERY_LIMITS, discoverTools, type ListPage } from './discovery.ts';
 
@@ -133,18 +134,38 @@ describe('bounded discovery', () => {
 });
 
 describe('model-facing adaptation', () => {
-  test('keeps only definition fields, with stable credential-safe names, and leaves raw definitions unchanged', async () => {
-    const raw = [tool('list_prs'), { name: 'ping', description: 'Pings.', inputSchema: { type: 'object' } }];
+  test('keeps only definition fields, with canonical names spelled exactly, and leaves raw definitions unchanged', async () => {
+    const raw = [
+      tool('list_prs'),
+      { name: 'Get.Item-v2', description: 'Gets.', inputSchema: { type: 'object' } },
+      { name: 'ping', description: 'Pings.', inputSchema: { type: 'object' } },
+    ];
     const before = structuredClone(raw);
     const adapted = await adaptDefinitions('repo-tools', raw);
     if (!adapted.ok) throw new Error(adapted.reason);
     expect(raw).toEqual(before);
     const listPrs = adapted.tools.get('list_prs');
-    expect(listPrs?.name).toBe(externalToolName('repo-tools', 'list_prs'));
-    expect(listPrs?.name).toMatch(/^mcp_ext_[0-9a-f]{48}$/);
+    expect(listPrs?.name).toBe('mcp_repo-tools_list_prs');
+    // No hashing, case folding, punctuation replacement or truncation.
+    expect(adapted.tools.get('Get.Item-v2')?.name).toBe('mcp_repo-tools_Get.Item-v2');
     expect(listPrs?.description).toBe('repo-tools / list_prs: Does list_prs.');
     expect(listPrs?.schema).toMatchObject({ type: 'object', properties: { repository: { type: 'string' } } });
     expect(JSON.parse(JSON.stringify([...adapted.tools.values()]))).toEqual([...adapted.tools.values()]);
-    expect(externalToolName('repo-tools', 'list_prs')).not.toBe(externalToolName('other', 'list_prs'));
+  });
+
+  test('canonical names reach 197 characters and can never be a built-in tool name', () => {
+    expect(mcpCanonicalToolName('s'.repeat(64), 'T'.repeat(128))).toHaveLength(TOOL_CALL_NAME_MAX);
+    const canonical = /^mcp_[a-z0-9]/;
+    for (const builtIn of [
+      'mcp_Read',
+      'mcp_Search',
+      'mcp_AskUser',
+      'mcp_LoadSkill',
+      'mcp_ReadSkillReference',
+      'mcp_Delegate',
+    ]) {
+      expect(builtIn).not.toMatch(canonical);
+    }
+    expect(mcpCanonicalToolName('a', 'b')).toMatch(canonical);
   });
 });

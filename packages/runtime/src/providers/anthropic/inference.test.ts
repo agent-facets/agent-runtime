@@ -9,6 +9,7 @@ import { CLAUDE_CLI_2_1_280 } from '@agent-runtime/anthropic-subscription';
 import { MemorySaver } from '@langchain/langgraph';
 import { MemoryLedger } from '../../../test-support/memory-ledger.ts';
 import { persistedText } from '../../../test-support/scripted-model.ts';
+import { DOTTED, PLAIN, toolNameAgent } from '../../../test-support/tool-name-agent.ts';
 import { createFixture } from '../../../test-support/workspace.ts';
 import { CredentialCoordinator } from '../../credentials/coordinator.ts';
 import type { CredentialRecord } from '../../credentials/record.ts';
@@ -23,6 +24,7 @@ import { ASK_TOOL, READ_TOOL } from '../../execution/tools.ts';
 import { KeyedSerializer } from '../../persistence/keyed-serializer.ts';
 import { operationIdFor } from '../../records/schemas.ts';
 import { createContentPolicy, REDACTION } from '../../security/content-policy.ts';
+import { wireAnthropicInvocation } from './binding.ts';
 import { anthropicIssuer, createAnthropicAuthTransport } from './credentials.ts';
 import {
   ANTHROPIC_INFERENCE_POLICY,
@@ -547,5 +549,147 @@ describe('offline G4: cancellation', () => {
     expect(h.net.sent).toHaveLength(1);
     expect(h.admitted).toHaveLength(1);
     expect((await h.messages()).map((message) => message.content)).toEqual([GOAL]);
+  });
+});
+
+// --- Tool names: canonical inside, the profile's names on the wire, through the production binding ----------------
+
+async function translated(replies: Reply[], auth: Response[] = []) {
+  const state = join(scratch, `state-${++runs}`);
+  mkdirSync(state, { mode: 0o700 });
+  const store = new CredentialStore(join(state, 'credentials'));
+  await store.replace({
+    version: 1,
+    provider: 'anthropic',
+    authMode: 'subscription',
+    slot: 'default',
+    generation: 1,
+    updatedAtMs: NOW,
+    lifecycle: 'usable',
+    accessToken: access(1),
+    refreshToken: refresh(1),
+    expiresAtMs: NOW + 3_600_000,
+    account: {},
+  });
+  const coordinator = new CredentialCoordinator({
+    store,
+    provider: 'anthropic',
+    slot: 'default',
+    issuer: anthropicIssuer({ transport: createAnthropicAuthTransport(authNetwork(auth).fetchImpl) }),
+  });
+  const net = network(replies);
+  const screen = new CredentialScreen();
+  const admitted: string[] = [];
+  const wired = wireAnthropicInvocation({
+    binding: {
+      provider: 'anthropic',
+      authMode: 'subscription',
+      model: 'claude-opus-5',
+      profileId: profile.id,
+      credentialSlot: 'default',
+    },
+    coordinator,
+    screen,
+    admission: {
+      async admit(_request, begin): Promise<AdmissionTicket> {
+        admitted.push(`attempt-${admitted.length + 1}`);
+        begin();
+        return {
+          attemptId: `00000000-0000-4000-8000-${String(admitted.length).padStart(12, '0')}`,
+          dispatched: async () => {},
+          completed: async () => {},
+          abandoned: async () => {},
+          unconfirmed: async () => {},
+        };
+      },
+    },
+    signal: () => new AbortController().signal,
+    track: () => {},
+    deadlineMs: 30_000,
+    transport: net.fetchImpl,
+  });
+  if ('unavailable' in wired) throw new Error(wired.unavailable);
+  const agent = toolNameAgent({
+    runId: `00000000-0000-4000-8000-${String(runs).padStart(12, '0')}`,
+    model: wired.model,
+    toolNames: wired.toolNames,
+    contentPolicy: () => createContentPolicy(screen.matcher()),
+    reports: wired.reports,
+    modelCallSettled: wired.modelCallSettled,
+  });
+  /** The name the last request offered for a tool, found by its description. */
+  const offered = (name: string) =>
+    (net.sent.at(-1)?.body.tools as { name: string; description: string }[]).find(
+      (tool) => tool.description === `repo / ${name}`,
+    )?.name as string;
+  return { ...agent, net, admitted, offered };
+}
+
+describe('offline G4: canonical tool names on the Anthropic wire', () => {
+  test('names outside the profile travel under aliases and return canonical, over one-byte chunks', async () => {
+    const h = await translated([
+      () => sse(toolEvents('msg_01', 'toolu_01', h.offered(DOTTED), { repository: 'owner/a' })),
+      () => sse(textEvents('msg_02', 'Listed.')),
+    ]);
+    await h.invoke('List the items.');
+    expect(h.net.sent).toHaveLength(2);
+    expect(h.admitted).toHaveLength(2);
+    for (const sent of h.net.sent) {
+      const names = (sent.body.tools as { name: string }[]).map((tool) => tool.name);
+      // Both canonical names are outside the profile's convention; the request profile accepted every sent name.
+      expect(names).toHaveLength(2);
+      for (const name of names) expect(name).toMatch(profile.toolName);
+      expect(names).not.toContain(DOTTED);
+      expect(names).not.toContain(PLAIN);
+    }
+    // The tool ran under its canonical name with the model's arguments.
+    expect(h.calls).toEqual([{ name: DOTTED, args: { repository: 'owner/a' } }]);
+    expect(h.ledger.log).toEqual([`start:${DOTTED}`, `complete:${DOTTED}:ok`]);
+    // The second request replays the call under the same alias, with its ID and input unchanged.
+    const alias = h.offered(DOTTED);
+    expect(h.net.sent[1]?.body.messages[1]).toEqual({
+      role: 'assistant',
+      content: [{ type: 'tool_use', id: 'toolu_01', name: alias, input: { repository: 'owner/a' } }],
+    });
+    const result = (h.net.sent[1]?.body.messages[2]?.content as { tool_use_id: string }[])[0];
+    expect(result?.tool_use_id).toBe('toolu_01');
+    // Saved state holds canonical names only.
+    const stored = await h.messages();
+    expect((stored[1] as { tool_calls?: { name: string }[] }).tool_calls?.[0]?.name).toBe(DOTTED);
+    expect(persistedText(h.saver)).not.toContain('mcp_Alias_');
+  });
+
+  test('a renewal retry re-sends the same wire names', async () => {
+    const granted = new Response(
+      JSON.stringify({ access_token: access(2), refresh_token: refresh(2), expires_in: 3600 }),
+    );
+    const h = await translated(
+      [
+        apiError(401, 'authentication_error'),
+        () => sse(toolEvents('msg_01', 'toolu_01', h.offered(PLAIN), {})),
+        () => sse(textEvents('msg_02', 'Counted.')),
+      ],
+      [granted],
+    );
+    await h.invoke('Count.');
+    expect(h.net.sent).toHaveLength(3);
+    expect(h.net.sent[1]?.body.tools).toEqual(h.net.sent[0]?.body.tools);
+    expect(h.calls).toEqual([{ name: PLAIN, args: {} }]);
+  });
+
+  test('an unknown alias is refused as unavailable; a canonical name never offered on the wire fails the call', async () => {
+    const unknown = await translated([
+      () => sse(toolEvents('msg_01', 'toolu_01', 'mcp_Alias_99', {})),
+      () => sse(textEvents('msg_02', 'Stopped.')),
+    ]);
+    await unknown.invoke('Go.');
+    expect(unknown.calls).toEqual([]);
+    expect(unknown.ledger.log).toEqual(['start:mcp_Alias_99', 'complete:mcp_Alias_99:refused:tool_unavailable']);
+
+    const offered = await translated([() => sse(toolEvents('msg_01', 'toolu_01', PLAIN, {}))]);
+    const failure = await offered.invoke('Go.').catch((error: unknown) => error);
+    expect(executionFailureOf(failure)?.evidence).toMatchObject({ reason: 'tool_name_unrecognized' });
+    expect(offered.calls).toEqual([]);
+    expect(offered.net.sent).toHaveLength(1);
   });
 });

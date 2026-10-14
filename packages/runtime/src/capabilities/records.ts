@@ -9,6 +9,7 @@ import {
   commandIdSchema,
   digestSchema,
   effectiveNameSchema,
+  mcpCanonicalToolName,
   mcpToolNameSchema,
   nativeToolSchema,
   providerSchema,
@@ -19,6 +20,7 @@ import {
   serverIdSchema,
   skillIdSchema,
   TASK_TEXT_MAX_BYTES,
+  TOOL_CALL_NAME_MAX,
 } from '@agent-runtime/contracts';
 import { z } from 'zod';
 import { canonicalJson, sha256Hex } from '../records/canonical.ts';
@@ -178,6 +180,13 @@ export function schemaShape(schema: unknown, depth = 1): { depth: number; proper
   return { depth: deepest, properties };
 }
 
+/**
+ * The model-facing name earlier builds derived for a server's tool. Snapshots retained under it stay readable with
+ * their recorded bytes; new snapshots use the canonical name only.
+ */
+export const legacyMcpToolName = (serverId: string, toolName: string) =>
+  `mcp_ext_${sha256Hex(`${serverId}\n${toolName}`).slice(0, 48)}`;
+
 export const mcpToolDefinitionSchema = z
   .strictObject({
     serverId: serverIdSchema,
@@ -186,11 +195,17 @@ export const mcpToolDefinitionSchema = z
     raw: jsonObject,
     definitionDigest: digestSchema,
     adapted: z.strictObject({
-      name: z.string().regex(/^mcp_ext_[0-9a-f]{48}$/),
+      name: z.string().max(TOOL_CALL_NAME_MAX),
       description: plainText(CAPABILITY_LIMITS.toolDefinitionBytes),
       schema: jsonObject,
     }),
   })
+  .refine(
+    (tool) =>
+      tool.adapted.name === mcpCanonicalToolName(tool.serverId, tool.toolName) ||
+      tool.adapted.name === legacyMcpToolName(tool.serverId, tool.toolName),
+    'model-facing name does not match the server and tool',
+  )
   .refine((tool) => tool.raw.name === tool.toolName, 'raw definition name does not match')
   .refine((tool) => byteLength(tool.raw) <= CAPABILITY_LIMITS.toolDefinitionBytes, 'tool definition too large')
   .refine((tool) => {

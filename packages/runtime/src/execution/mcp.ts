@@ -1,6 +1,7 @@
 // Approved MCP tools in a command run (design Decisions 4, 5, 6 and 8). Each retained tool an actor may use is offered
-// under its stable `mcp_ext_` name, with its retained adapted description and schema; the adapter's own invocation
-// helpers are never used. A call is first resolved by the operation ledger (an exact completed call is answered from
+// under its retained canonical name (`mcp_<serverId>_<toolName>`), with its retained adapted description and schema;
+// the adapter's own invocation helpers are never used. Each tool closes over its retained server/tool pair, which is
+// what is authorized and sent: the name is never split back into its parts. A call is first resolved by the operation ledger (an exact completed call is answered from
 // its record without any of the following). A new call must then be permitted now — the run's captured ceiling
 // intersected with the owner's current grants and the command's and agent's restrictions — on the connection the run
 // retained, with the original arguments valid against the approved raw schema and free of credentials. The server's
@@ -33,7 +34,8 @@ import {
   recordableOutcome,
 } from './operations.ts';
 
-export const MCP_PROTOCOL_VERSION = 1;
+/** Version 2: canonical tool names, carried by each provider's wire-name translation. */
+export const MCP_PROTOCOL_VERSION = 2;
 
 /** What an actor's MCP tools need beyond the retained definitions. */
 export interface McpPort {

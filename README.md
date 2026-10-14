@@ -438,6 +438,25 @@ runtime's environment, including provider credentials, is passed on. Standard er
   lost connection or a reply over 1 MiB), the outcome is uncertain, and the process is closed and awaited.
 - Grants restrict what the runtime **sends**. A server is trusted, unsandboxed code running as the runtime user,
   with that user's access to other writable runtime locations; its data directory is a location, not a sandbox.
+- In a command run, each granted tool is offered to the model as `mcp_<serverId>_<toolName>`, spelled exactly as
+  declared (at most 197 characters); the run's history and saved state use that name, and the server receives its
+  own tool name. Two servers' tools with the same such name are both left unbound (a command requiring one is
+  refused); a tool is always dispatched by its recorded server and tool, never by splitting its name.
+- A new call is checked in order: an exact completed call is answered from its record (even after a grant was
+  revoked, and without contacting the server); otherwise the run's original authority narrowed by the owner's current
+  grants and the command's and agent's restrictions, the approved raw schema and argument restrictions, credential
+  screening, and the server still advertising the approved definition. Matching calls need no confirmation; a
+  workflow's own questions are separate. Only then is the dispatch **intent** recorded and the one request sent,
+  inside the run's dispatch gate, so an accepted cancellation can never fall between them; waiting for the reply
+  happens outside it. The outcome is recorded before the model sees it.
+- One run invocation starts each approved server lazily, shares it between the root agent and its delegates, makes
+  one call at a time on it and closes it when the invocation ends — at a question, at the end or on failure. Nothing
+  reconnects or retries; server data in its directory survives, MCP session state does not.
+- **An uncertain outcome ends the run** as `tool_failure` / `mcp_outcome_unknown` (unless cancellation already
+  decided it), with no further model turn: the runtime does not know whether the external action happened, so it
+  neither retries nor lets the agent try to recover. Whether and how to check or repair the external system is the
+  owner's decision. The same applies to an intent left without an outcome by a crash, which startup records as
+  uncertain.
 
 ## Agent execution
 
@@ -604,16 +623,29 @@ The API (`/api/v1`, JSON only):
 Anthropic uses the stock LangChain chat model for its API (`ChatAnthropic`) with its SDK `fetch` set to the guarded
 terminal. The runtime owns credentials (storage, locking,
 refresh, screening), admission and the one renewal retry; provider code only adapts requests, classifies failures
-and checks that a response ended completely. Responses are never rewritten. Each model is built per run from the
+and checks that a response ended completely. Response bytes are never rewritten; the only change to a parsed
+response is the tool-name translation below. Each model is built per run from the
 run's stored model and profile, with an inert sentinel API key (so no ambient key is ever looked up), an explicit
 endpoint (so neither the environment nor a gateway can redirect it) and retries off.
+
+**Tool names.** The runtime's tool names are canonical (`mcp_Read`, `mcp_<serverId>_<toolName>`, …) everywhere it
+records them. A provider whose wire contract cannot carry a name translates it for one model call only: names it
+accepts stay unchanged, others are sent as short aliases (`mcp_Alias_<n>`) that no other name in that call uses, and
+the parsed response's tool names are restored before the response is screened, stored or acted on. Only structured
+name fields change — offered tools, a tool choice and earlier calls replayed in the request — never call IDs,
+arguments, results or text. A renewal retry re-sends the same names; root, delegate and concurrent calls never share
+a mapping. A response naming a tool under a name that call did not offer is refused (an unknown name as an
+unavailable tool; a canonical name the call only offered under its alias fails the call). Anthropic accepts its
+profile's `mcp_` + capital-letter convention; OpenAI accepts the SDK's documented function-name form (letters,
+digits, `_` and `-`, at most 64 characters). Neither rule has been checked against the live services.
 
 **Anthropic** (profile `claude-cli-2.1.280`). Authorization and the request profile come from
 [`packages/anthropic-subscription`](packages/anthropic-subscription/README.md), a minimal, project-maintained
 derivative of `@ex-machina/opencode-anthropic-auth` 2.0.0-next.5. It is updated only by manual review
 ([provenance and intentional differences](packages/anthropic-subscription/PROVENANCE.md)); it follows no npm tag
 and recovers from no version rejection by itself. Requests carry the reference client's headers, betas, identity
-and billing blocks, with the runtime's native tool names unchanged; a conversation must open with the user's text,
+and billing blocks, with tool names in the profile's convention (others travel under aliases, as above); a
+conversation must open with the user's text,
 because the billing block derives from it. A client-version rejection fails the run as an unsupported
 model/profile; updating the profile is a reviewed package change with a new profile ID.
 

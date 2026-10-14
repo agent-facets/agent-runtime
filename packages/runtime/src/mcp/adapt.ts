@@ -3,11 +3,14 @@
 // definitions already discovered, bounded and screened: it makes no request, and its call and resource methods
 // refuse. Only the definition fields are kept; the adapter's generated invocation functions are discarded, so the
 // runtime's own tools make every call. The raw definition stays the approval and validation input.
+import { mcpCanonicalToolName } from '@agent-runtime/contracts';
 import { loadMcpTools } from '@langchain/mcp-adapters';
-import { sha256Hex } from '../records/canonical.ts';
 
 export interface AdaptedTool {
-  /** `mcp_ext_` and 48 hex digits of the server/tool identity: stable, credential-safe and collision-checked. */
+  /**
+   * The canonical `mcp_<serverId>_<toolName>`. Unique within a server; across servers, collisions are refused by the
+   * caller. A provider that cannot carry it translates it on the wire, never here.
+   */
   name: string;
   description: string;
   schema: Record<string, unknown>;
@@ -16,11 +19,6 @@ export interface AdaptedTool {
 export type Adaptation =
   | { ok: true; tools: Map<string, AdaptedTool> }
   | { ok: false; reason: 'adaptation_failed' | 'name_collision' };
-
-/** The wire name of a server's tool. */
-export function externalToolName(serverId: string, toolName: string): string {
-  return `mcp_ext_${sha256Hex(`${serverId}\n${toolName}`).slice(0, 48)}`;
-}
 
 const DESCRIPTION_MAX_BYTES = 32 * 1024;
 
@@ -61,7 +59,7 @@ export async function adaptDefinitions(
     const toolName = definition.name as string;
     const adapted = loaded.find((tool) => tool.name === toolName);
     if (adapted === undefined) return { ok: false, reason: 'adaptation_failed' };
-    const name = externalToolName(serverId, toolName);
+    const name = mcpCanonicalToolName(serverId, toolName);
     if (names.has(name)) return { ok: false, reason: 'name_collision' };
     names.add(name);
     const description = typeof definition.description === 'string' ? definition.description : '';

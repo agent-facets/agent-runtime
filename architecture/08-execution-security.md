@@ -104,6 +104,20 @@ external tools. The trust tiers and broker below remain historical intent; there
   15-second deadline, page/tool limits and a closed input-schema language validated before the SDK's AJV compiles
   anything. A call is one request with an absolute deadline; results are screened whole, clipped to 64 KiB, and an
   unknown completion is recorded as uncertain rather than retried.
+- **Dispatch order.** An exact completed call is answered from its record before anything else, so revocation never
+  re-runs or blocks a recorded result. A new call then needs current authority, the approved raw schema and argument
+  restrictions, credential-free arguments and the server still advertising the approved definition; the dispatch
+  intent is recorded and the single request handed to the transport inside the run's dispatch gate, which accepted
+  cancellation also takes, and nothing is sent once cancellation is accepted. Tools are dispatched by their retained
+  server/tool pair; the canonical model-facing name (`mcp_<serverId>_<toolName>`) is never parsed, and different
+  servers' tools sharing one such name are not bound at all.
+- **Unknown effects stop the run.** An uncertain outcome (deadline, lost connection, oversized reply, an intent left
+  by a crash) fails the run as `tool_failure` / `mcp_outcome_unknown`, unless cancellation already decided it, with
+  no further model turn, so neither the runtime nor the agent retries or "repairs" an action that may have happened.
+  Any recovery in the external system is the owner's decision.
+- **Connections.** Each invocation starts an approved server only when a call needs it, shares it between the root
+  and its delegates, calls it one request at a time and closes it at the invocation's end (a question, the end or a
+  failure); it never reconnects or restarts it.
 - **Secrets.** MCP credentials are stdin-provisioned private slots, written only while the runtime is stopped
   (under its singleton database ownership) and screened like provider credentials for the process's life. An
   unusable configured slot makes owner-input screening fail closed.

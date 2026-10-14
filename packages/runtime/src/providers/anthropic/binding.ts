@@ -1,6 +1,6 @@
 // One invocation of a run bound to Anthropic subscription access: the stock model, its guarded terminal (with the
 // run's durable admission and tracked work), the profile's preparation/completion/failure hooks, the one renewal
-// retry, and the screening scope and failure reports the model boundary consumes. This is the Anthropic adapter's
+// retry, and the screening scope, failure reports and tool-name translation the model boundary consumes. This is the Anthropic adapter's
 // execution root: its closure is part of the execution definition of runs bound to Anthropic.
 import { profileFor } from '@agent-runtime/anthropic-subscription';
 import type { CredentialCoordinator } from '../../credentials/coordinator.ts';
@@ -9,6 +9,7 @@ import { ModelCallReports } from '../../execution/failures.ts';
 import { createTerminal, type RequestAdmission } from '../../execution/terminal.ts';
 import type { ProviderBinding } from '../../records/schemas.ts';
 import type { WiredModel } from '../model.ts';
+import { toolNameTranslation } from '../tool-names.ts';
 import {
   ANTHROPIC_INFERENCE_POLICY,
   anthropicCredentials,
@@ -71,5 +72,7 @@ export function wireAnthropicInvocation(
     model: createAnthropicModel({ model: options.binding.model, terminal }),
     modelCallSettled: () => scope.release(),
     reports,
+    // The profile's request preparation refuses any other tool name, so names outside it travel under aliases.
+    toolNames: toolNameTranslation((name) => profile.toolName.test(name)),
   };
 }

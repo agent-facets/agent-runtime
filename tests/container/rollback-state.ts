@@ -113,6 +113,7 @@ async function seed() {
         contentPolicy: assembly.contentPolicy,
         operations: runOperationLedger({ store, gates, runId: inspectionRunId, invocationId: crypto.randomUUID() }),
         ...(wired.responseRefusal === undefined ? {} : { responseRefusal: wired.responseRefusal }),
+        toolNames: wired.toolNames,
       };
       const definition = await executionDefinition({
         code,

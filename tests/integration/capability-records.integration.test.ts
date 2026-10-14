@@ -196,6 +196,27 @@ describe('actor-scoped operations', () => {
     ).toMatch(REFUSED);
   });
 
+  test('canonical MCP tool names of up to 197 characters are recorded in operations and history (migration 5)', async () => {
+    const run = await commandRun();
+    const longest = `mcp_${'s'.repeat(64)}_${'T'.repeat(128)}`;
+    expect(longest).toHaveLength(197);
+    const record = (callId: string, toolName: string, eventName = toolName) =>
+      commits(async (tx) => {
+        const operationId = await insertOperation(tx, run.runId, { actorKey: 'root', callId, toolName });
+        await appendEvent(
+          tx,
+          run.runId,
+          'tool.operation',
+          { operationId, toolName: eventName, disposition: { kind: 'started' }, actor: { kind: 'root' } },
+          `tool:${operationId}:started`,
+        );
+      });
+    expect(await record('call-197', longest)).toBe('committed');
+    expect(await record('call-198', `${longest}x`, longest)).toMatch(REFUSED);
+    expect(await record('call-198-event', longest, `${longest}x`)).toMatch(REFUSED);
+    expect(await record('call-empty', '')).toMatch(REFUSED);
+  });
+
   test('tool bindings are strict and immutable', async () => {
     const run = await commandRun();
     for (const binding of [

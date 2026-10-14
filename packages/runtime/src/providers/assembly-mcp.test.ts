@@ -75,7 +75,7 @@ describe('configured MCP credential screening', () => {
       kind: 'tool_call',
       index: 0,
       id: 'call-1',
-      name: 'mcp_ext_x',
+      name: 'mcp_repo_list',
       argumentsDelta: `{"token":"${SECRET}"}`,
     });
     assembler.push({ kind: 'terminal' });
