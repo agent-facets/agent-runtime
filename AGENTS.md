@@ -31,6 +31,12 @@ test("hello world", () => {
 });
 ```
 
+What to test, and where:
+
+- Test logic, APIs and systems: unit tests for logic, service and API tests for behavior, process-level tests for persistence and integrations.
+- Test UI as component and data-pattern unit tests. Real-browser tests are smoke checks only: a handful proving the built console works end to end, never the place to test behavior.
+- Keep tests fast. A slow test with little value is made fast (inject the slow dependency, shrink its bound) or removed; do not raise timeouts to tolerate it.
+
 ## Frontend
 
 Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, CSS, Tailwind.

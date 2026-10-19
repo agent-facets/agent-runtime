@@ -6,6 +6,7 @@ import {
   type StartupStage,
 } from '../../packages/runtime/src/persistence/persistence.ts';
 import { RUNTIME_MIGRATIONS } from '../../packages/runtime/src/persistence/runtime-migrations.ts';
+import { insertOperation, seedCommandRun, startDelegate } from '../support/capabilities.ts';
 import { acceptAnswer, pauseOnQuestion, seedWorkingRun } from '../support/run-records.ts';
 import { createScratchDatabase, type ScratchDatabase } from '../support/scratch-database.ts';
 
@@ -258,6 +259,60 @@ describe('capability records (migration 4)', () => {
     await (await open(db)).close();
     const before = await schemaSnapshot(db);
     const refused = openPersistence({ url: db.url, onFault: () => {}, migrations: RUNTIME_MIGRATIONS.slice(0, 3) });
+    expect(await codeOf(refused)).toBe('schema_incompatible');
+    expect(await schemaSnapshot(db)).toEqual(before);
+  });
+});
+
+describe('canonical tool names (migration 5)', () => {
+  const TABLES = [
+    'runs',
+    'events',
+    'invocations',
+    'tool_operations',
+    'questions',
+    'model_attempts',
+    'execution_definitions',
+    'capability_snapshots',
+    'run_capabilities',
+    'run_actors',
+    'loaded_skills',
+  ];
+  /** Every recorded row of every application table, as JSON text, in a stable order. */
+  async function everyRecord(db: ScratchDatabase) {
+    const records: Record<string, string[]> = {};
+    for (const table of TABLES) {
+      const rows = await db.admin.unsafe(`select row_to_json(t)::text as row from runtime.${table} t order by 1`);
+      records[table] = rows.map((row: { row: string }) => row.row);
+    }
+    return records;
+  }
+
+  test('an upgraded database keeps every recorded byte, including command runs and delegates', async () => {
+    const db = await earlierDatabase(4);
+    await db.admin.begin(async (tx) => {
+      await pauseOnQuestion(tx, await seedWorkingRun(tx), 'call-waiting');
+      const command = await seedCommandRun(tx);
+      const delegationId = await startDelegate(tx, command, 'call-delegate');
+      await insertOperation(tx, command.runId, {
+        actorKey: delegationId,
+        callId: 'call-longest',
+        toolName: 'x'.repeat(128),
+      });
+    });
+    const before = await everyRecord(db);
+    expect(before.run_capabilities).toHaveLength(1);
+    expect(before.run_actors).toHaveLength(3);
+
+    await open(db);
+    expect(await everyRecord(db)).toEqual(before);
+  });
+
+  test('a build that knows only version 4 refuses an upgraded database before changing either schema', async () => {
+    const db = await scratch();
+    await (await open(db)).close();
+    const before = await schemaSnapshot(db);
+    const refused = openPersistence({ url: db.url, onFault: () => {}, migrations: RUNTIME_MIGRATIONS.slice(0, 4) });
     expect(await codeOf(refused)).toBe('schema_incompatible');
     expect(await schemaSnapshot(db)).toEqual(before);
   });

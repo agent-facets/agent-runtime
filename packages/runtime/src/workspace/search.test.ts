@@ -112,12 +112,15 @@ describe('literal search', () => {
   });
 
   test('stops at the examined-file bound', async () => {
+    // The bound is the policy's; a small one exercises the same path without creating thousands of files.
+    const bounded = { ...policy, limits: { ...policy.limits, searchFiles: 20 } };
     const dir = join(fixture.root, 'files');
     mkdirSync(dir);
-    for (let index = 0; index < 2_001; index++) writeFileSync(join(dir, `f${String(index).padStart(4, '0')}`), 'x');
-    const result = await search({ query: 'nothing-here', path: 'files' });
-    expect(result).toMatchObject({ examinedFiles: 2_000, complete: false, limitedBy: 'file_limit', matches: [] });
-  }, 30_000);
+    for (let index = 0; index < 21; index++) writeFileSync(join(dir, `f${String(index).padStart(2, '0')}`), 'x');
+    const result = await search({ query: 'nothing-here', path: 'files' }, bounded);
+    expect(result).toMatchObject({ examinedFiles: 20, complete: false, limitedBy: 'file_limit', matches: [] });
+    expect(await search({ query: 'nothing-here', path: 'files' })).toMatchObject({ examinedFiles: 21, complete: true });
+  });
 
   test('stops before a file that would exceed the scanned-byte bound', async () => {
     const dir = join(fixture.root, 'bytes');

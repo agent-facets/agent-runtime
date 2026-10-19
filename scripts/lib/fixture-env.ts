@@ -59,9 +59,15 @@ export interface CommandResult {
 
 export async function runCommand(
   cmd: string[],
-  options: { env: Record<string, string>; cwd: string; allowFailure?: boolean },
+  options: { env: Record<string, string>; cwd: string; allowFailure?: boolean; stdin?: string },
 ): Promise<CommandResult> {
-  const proc = Bun.spawn(cmd, { cwd: options.cwd, env: options.env, stdout: 'pipe', stderr: 'pipe' });
+  const proc = Bun.spawn(cmd, {
+    cwd: options.cwd,
+    env: options.env,
+    stdin: options.stdin === undefined ? 'ignore' : new TextEncoder().encode(options.stdin),
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),

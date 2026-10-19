@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseOperatorConfig } from './config/operator.ts';
 import { CredentialStore } from './credentials/store.ts';
+import { PersistenceError } from './persistence/errors.ts';
 import { startRuntime, statusForStartupFailure } from './runtime.ts';
 
 // The console's bundling is covered by console.test.ts; these tests start the runtime many times.
@@ -122,6 +123,10 @@ describe('runtime lifecycle', () => {
         configFile: undefined,
       },
       log: (line) => lines.push(line),
+      // As Bun SQL reports a refused connection once its connection timeout has passed, with the URL in its message.
+      openPersistence: async ({ url }) => {
+        throw new PersistenceError('database_unavailable', `cannot connect to ${url}`);
+      },
     });
     await runtime.started;
     expect(runtime.status()).toBe('unavailable');
@@ -130,6 +135,5 @@ describe('runtime lifecycle', () => {
     expect(lines).toEqual([
       JSON.stringify({ event: 'persistence_startup_failed', reason: 'database_unavailable', operation: 'startup' }),
     ]);
-    // Bun SQL retries a refused connection until its five-second connection timeout.
-  }, 15_000);
+  });
 });

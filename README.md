@@ -1,21 +1,12 @@
 # agent-runtime
 
-A personal agent runtime: start a repository task from a browser, leave, return, answer the agent's
-questions, and collect the result using an existing Anthropic or ChatGPT subscription. (OpenAI support was
-rebuilt on the stock library; its live trial was accepted with documented exceptions; see [Providers](#providers).)
+A personal agent runtime: start a repository task from a browser — a free-form goal or an installed facet command —
+leave, return, answer the agent's questions, and collect the result using an existing Anthropic or ChatGPT
+subscription. Command runs can load skills on demand, delegate bounded tasks to named agents and call MCP tools the
+owner has granted; everything else stays read-only.
 
-> **Status: the Anthropic browser slice works against a real Claude subscription,** locally and in the shipped
-> Docker deployment over Tailscale Serve (see [G4 live](architecture/integration-evidence/mvp-01/g4-anthropic-live.md)
-> and [G4 Docker/tailnet](architecture/integration-evidence/mvp-01/g4-anthropic-docker-tailnet.md)). The
-> [browser console](#browser-console-and-api), its REST/SSE API, controlled agent execution (see
-> [Agent execution](#agent-execution)), PostgreSQL persistence, the confined read/search tools, credential storage
-> and the Anthropic [provider](#providers) exist: subscription login (from the console or a terminal), renewal and
-> inference, verified against scripted provider networks, including real-browser journeys, and live. The earlier
-> OpenAI integration failed its live journey and was removed; OpenAI is now **restored** with the earlier device
-> login and stock `ChatOpenAI` inference, and its live trial in the Docker deployment was accepted by the owner
-> with documented exceptions ([G5 recovery](architecture/integration-evidence/mvp-01/g5-openai-recovery.md)). The
-> final acceptance of the phase is still to come; that work is tracked in
-> [`openspec/changes/mvp-01-interactive-agent-execution`](openspec/changes/mvp-01-interactive-agent-execution/tasks.md).
+Recorded live and deployment checks are in [`architecture/integration-evidence/`](architecture/integration-evidence/);
+see [Providers](#providers) and [Limitations](#limitations) for what they do and do not establish.
 
 Further reading:
 
@@ -33,10 +24,11 @@ A Bun-workspace monorepo orchestrated by [Turborepo](https://turborepo.com), dep
 | `packages/contracts` | Browser-safe API schemas, the public run-state and event unions, command envelopes and answer validation, shared by the runtime and the console. Pure validation (`zod` only). |
 | `packages/ui` | The React browser console: API client, replaying event store, run views and question/cancellation controls. Its public entry is the HTML page the runtime bundles. |
 | `packages/facet-adapter` | Install-time tooling for the runtime's own facet installation: the `agent-runtime` adapter for the `facet` CLI and the sealer that turns a completed installation into the bundle the runtime verifies. Never imported by the runtime or shipped in its image. See [Runtime facets](#runtime-facets). |
-| `packages/mcp-programs` | Builds explicitly selected MCP server programs into self-contained, content-addressed Bun bundles with a manifest of their exact dependencies. No program is selected; its synthetic test servers (`test-support/`) are built only by `bun run test:integration`. See [Capability configuration](#capability-configuration). |
+| `packages/mcp-programs` | Builds explicitly selected MCP server programs into self-contained, content-addressed Bun bundles with a manifest of their exact dependencies; the image ships them under `/opt/agent-runtime/mcp/`. No program is selected; its synthetic test servers (`test-support/`) are built only by the integration, browser and container launchers. See [Capability configuration](#capability-configuration). |
 | `packages/anthropic-subscription` | Private, server-only Anthropic subscription authorization and request profile: a minimal, project-maintained derivative of `@ex-machina/opencode-anthropic-auth` ([provenance](packages/anthropic-subscription/PROVENANCE.md)). No I/O of its own. |
 | `scripts/` | Repository checks, fixture launchers, the acceptance-trial tool and their tests. |
 | `tests/` | Explicitly launched integration, browser, container and facet-export fixtures and the shared acceptance-trial fixture (never run by ordinary checks). |
+| `compose.yaml`, `compose.facets.yaml` | The deployment and its optional runtime-facet overlay (see [Deployment](#deployment)). |
 | `deploy/` | Deployment configuration: Tailscale Serve, an example operator configuration, the runtime's [facet project](deploy/runtime/facets/README.md) and the [Anthropic acceptance checklist](deploy/runtime/anthropic-acceptance.md). |
 | `spikes/`, `architecture/` | Historical evidence and design intent. Not application dependencies. |
 
@@ -113,11 +105,11 @@ Run from the repository root (prefix with `mise exec --` if mise is not activate
 | `bun run lint` | Biome lint and format check (read-only). `bun run format` applies fixes. |
 | `bun test` | Direct Bun discovery of unit suites; excludes spikes, `tests/**`, generated output and `*.integration`/`*.live` suites. |
 | `bun run test:integration` | Starts a disposable PostgreSQL fixture and runs `tests/integration` (persistence, ownership, run records, lifecycle, provider assembly, the API and the MCP/Bun process gate, whose synthetic server bundles it builds into a disposable directory first). Requires Docker. |
-| `bun run test:browser` | Starts a disposable PostgreSQL fixture and runs `tests/browser`: the built console in headless Chromium against the run service, with scripted providers, including the acceptance-trial rehearsal. Requires Docker and `bun run browser:install`. |
+| `bun run test:browser` | Starts a disposable PostgreSQL fixture, builds the synthetic MCP programs and runs `tests/browser`: two smoke checks of the built console in headless Chromium (a goal run and a command run) against the run service with a scripted provider. Behavior is tested at the API, service and component level, not here. Requires Docker and `bun run browser:install`. |
 | `bun run console:offline` | Runs the console on this machine at `http://127.0.0.1:4310/` (or a free port, printed) with nothing real behind it: a disposable PostgreSQL fixture, a synthetic workspace and credential, and a scripted model that reads a file, asks one question and reports your answer. Goals containing “text”, “several” or “fail” choose a text question, a multiple-choice question or a provider failure. No provider is contacted. Ctrl+C stops it and removes everything it created. Requires Docker. |
 | `bun run test:facets` | Runs `tests/facets` with the pinned `facet` CLI (on `PATH`): installs synthetic fixture facets into disposable runtime and editor homes, then checks exports, sealing (including the join of MCP server declarations to every facet that declares them), reproducibility and isolation between the two installations. Refuses an unpinned CLI without running it. No Docker, model or MCP server is used. |
 | `bun run browser:install` | Downloads the pinned Playwright headless Chromium (once, into Playwright's user cache). |
-| `bun run test:container` | Builds the image and smoke-tests the isolated Compose topology, including the served console and the Host/Origin checks, then rehearses an image rollback over preserved storage (below). Stops at the first failed check. Requires Docker. |
+| `bun run test:container` | Builds the image and smoke-tests the isolated Compose topology, including the served console and the Host/Origin checks and runtime facets with synthetic inputs (below), then rehearses an image rollback and a configuration-only rollback over preserved storage. Stops at the first failed check. Requires Docker. |
 | `bun run acceptance:anthropic` | The live trial's operator tool (Anthropic by default; `--provider openai --ceiling <n>` for OpenAI); use only as the [checklist](deploy/runtime/anthropic-acceptance.md) describes, after fresh authorization. Its `report` only reads two named runs. |
 | `bun run provenance:anthropic` | Maintenance only, uses the network: re-verifies the subscription package's recorded upstream baseline, or lists what differs at a candidate revision (see [PROVENANCE.md](packages/anthropic-subscription/PROVENANCE.md)). Never part of `check`. |
 
@@ -136,18 +128,33 @@ Compose project with fresh storage and removes only what it created. The contain
 Tailscale daemon with an inert namespace holder, so it performs no tailnet login and proves Docker topology,
 not real Serve/HTTPS behavior.
 
+**Runtime facets in the container.** The suite builds the synthetic MCP server into a disposable directory and
+mounts it read-only beside the image's own (empty) program directory, and mounts a synthetic sealed installation
+through `compose.facets.yaml`. It checks that the image ships only the selected programs, digest-named; that reading
+the catalog starts nothing; that `auth mcp set` stores a credential from standard input only while the runtime is
+stopped; that explicit inspection starts the approved server once and leaves no process behind; that a tampered or
+missing program, or a tampered bundle, is refused without starting anything while goal runs stay ready; and that a
+missing bundle file stops the container from starting. A second helper (`tests/container/mcp-state.ts`) starts the
+server through the runtime's own launch and call code to check its working directory, `HOME`, `TMPDIR` and
+environment, and that data it stores survives restarts and image replacement. No tool is granted and no model is
+involved.
+
 **Rollback rehearsal.** The container suite builds two images from one disposable copy of the build context; the
 second differs only in the console page's title, so both ship identical execution manifests for both providers
 while having distinct image IDs. With the runtime stopped, a test-only helper (`tests/container/rollback-state.ts`,
 bundled and mounted read-only into a one-off container) writes synthetic credentials and records one run per
-provider that is cancelled before any work, through the runtime's own stores. The runtime then moves from the first
+provider and one command run with a retained capability snapshot, each cancelled before any work, through the
+runtime's own stores. The runtime then moves from the first
 image to the second and back over the same database and private-state volumes. At each step the suite checks the
 running image ID and served title, readiness of both providers, that the database and private-state volumes are the
-same, and that a read-only fingerprint of every recorded run, event, invocation, definition and credential file is
-unchanged, with no model attempt. All fixture networks are internal. This shows that a compatible image can be
-rolled back on preserved storage; it is not a rollback of a live deployment, does not show compatibility with older
-execution code (a changed execution manifest refuses waiting runs instead), and leaves crash, question and
-cancellation semantics to the integration suites.
+same, and that a read-only fingerprint of every recorded run, event, invocation, definition, retained capability record and
+provider and MCP credential file is unchanged, with no model attempt. Finally, a configuration-only rollback removes
+`capabilities` from the configuration and restarts: new command starts and inspection are refused, while the command
+run's retained capabilities stay readable and the fingerprint is unchanged. All fixture networks are internal. This
+shows that a compatible image can be rolled back on preserved storage; it is not a rollback of a live deployment,
+does not show compatibility with older execution code (a changed execution manifest refuses waiting runs instead) or
+with a binary that predates the current schema, and leaves crash, question and cancellation semantics to the
+integration suites.
 
 ## Persistence
 
@@ -189,8 +196,10 @@ and questions, and a dispatch-intent state for external calls. Existing runs gai
 their events, answers, results, provider bindings and execution definitions keep their recorded bytes. Snapshots
 are never garbage-collected, and removing installed facets does not remove them.
 
-Migrations only move forward. There is no down-migration: a build that predates migration 4 refuses an upgraded
-database (`schema_incompatible`) before changing it, so rolling back the image after upgrading needs a build that
+Migration 5 widens the recorded tool-name bound to 197 characters for canonical MCP tool names; no row is rewritten.
+
+Migrations only move forward. There is no down-migration: a build that predates a migration refuses a database that
+has it (`schema_incompatible`) before changing anything, so rolling back the image after upgrading needs a build that
 knows the newer schema. Preserved credentials and history are never rewritten or deleted by an upgrade.
 
 Run records (runs, questions, invocations, model attempts, tool operations, events, execution definitions, and the
@@ -260,8 +269,7 @@ configuration.
 ### Capability configuration
 
 An optional `capabilities` section holds the owner's grants for facet-backed command runs. Without it the
-deployment is goal-only, exactly as before, and goal runs never use these grants. The HTTP API accepts goal starts
-only; command runs are started through the run service (see [Agent execution](#agent-execution)).
+deployment is goal-only, exactly as before, and goal runs never use these grants.
 [`deploy/runtime/config.capabilities.example.json`](deploy/runtime/config.capabilities.example.json) shows every
 setting with placeholder digests:
 
@@ -567,9 +575,35 @@ browser — that caused it. Verification with provider-free models, including ev
 Open the console at the `RUNTIME_PUBLIC_ORIGIN` address from any device on your tailnet. It lists runs (goal,
 provider, status, start and last-activity times), starts a run, and shows one run: its status, budget
 (`consumed` of `maximum`, plus any `unconfirmed` admissions), provider and workspace, history with recorded times,
-the pending question, the final result or failure with its category and guidance, and a cancel button. Text from
-the model, tools and workspace is rendered as plain text; nothing from a run is interpreted as markup or loads
-external resources.
+the pending question (and, in a command run, which agent asked it), the final result or failure with its category
+and guidance, and a cancel button. Text from the model, tools, workspace and installed facets is rendered as plain
+text; nothing is interpreted as markup or loads external resources.
+
+**Starting from a command.** The start form offers a free-form task (the default) or an **Installed command**:
+choose one, read its description and origin, and enter its raw argument text (required or optional, as the command
+declares). The provider choice and **Connect** buttons are shared by both. The installed commands are read only when
+command mode is chosen, and again only with **Refresh commands**. A refused command — changed since it was shown,
+missing a prerequisite, or with unusable arguments — is reported and never started as a free-form task instead. If
+a start's reply is lost, **Retry same start** sends exactly what was submitted, with the same request identity,
+whatever has been refreshed or edited since.
+
+**Installed capabilities** (a collapsible panel under the start form, read when opened) lists every installed
+command, skill and agent with its facet and version and whether it is ready, refused (with the reason) or not allowed
+by the owner's configuration; and every MCP server with its connection approval (approved, denied, not configured,
+needing approval again, or program unavailable — with the current approval digest to review), its configured tool
+grants and argument restrictions, and the tools its last inspection listed. **Inspect server** is offered only for an
+approved connection: it starts the server briefly to list its tools (their definitions and digests, and whether each
+is granted for exactly that definition), then closes it. It calls nothing and approves nothing; grants change only in
+[operator configuration](#capability-configuration). Inspection results are kept in memory for display until the
+runtime restarts.
+
+**A command run's capabilities** appear in a panel on its page: the command and its arguments, the definitions the
+run retained (skills, agents and tools, each with its facet and version) and whether each was actually used, its
+delegations and their outcomes, the recorded outcomes of its tool use (completed, refused, failed, unknown or
+without a recorded outcome), its limits, and its permissions — those it was accepted under, and the owner's current
+configuration, which new operations must also satisfy. It is read from the run's own records, so it stays the same
+after the facet is updated or removed, and reading it starts nothing. History entries name the facet each skill,
+agent and tool came from.
 
 **Connecting Anthropic.** When Anthropic needs authorization, the start form says so and offers **Connect
 Anthropic**: open Anthropic's sign-in in a new tab, approve access with your Claude account, then copy the code
@@ -588,8 +622,11 @@ The API (`/api/v1`, JSON only):
 | Route | Purpose |
 |---|---|
 | `GET /options` | Workspace label and availability, configured providers with their readiness, the default budget and any ceiling |
-| `GET`, `POST /runs` | List runs (newest first, paginated); start one with `{ requestId, goal, provider }` |
+| `GET`, `POST /runs` | List runs (newest first, paginated); start one with `{ requestId, goal, provider }` or `{ requestId, provider, command: { id, selectionRevision, arguments } }` (exactly one form) |
 | `GET /runs/:runId` | A consistent snapshot of one run and the last history event it includes (`throughSeq`) |
+| `GET /runs/:runId/capabilities` | `native` for a goal run; for a command run its retained definitions, recorded use, limits and captured/current permissions, with the history boundary it includes (`throughSeq`); `unavailable` if its retained definitions cannot be verified |
+| `GET /capabilities` | The installed catalog (`unconfigured`, `unavailable` or `ready` with its `catalogRevision`), servers with connection approval, grants and the last inspection; starts nothing |
+| `POST /capabilities/servers/:serverId/discover` | `{ catalogRevision }`: inspect one approved server (initialize, list tools, close); `409 capability_selection_changed` if the catalog changed since it was shown |
 | `GET /runs/:runId/events` | Committed history after a cursor, optionally up to a fixed bound |
 | `GET /runs/:runId/stream` | Server-sent events: replay after the cursor (`after`, or the browser's `Last-Event-ID`), then the live tail; a comment heartbeat every 15 seconds |
 | `POST /runs/:runId/questions/:questionId/answer` | `{ answer }` for that exact question |
@@ -609,6 +646,10 @@ The API (`/api/v1`, JSON only):
   whether anything was recorded (`not_accepted`, `unknown`, `already_accepted`). Shape errors are `400`, Host/Origin
   refusals `403`, unknown runs or questions `404`, conflicts, closed questions, unavailable providers or workspace and
   confirmed continuation refusals `409`, and temporary unavailability `503` (which never records a failure).
+  Command starts add `command_arguments_invalid` (`400`), `capability_selection_changed` and
+  `capability_unavailable` (`409`, with the affected `subject` such as `skill:review` or `mcp:github/list_issues`),
+  and `capabilities_unavailable` or `mcp_server_unavailable` (`503`). A retried command start with the same
+  `requestId` is answered from the record before the installation or any server is consulted.
 - **Replay** reads committed history from the database after the client's cursor, so a reconnect, or an event
   recorded between a snapshot and its stream, is delivered exactly once. A cursor beyond recorded history is
   `409 cursor_ahead`. If storage fails mid-stream, the stream sends an unsequenced `availability` notice and
@@ -678,8 +719,7 @@ reauthorization, and later runs fail with authorization guidance without sending
 real renewal can be exercised deliberately; ordinary use never needs it, because access renews itself within five
 minutes of expiry. Like any renewal, one whose outcome is unknown marks the slot as needing a new login.
 
-**OpenAI (ChatGPT subscription): restored; live trial accepted with exceptions; final acceptance pending.** Sign-in
-is a device login with nothing to paste back and no callback: **Connect OpenAI** on the start form (or
+**OpenAI (ChatGPT subscription).** Sign-in is a device login with nothing to paste back and no callback: **Connect OpenAI** on the start form (or
 `auth openai login`) shows a link to OpenAI's device page and a short code; enter the code there from any browser
 and approve, and the runtime notices the approval itself and stores the authorization (`auth openai status|renew`
 work as for Anthropic). The device protocol is the project's own TypeScript, not a library's; the account ID it
@@ -698,26 +738,13 @@ stays removed. Runs it recorded (profile `codex-0.151.0`) stay readable, and a q
 answered (answering closes the run as `continuation_unavailable`); they are never rebound to the current profile.
 Saved OpenAI authorization is the same subscription sign-in either way and was kept without conversion.
 
-The restored OpenAI build (`dbf7145`) was tried live in the Docker deployment on 2026-10-06 and the owner accepted
-the result with exceptions. Observed then: a fresh console device login and one deliberate renewal; a journey
-whose question waited through a runtime restart and recreation (but was answered "yes"); a repeat journey
-answered "no" with a result that respected it (finished before the recreation); a cancellation that stayed
-cancelled after a restart; nine new OpenAI model requests, all successful, including two of the owner's own runs.
-The trial report failed one check, because it then accepted only the boolean `false` and the question had declared
-the string `"no"`; it can now be told which one to expect (`--expected-answer no`). See the
-[recovery record](architecture/integration-evidence/mvp-01/g5-openai-recovery.md). The phase's final acceptance
-(including whether Anthropic's earlier live results still apply to this build) has not been run.
-
 Offline verification runs the stock model inside the stock agent against scripted provider streams
-(`src/providers/anthropic/inference.test.ts`, `src/providers/openai/inference.test.ts`, and the production assembly on the official saver in
-`tests/integration/provider-assembly.integration.test.ts`); results are recorded in the dated
-[G2](architecture/integration-evidence/mvp-01/g2-anthropic-boundary.md) and
-[G4 offline](architecture/integration-evidence/mvp-01/g4-anthropic-offline.md) evidence. Anthropic has also been
-verified live: console login, profile `claude-cli-2.1.280` with `claude-opus-5-5`, and the full
-read/question/restart/answer/result journey ([G4 live](architecture/integration-evidence/mvp-01/g4-anthropic-live.md)),
-and a real token renewal (`auth anthropic renew`, generation 2 → 3) in the Docker deployment on 2026-10-03
-([recorded with the OpenAI attempts](architecture/integration-evidence/mvp-01/g5-openai-live.md)). Live checks
-happen only with the owner's fresh authorization.
+(`src/providers/anthropic/inference.test.ts`, `src/providers/openai/inference.test.ts`, and the production assembly
+on the official saver in `tests/integration/provider-assembly.integration.test.ts`). Live and deployment checks are
+recorded, with what each observed and its exceptions, in [`architecture/integration-evidence/`](architecture/integration-evidence/)
+— for example [G4 live](architecture/integration-evidence/mvp-01/g4-anthropic-live.md) and the
+[OpenAI recovery record](architecture/integration-evidence/mvp-01/g5-openai-recovery.md). A recorded live check
+applies to the build it names; live checks happen only with the owner's fresh authorization.
 
 ## Deployment
 
@@ -735,7 +762,10 @@ happen only with the owner's fresh authorization.
 All images are pinned by digest. The Docker build uses the repository root as context with an allowlisting
 `.dockerignore`, installs from the frozen lockfile, bundles the server, operator command and console into
 `packages/runtime/dist/` (the console is bundled ahead of time from the UI package's HTML entry), and copies only
-that output into the runtime image. There is no separate frontend server.
+that output into the runtime image. There is no separate frontend server. It also builds the MCP server programs
+selected in `packages/mcp-programs/src/programs.ts` (none yet) and copies them, with their manifest, read-only to
+`/opt/agent-runtime/mcp/<programId>/<sha256>.js`. Test servers never enter the build context, and nothing is installed
+or downloaded when a server starts.
 
 ```bash
 cp .env.example .env   # set the workspace, configuration path, tailnet name and a generated POSTGRES_PASSWORD
@@ -755,6 +785,47 @@ generate a one-time auth key in the Tailscale admin console and run
 `docker compose exec tailscale tailscale login --auth-key=<key>` (do not run the console's install script on the
 host; only the container should join).
 
+### Runtime facets in a deployment
+
+Without runtime facets, use `compose.yaml` alone and leave `capabilities` out of the operator configuration. To
+offer commands, seal an installation (see [Runtime facets](#runtime-facets)), set `AGENT_RUNTIME_FACETS` to the
+bundle's absolute host path, and select the overlay on every Compose command:
+
+```bash
+docker compose -f compose.yaml -f compose.facets.yaml up -d --build
+```
+
+The overlay mounts the bundle read-only at `/etc/agent-runtime/facets/installation.json`; a missing file stops the
+runtime container from starting instead of mounting an empty path. Name that path and the bundle's SHA-256 in
+`capabilities.installation`, and each server's program in `capabilities.localPrograms` by its path under
+`/opt/agent-runtime/mcp/` and digest (from the image's `/opt/agent-runtime/mcp/manifest.json`). Then, in order:
+
+1. Start the runtime with the server's connection approved and no tools granted, and press **Inspect server** in the
+   console. Inspection starts the server once, lists its tools and closes it; it calls nothing and approves nothing.
+2. Copy the digests of the reviewed tools into `capabilities.servers[].approval.tools`, with any argument
+   restrictions.
+3. Provision the server's credentials with the runtime stopped, then start it again:
+
+   ```bash
+   docker compose -f compose.yaml -f compose.facets.yaml stop runtime
+   docker compose -f compose.yaml -f compose.facets.yaml run --rm --no-deps -T runtime \
+     bun dist/auth.js mcp set repo-token < /path/to/token-file
+   docker compose -f compose.yaml -f compose.facets.yaml up -d runtime
+   ```
+
+Each server keeps its data in `/var/lib/agent-runtime/mcp/<serverId>/` (its working directory, with `home/` and
+`tmp/` as `HOME` and `TMPDIR`) in the private-state volume. That data survives restarts and upgrades, and nothing
+deletes it. No other writable location is added.
+
+**Upgrading and rolling back.** Execution code changed with runtime facets, so a run waiting for an answer under an
+earlier build may be refused as `continuation_unavailable` after the upgrade, with its history kept: finish or cancel
+waiting runs before upgrading. The upgrade applies migrations 4 and 5, which only move forward. To stop offering
+commands, remove `capabilities` from the configuration and restart: new command starts are refused, recorded
+history and retained capabilities stay readable, and credentials stay where they are. Rolling the image back past
+the migrations is not possible: an older build refuses the upgraded database without changing it. Recovering from
+a failed upgrade is an owner decision; there is no backup, restore or down-migration tooling, and nothing is
+deleted automatically.
+
 Health endpoints: `/healthz` (liveness) and `/readyz` — ready (`200`) only when persistence is ready, agent execution
 is configured and composed, and the console is loaded; each is reported in `checks`. Provider authorization is not
 part of readiness: an unauthorized provider is shown in the console and refuses starts.
@@ -773,14 +844,22 @@ part of readiness: an unauthorized provider is shown in the console and refuses 
 | Input is refused as unscreenable | A credential record cannot be read or is invalid. Check `auth … status`, and log in again. |
 | The page shows “Reconnecting” | The connection dropped; the run is unaffected and the page catches up when it reconnects. |
 | `503 acceptance_unknown` | Storage could not confirm a change. Repeat the same action; it cannot be applied twice. |
+| A command start says the installed commands changed | The pinned installation changed since the commands were shown. Press **Refresh commands**, review the command and start again. |
+| A command is unavailable or names a missing prerequisite | The `subject` names what is missing, refused or not granted. Check **Installed capabilities**; grants and allowed skills and agents change only in operator configuration (restart to apply). |
+| The installed commands cannot be read | The pinned bundle is missing, unreadable or does not match its configured SHA-256. Free-form tasks still work. |
+| **Inspect server** is not offered, or is refused | The server's connection is not approved for exactly what is installed now: review the shown digest and update `capabilities.servers`, then restart. A server that cannot start reports `mcp_server_unavailable`. |
 | `/readyz` stays `503` | `checks` names the part that is not ready; persistence states are described under Persistence. |
 
 ## Limitations
 
-- The Anthropic slice has passed bounded live trials locally and in the Docker deployment over Tailscale Serve,
-  including one deliberate real token renewal. OpenAI has been rebuilt on the stock library; its live trial was
-  accepted with exceptions (see [Providers](#providers)), and it depends on a backend that is not a documented
-  third-party interface. The phase's final acceptance has not yet been run.
+- Automated verification uses scripted provider networks and synthetic MCP servers; live behavior is only what the
+  recorded live checks observed for the builds they name. OpenAI depends on a backend that is not a documented
+  third-party interface (see [Providers](#providers)), and the tool-name forms each provider is sent are local
+  choices, not verified provider limits.
+- MCP servers are trusted, unsandboxed processes; grants restrict what the runtime sends, not what a server does.
+  An external action whose outcome is unknown ends the run; whether it happened is for the owner to check.
+- Server inspection results are kept in memory only and are not authority; there is no console for editing grants
+  or installing facets.
 - No application accounts: anyone your tailnet policy admits to the machine can use the console.
 - No backup, retention or restore tooling; ordinary restarts preserve the database volume, nothing more.
 - Read-only mounts and path checks are not a sandbox against hostile processes on the host; the workspace is

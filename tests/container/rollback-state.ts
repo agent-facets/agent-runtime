@@ -2,13 +2,18 @@
 // bundles this file with its dependencies (the image ships no sources or node_modules) and runs it in a short-lived
 // container of the image under test, on that fixture's own database and private-state volume:
 //
-//   seed     (runtime stopped)  synthetic credentials for both providers, and one run per provider recorded through
-//                                the runtime's own stores, then cancelled before any work — never a fabricated result
-//   inspect  (runtime running)  a fingerprint of all recorded runs, history, activity counters and credential files,
-//                                read in a read-only transaction without taking runtime ownership
+//   seed     (runtime stopped)  synthetic credentials for both providers, one run per provider and one command run
+//                                with a retained capability snapshot, recorded through the runtime's own stores, then
+//                                cancelled before any work — never a fabricated result
+//   inspect  (runtime running)  a fingerprint of all recorded runs, history, retained capabilities, activity counters
+//                                and provider and MCP credential files, read in a read-only transaction without taking
+//                                runtime ownership
 //
 // Nothing here dispatches a graph or contacts a provider: the assembly's transports refuse every request.
 import { createHash } from 'node:crypto';
+import { readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { sealSnapshot } from '../../packages/runtime/src/capabilities/records.ts';
 import { parseOperatorConfig, providerSettingsFor } from '../../packages/runtime/src/config/operator.ts';
 import type { CredentialRecord } from '../../packages/runtime/src/credentials/record.ts';
 import { CredentialStore } from '../../packages/runtime/src/credentials/store.ts';
@@ -24,6 +29,7 @@ import { createProviderAssembly } from '../../packages/runtime/src/providers/ass
 import { RunStore } from '../../packages/runtime/src/records/run-store.ts';
 import type { Provider, ProviderBinding } from '../../packages/runtime/src/records/schemas.ts';
 import { createWorkspacePolicy } from '../../packages/runtime/src/workspace/policy.ts';
+import { sampleCommandInput, sampleSnapshot } from '../support/capabilities.ts';
 
 /** The manifests the image under test ships beside its bundle, as its runtime reads them. */
 const SHIPPED_MANIFESTS = '/app/dist/execution-manifest.json';
@@ -82,7 +88,13 @@ async function seed() {
   try {
     const store = new RunStore(persistence.app, persistence.ownership);
     const gates = new KeyedSerializer();
-    const runs: Partial<Record<Provider, string>> = {};
+    const runs: Partial<Record<Provider | 'command', string>> = {};
+    const cancel = async (runId: string) => {
+      const accepted = await store.acceptCancellation(runId, crypto.randomUUID());
+      if (accepted.kind !== 'accepted') throw new Error(`cancellation was not accepted: ${accepted.kind}`);
+      const finished = await store.finishCancellation(runId);
+      if (finished.kind !== 'cancelled') throw new Error(`run did not finish cancelled: ${finished.kind}`);
+    };
     for (const provider of PROVIDERS) {
       const settings = providerSettingsFor(operator, provider);
       const code = shipped.providers[provider];
@@ -122,20 +134,32 @@ async function seed() {
         binding,
         workspacePolicyDigest: policy.digest,
       });
-      const { snapshot } = await store.createRun({
-        requestId: crypto.randomUUID(),
-        goal: `Rollback fixture (${provider}): recorded, then cancelled before any work.`,
+      const common = {
         provider,
         workspace: { id: operator.workspace.id, label: policy.label, root: policy.root, policyDigest: policy.digest },
         binding,
         definition,
         budgetMax: operator.stepBudget,
+      };
+      const { snapshot } = await store.createRun({
+        ...common,
+        requestId: crypto.randomUUID(),
+        goal: `Rollback fixture (${provider}): recorded, then cancelled before any work.`,
       });
-      const accepted = await store.acceptCancellation(snapshot.runId, crypto.randomUUID());
-      if (accepted.kind !== 'accepted') throw new Error(`cancellation was not accepted: ${accepted.kind}`);
-      const finished = await store.finishCancellation(snapshot.runId);
-      if (finished.kind !== 'cancelled') throw new Error(`run did not finish cancelled: ${finished.kind}`);
+      await cancel(snapshot.runId);
       runs[provider] = snapshot.runId;
+      if (provider === 'anthropic') {
+        // A command run retains its capability definitions in application storage, independently of any installation.
+        const retained = sealSnapshot(sampleSnapshot()).payload;
+        const command = await store.createRun({
+          ...common,
+          requestId: crypto.randomUUID(),
+          goal: retained.input.renderedGoal,
+          capability: { input: sampleCommandInput(), snapshot: retained },
+        });
+        await cancel(command.snapshot.runId);
+        runs.command = command.snapshot.runId;
+      }
     }
     console.log(JSON.stringify({ runs }));
   } finally {
@@ -158,6 +182,10 @@ async function inspect() {
           (select count(*) from runtime.tool_operations)::int as tool_operations,
           (select count(*) from runtime.questions)::int as questions,
           (select count(*) from runtime.execution_definitions)::int as definitions,
+          (select count(*) from runtime.capability_snapshots)::int as capability_snapshots,
+          (select count(*) from runtime.run_capabilities)::int as run_capabilities,
+          (select count(*) from runtime.run_actors)::int as run_actors,
+          (select count(*) from runtime.loaded_skills)::int as loaded_skills,
           (select count(*) from checkpoints.checkpoints)::int as checkpoints`;
       const runs = await tx`select run_id::text as run_id, create_request_id::text as create_request_id, goal,
           workspace::text as workspace, binding::text as binding, definition_digest, budget_max::int as budget_max,
@@ -173,12 +201,19 @@ async function inspect() {
         from runtime.invocations order by run_id, invocation_id`;
       const definitions = await tx`select digest, manifest::text as manifest from runtime.execution_definitions
         order by digest`;
+      const capabilities = {
+        snapshots: [...(await tx`select row_to_json(t)::text as row from runtime.capability_snapshots t order by 1`)],
+        bindings: [...(await tx`select row_to_json(t)::text as row from runtime.run_capabilities t order by 1`)],
+        actors: [...(await tx`select row_to_json(t)::text as row from runtime.run_actors t order by 1`)],
+        skills: [...(await tx`select row_to_json(t)::text as row from runtime.loaded_skills t order by 1`)],
+      };
       return {
         counts,
         runs: [...runs],
         events: [...events],
         invocations: [...invocations],
         definitions: [...definitions],
+        capabilities,
       };
     }, 'repeatable read');
 
@@ -195,6 +230,17 @@ async function inspect() {
       });
     }
 
+    // MCP credential slots: their files' digests only, never their values.
+    const slots = join(stateDir, 'mcp-credentials');
+    let slotFiles: string[] = [];
+    try {
+      slotFiles = readdirSync(slots).sort();
+    } catch {}
+    const mcpCredentials = [];
+    for (const file of slotFiles) {
+      mcpCredentials.push({ file, sha256: sha256(await Bun.file(join(slots, file)).bytes()) });
+    }
+
     const runs = recorded.runs.map((run) => ({
       runId: run.run_id as string,
       provider: (JSON.parse(run.binding as string) as ProviderBinding).provider,
@@ -205,10 +251,11 @@ async function inspect() {
     // Token values never leave this process; only their files' digests do.
     console.log(
       JSON.stringify({
-        fingerprint: sha256(JSON.stringify({ ...recorded, credentials })),
+        fingerprint: sha256(JSON.stringify({ ...recorded, credentials, mcpCredentials })),
         counts: recorded.counts,
         runs,
         credentials,
+        mcpCredentials,
       }),
     );
   } finally {

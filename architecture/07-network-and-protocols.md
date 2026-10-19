@@ -34,6 +34,26 @@ events for the browser console. Remote MCP, A2A, identity headers, app capabilit
 - **Browser connection is not run lifetime.** Runs are dispatched by the service; closing a stream or page never
   aborts work, and the console never infers an outcome from a closed connection.
 
+MVP 02 extends the REST surface under the same Host/Origin, body-size, security-header and error-envelope rules:
+
+- `POST /runs` also accepts an exclusive command form, `{ requestId, provider, command: { id, selectionRevision,
+  arguments } }`; a repeated request ID is resolved from the record before the installation, providers or servers
+  are consulted.
+- `GET /capabilities` returns the installed catalog (`unconfigured`, `unavailable`, or `ready` with a
+  `catalogRevision` equal to the verified installation digest), servers with their connection approval, grants and
+  last inspection. It never starts a server.
+- `POST /capabilities/servers/:serverId/discover` with `{ catalogRevision }` is the only request that starts a
+  process outside a run: for a connection approved for exactly what is installed, one short-lived
+  initialize/list/close, with concurrent requests for one binding sharing it. A stale revision is refused first.
+  Observations stay in the runtime's memory for display and never authorize anything.
+- `GET /runs/:runId/capabilities` returns a run's retained definitions, recorded use and captured/current
+  permissions from its own records in one consistent read, with the `throughSeq` it includes.
+
+These are projections: launch configuration, environment values, credential slots, program paths, saved-graph
+bindings and retained snapshots never leave the server, and installed or advertised text that is not plain or that
+carries a recognized credential is left out. History events gain `run.command`, `delegation.started` and
+`delegation.finished`, and agent activity in command runs carries its actor; older events keep their shape.
+
 MVP 02 adds one outbound protocol: MCP over **stdio only**, to deployment-supplied local server bundles started by
 the runtime ([08-execution-security.md](08-execution-security.md#phase-2-mcp-boundary-mvp-02)). Remote MCP (HTTP,
 SSE), MCP OAuth and server-initiated sampling, elicitation and roots are not supported, and no MCP listener is

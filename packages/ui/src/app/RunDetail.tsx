@@ -1,13 +1,14 @@
 // One run: identity, state, budget, failure explanation, the pending question, cancellation and history. The
 // view follows the run's committed history; whether this page is connected is shown separately and never
 // changes what the run is shown to be doing.
-import type { RunView } from '@agent-runtime/contracts';
+import type { RunCapabilitiesView, RunView } from '@agent-runtime/contracts';
 import { TERMINAL_STATE_KINDS } from '@agent-runtime/contracts';
 import { useEffect, useRef, useState } from 'react';
 import type { ApiClient } from '../api/client.ts';
 import { RequestIdentity } from '../api/requests.ts';
 import { type Connection, type EventSourceLike, RunSync } from '../state/sync.ts';
 import type { TimelineView } from '../state/timeline.ts';
+import { RunCapabilitiesPanel } from './Capabilities.tsx';
 import { FAILURE_LABELS, formatTime, providerLabel, STATE_DESCRIPTIONS, STATE_LABELS } from './format.ts';
 import { History } from './History.tsx';
 import { QuestionForm } from './QuestionForm.tsx';
@@ -32,6 +33,7 @@ export function RunDetail({
   const [view, setView] = useState<TimelineView | undefined>();
   const [connection, setConnection] = useState<Connection>('loading');
   const sync = useRef<RunSync | undefined>(undefined);
+  const capabilities = useRunCapabilities(client, runId, view);
 
   useEffect(() => {
     const created = new RunSync({
@@ -57,7 +59,58 @@ export function RunDetail({
     );
   }
   if (view === undefined) return <main className="hint">Loading the run…</main>;
-  return <RunPage client={client} view={view} connection={connection} refresh={() => sync.current?.refresh()} />;
+  return (
+    <RunPage
+      client={client}
+      view={view}
+      connection={connection}
+      refresh={() => sync.current?.refresh()}
+      capabilities={capabilities}
+    />
+  );
+}
+
+/** Events after which a run's capability view can differ: its use of tools, skills and delegates. */
+const CAPABILITY_EVENTS = new Set(['tool.operation', 'delegation.started', 'delegation.finished']);
+
+/**
+ * A run's retained capabilities, read when the page opens and again after recorded capability activity. At most one
+ * read is in flight; activity during it causes one more read afterwards.
+ */
+function useRunCapabilities(client: ApiClient, runId: string, view: TimelineView | undefined) {
+  const [capabilities, setCapabilities] = useState<RunCapabilitiesView | undefined>();
+  const activity = view?.events.filter((event) => CAPABILITY_EVENTS.has(event.kind)).length ?? 0;
+  const current = useRef({ client, runId, mounted: true });
+  current.current = { ...current.current, client, runId };
+  const reading = useRef(false);
+  const again = useRef(false);
+  useEffect(() => {
+    current.current.mounted = true;
+    return () => {
+      current.current.mounted = false;
+    };
+  }, []);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `activity` only triggers another read.
+  useEffect(() => {
+    const read = async () => {
+      if (reading.current) {
+        again.current = true;
+        return;
+      }
+      reading.current = true;
+      do {
+        again.current = false;
+        const target = current.current;
+        const outcome = await target.client.runCapabilities(target.runId);
+        if (current.current.mounted && current.current.runId === target.runId && outcome.ok) {
+          setCapabilities(outcome.value);
+        }
+      } while (again.current && current.current.mounted);
+      reading.current = false;
+    };
+    void read();
+  }, [client, runId, activity]);
+  return capabilities;
 }
 
 export function RunPage({
@@ -65,11 +118,13 @@ export function RunPage({
   view,
   connection,
   refresh,
+  capabilities,
 }: {
   client: ApiClient;
   view: TimelineView;
   connection: Connection;
   refresh: () => void;
+  capabilities?: RunCapabilitiesView;
 }) {
   const { run } = view;
   const state = run.state;
@@ -123,9 +178,10 @@ export function RunPage({
           onSettled={refresh}
         />
       )}
+      <RunCapabilitiesPanel capabilities={capabilities} />
       <section className="panel">
         <h2>History</h2>
-        <History events={view.events} state={state} />
+        <History events={view.events} state={state} capabilities={capabilities} />
       </section>
     </main>
   );

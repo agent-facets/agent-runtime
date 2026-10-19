@@ -1,0 +1,16 @@
+# Optional overlay for a deployment with runtime facets. Select it alongside the base file:
+#
+#   docker compose -f compose.yaml -f compose.facets.yaml up -d
+#
+# It mounts the sealed installation bundle read-only at the fixed path the operator configuration names. The host
+# file must already exist: a missing bundle stops the runtime from starting rather than mounting an empty path.
+# Without this overlay the deployment runs goal-only and needs no bundle.
+services:
+  runtime:
+    volumes:
+      - type: bind
+        source: ${AGENT_RUNTIME_FACETS:?set AGENT_RUNTIME_FACETS}
+        target: /etc/agent-runtime/facets/installation.json
+        read_only: true
+        bind:
+          create_host_path: false

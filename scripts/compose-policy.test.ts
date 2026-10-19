@@ -25,7 +25,11 @@ interface ComposeFile {
 }
 
 const compose = Bun.YAML.parse(await Bun.file(join(repoRoot, 'compose.yaml')).text()) as ComposeFile;
+const facets = Bun.YAML.parse(await Bun.file(join(repoRoot, 'compose.facets.yaml')).text()) as {
+  services: Record<string, { volumes?: unknown[] } & Record<string, unknown>>;
+};
 const dockerfile = await Bun.file(join(repoRoot, 'Dockerfile')).text();
+const dockerignore = await Bun.file(join(repoRoot, '.dockerignore')).text();
 const serve = await Bun.file(join(repoRoot, 'deploy', 'tailscale', 'serve.json')).json();
 const envExample = await Bun.file(join(repoRoot, '.env.example')).text();
 
@@ -144,6 +148,38 @@ describe('runtime container restrictions', () => {
   });
 });
 
+describe('runtime facets', () => {
+  const bundle = '/etc/agent-runtime/facets/installation.json';
+
+  test('the base deployment needs no facet bundle', () => {
+    expect(JSON.stringify(compose)).not.toContain('AGENT_RUNTIME_FACETS');
+    expect(JSON.stringify(compose)).not.toContain(bundle);
+  });
+
+  test('the overlay adds only a read-only bind of an existing bundle at the fixed path', () => {
+    expect(Object.keys(facets.services)).toEqual(['runtime']);
+    expect(facets.services.runtime).toEqual({
+      volumes: [
+        {
+          type: 'bind',
+          source: ['$', '{AGENT_RUNTIME_FACETS:?set AGENT_RUNTIME_FACETS}'].join(''),
+          target: bundle,
+          read_only: true,
+          bind: { create_host_path: false },
+        },
+      ],
+    });
+  });
+
+  test('the image builds the selected MCP programs into a read-only directory, never test servers', () => {
+    expect(dockerfile).toContain('RUN bun run --cwd packages/mcp-programs build');
+    expect(dockerfile).toContain('COPY --from=build /repo/packages/mcp-programs/dist/programs /opt/agent-runtime/mcp');
+    // Only package sources enter the build context, so the synthetic servers under test-support cannot.
+    expect(dockerignore).not.toMatch(/test-support/);
+    expect(dockerignore).toContain('!packages/*/src/**');
+  });
+});
+
 describe('environment example', () => {
   test('lists every required variable with placeholders only', () => {
     const entries = Object.fromEntries(
@@ -162,5 +198,9 @@ describe('environment example', () => {
       POSTGRES_PASSWORD: 'replace-with-generated-password',
       TS_HOSTNAME: 'agent-runtime',
     });
+  });
+
+  test('documents the optional facet bundle as a commented placeholder', () => {
+    expect(envExample).toContain('\n# AGENT_RUNTIME_FACETS=/absolute/path/to/installation.json\n');
   });
 });

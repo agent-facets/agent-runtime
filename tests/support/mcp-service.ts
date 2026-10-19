@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { selectionRevision } from '../../packages/runtime/src/capabilities/command.ts';
 import { type CatalogLoad, loadInstallation } from '../../packages/runtime/src/capabilities/installation.ts';
-import { createMcpPreflight, serverDigest } from '../../packages/runtime/src/capabilities/preflight.ts';
+import { createMcpPreflight } from '../../packages/runtime/src/capabilities/preflight.ts';
 import { configuredCredentialSlots, type ServerAccess } from '../../packages/runtime/src/config/capabilities.ts';
 import { parseOperatorConfig } from '../../packages/runtime/src/config/operator.ts';
 import { NO_KNOWN_CREDENTIALS } from '../../packages/runtime/src/credentials/matcher.ts';
@@ -16,90 +16,28 @@ import { inspectServer } from '../../packages/runtime/src/mcp/discovery.ts';
 import { planLaunch } from '../../packages/runtime/src/mcp/transport.ts';
 import type { Persistence } from '../../packages/runtime/src/persistence/persistence.ts';
 import { createProviderAssembly } from '../../packages/runtime/src/providers/assembly.ts';
-import { canonicalJson } from '../../packages/runtime/src/records/canonical.ts';
 import { RunStore } from '../../packages/runtime/src/records/run-store.ts';
 import { createContentPolicy } from '../../packages/runtime/src/security/content-policy.ts';
+import { handleApi } from '../../packages/runtime/src/service/http.ts';
 import { RunService, type RunServiceOptions } from '../../packages/runtime/src/service/runs.ts';
 import { inferenceNetwork, offeredName, type SentInference } from './anthropic-network.ts';
 import { requireMcpFixture } from './mcp-fixture.ts';
+import {
+  connectionDigest as connectionDigestFor,
+  declaration,
+  INSTALLATION_BYTES,
+  INSTALLATION_SHA256,
+  SERVER,
+  SLOT_VALUE,
+} from './synthetic-installation.ts';
 
 const D = 'd'.repeat(64);
-const integrity = `sha256:${'f'.repeat(64)}`;
-const origin = { facet: 'workflows', version: '1.0.0', source: 'local:./facets/workflows', integrity };
-/** The synthetic server's credential: only the server may ever receive it. */
-export const SLOT_VALUE = 'synthetic-dispatch-slot-value-0001';
-export const SERVER = 'synthetic';
-export const declaration = { type: 'stdio', command: './synthetic', args: [], env: { REPO_MODE: 'read' } };
+
+export { declaration, SERVER, SLOT_VALUE };
 /** The name the given request offered the synthetic server's tool under. */
 export const wire = (request: SentInference, tool: string) => offeredName(request, SERVER, tool);
 
-const definition = (kind: string, name: string, extra: Record<string, unknown>) => ({
-  kind,
-  facet: 'workflows',
-  authoredName: name,
-  materialization: { kind: 'authored' },
-  files: [{ path: kind === 'skill' ? `skills/${name}/SKILL.md` : `${kind}s/${name}.md`, integrity }],
-  state: {
-    kind: 'ready',
-    definition: {
-      id: `${kind}:${name}`,
-      name,
-      description: `About ${name}`,
-      origins: [origin],
-      exportDigest: D,
-      requires: [],
-      ...extra,
-    },
-  },
-});
-
-const guide = new TextEncoder().encode('# Guide\nCheck the item count.\n');
-const bundleBytes = new TextEncoder().encode(
-  `${canonicalJson({
-    format: 2,
-    profile: 1,
-    toolchain: {
-      cli: { version: '0.36.0', platform: 'linux-x64', sha256: 'c'.repeat(64) },
-      adapter: { name: 'agent-runtime', apiVersion: '0.3', sdkVersion: '0.30.0', sha256: 'a'.repeat(64) },
-    },
-    inputs: { manifestVersion: 0.2, lockfileVersion: 0.4, manifestSha256: D, lockSha256: D },
-    facets: [
-      { facet: 'workflows', version: '1.0.0', source: { kind: 'local', path: './facets/workflows' }, integrity },
-    ],
-    items: [
-      definition('command', 'sync', {
-        body: 'Sync $ARGUMENTS.',
-        arguments: { required: true },
-        requires: [{ kind: 'mcp', serverId: SERVER, toolName: 'list_items' }],
-      }),
-      definition('agent', 'worker', { instructions: 'Do the delegated task with the tools you have.' }),
-      definition('skill', 'review', {
-        instructions: 'Review the item count.',
-        resources: [
-          {
-            path: 'references/guide.md',
-            byteLength: guide.byteLength,
-            sha256: new Bun.CryptoHasher('sha256').update(guide).digest('hex'),
-            content: Buffer.from(guide).toString('base64'),
-          },
-        ],
-      }),
-    ],
-    servers: [
-      {
-        serverId: SERVER,
-        fingerprint: `sha256:${'9'.repeat(64)}`,
-        declaration,
-        origins: [{ ...origin, authoredName: SERVER }],
-      },
-    ],
-    omittedServers: [],
-  })}\n`,
-);
-export const catalogLoad = loadInstallation(
-  bundleBytes,
-  new Bun.CryptoHasher('sha256').update(bundleBytes).digest('hex'),
-);
+export const catalogLoad = loadInstallation(INSTALLATION_BYTES, INSTALLATION_SHA256);
 if (catalogLoad.kind !== 'ready') throw new Error(catalogLoad.reason);
 const catalog = catalogLoad.catalog;
 
@@ -107,18 +45,7 @@ const programs = requireMcpFixture();
 export const program = programs.program(SERVER);
 
 /** The approval digest of the synthetic server's connection, as the owner would compute and approve it. */
-export const connectionDigest = serverDigest(
-  { serverId: SERVER, declaration },
-  {
-    serverId: SERVER,
-    programId: SERVER,
-    literalEnv: {},
-    credentialEnv: { REPO_TOKEN: 'repo-token' },
-    toolTimeoutSeconds: 60,
-    approval: { kind: 'denied' },
-  },
-  program,
-);
+export const connectionDigest = connectionDigestFor(program);
 
 let reviewed: Promise<Map<string, string>> | undefined;
 /** The owner's review step: one explicit inspection outside any run, giving each tool's definition digest. */
@@ -165,6 +92,10 @@ export interface HarnessOptions {
   allowAgents?: string[];
   allowSkills?: string[];
   maxDelegationsPerRun?: number;
+  /** `denied` configures the synthetic server's connection as denied instead of approved. */
+  approval?: 'denied';
+  /** The installed catalog the service reads; the synthetic bundle unless given. */
+  catalog?: () => Promise<CatalogLoad>;
   /** The approved server's call deadline; 60 seconds unless given. */
   toolTimeoutSeconds?: number;
   /** Reuse an existing private state directory (a restart of the same deployment). */
@@ -188,15 +119,18 @@ export async function mcpService(options: HarnessOptions) {
     literalEnv: {},
     credentialEnv: { REPO_TOKEN: 'repo-token' },
     toolTimeoutSeconds: options.toolTimeoutSeconds ?? 60,
-    approval: {
-      kind: 'approved',
-      serverDigest: connectionDigest,
-      tools: options.grants.map((grant) => ({
-        name: grant.name,
-        definitionDigest: digests.get(grant.name) as string,
-        argumentEquals: (grant.argumentEquals ?? {}) as Record<string, string>,
-      })),
-    },
+    approval:
+      options.approval === 'denied'
+        ? { kind: 'denied' }
+        : {
+            kind: 'approved',
+            serverDigest: connectionDigest,
+            tools: options.grants.map((grant) => ({
+              name: grant.name,
+              definitionDigest: digests.get(grant.name) as string,
+              argumentEquals: (grant.argumentEquals ?? {}) as Record<string, string>,
+            })),
+          },
   };
   const source = JSON.stringify({
     version: 1,
@@ -266,7 +200,7 @@ export async function mcpService(options: HarnessOptions) {
     assembly,
     failStop: () => logs.push('fail_stop'),
     store: options.store ?? new RunStore(options.persistence.app, options.persistence.ownership),
-    catalog: async (): Promise<CatalogLoad> => catalogLoad,
+    catalog: options.catalog ?? (async (): Promise<CatalogLoad> => catalogLoad),
     preflight: createMcpPreflight(launch),
     mcpLaunch: launch,
     log: (line) => logs.push(line),
@@ -296,5 +230,17 @@ export async function mcpService(options: HarnessOptions) {
         arguments: args,
       },
     });
-  return { service, net, witness, spawns, start, stateDir, logs, digests, operator };
+  /** One request through the production API routes (`path` is below `/api/v1`). */
+  const api = async (method: 'GET' | 'POST', path: string, body?: unknown) => {
+    const response = await handleApi(
+      new Request(`http://127.0.0.1:3000/api/v1${path}`, {
+        method,
+        ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+      }),
+      () => service,
+    );
+    // biome-ignore lint/suspicious/noExplicitAny: a test reads whatever the contract returned.
+    return { status: response.status, body: (await response.json()) as any };
+  };
+  return { service, net, witness, spawns, start, api, stateDir, logs, digests, operator };
 }

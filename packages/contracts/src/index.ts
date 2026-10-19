@@ -3,6 +3,7 @@
 export * from './api.ts';
 export * from './auth.ts';
 export * from './capabilities.ts';
+export * from './capability-views.ts';
 export * from './commands.ts';
 export * from './common.ts';
 export * from './questions.ts';

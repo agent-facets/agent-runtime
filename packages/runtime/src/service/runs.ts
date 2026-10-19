@@ -7,7 +7,6 @@
 // actually created a run, or accepted an answer, dispatches work, and only after its commit is certain. Owner
 // input is screened for credentials before it is stored or reaches a model; it is refused, never rewritten.
 import {
-  type Acceptance,
   type AnswerAccepted,
   type CancellationAccepted,
   type ErrorCode,
@@ -66,75 +65,12 @@ import { formatDiagnostic } from '../security/diagnostics.ts';
 import { admitWorkspace, type PrivateLocations, type WorkspaceAdmission } from '../workspace/admission.ts';
 import type { WorkspacePolicy } from '../workspace/policy.ts';
 import { AnthropicLogin } from './auth.ts';
+import { CapabilityService, type CapabilityServiceOptions } from './capabilities.ts';
 import { OpenAILogin } from './openai-auth.ts';
 import { decodeRunCursor, encodeRunCursor, eventView, snapshotView, summaryView } from './projection.ts';
+import { type ApiResult, refusal } from './results.ts';
 
-/** A complete API outcome: the HTTP status and the contract-shaped body. */
-export type ApiResult<T = unknown> = { status: 200 | 202; body: T } | { status: number; body: ErrorEnvelope };
-
-const STATUS: Record<ErrorCode, number> = {
-  invalid_request: 400,
-  json_required: 400,
-  request_too_large: 400,
-  goal_required: 400,
-  goal_too_long: 400,
-  goal_not_storable: 400,
-  command_arguments_invalid: 400,
-  answer_invalid: 400,
-  credential_in_input: 400,
-  invalid_cursor: 400,
-  forbidden: 403,
-  not_found: 404,
-  method_not_allowed: 405,
-  request_conflict: 409,
-  answer_conflict: 409,
-  not_answerable: 409,
-  continuation_unavailable: 409,
-  provider_unavailable: 409,
-  workspace_unavailable: 409,
-  cancellation_conflict: 409,
-  run_finished: 409,
-  cursor_ahead: 409,
-  capability_selection_changed: 409,
-  capability_unavailable: 409,
-  cannot_verify: 503,
-  screening_unavailable: 503,
-  storage_unavailable: 503,
-  acceptance_unknown: 503,
-  capabilities_unavailable: 503,
-  mcp_server_unavailable: 503,
-  service_unavailable: 503,
-};
-
-export function refusal(
-  code: ErrorCode,
-  message: string,
-  details: {
-    acceptance?: Acceptance;
-    retryable?: boolean;
-    runId?: string;
-    questionId?: string;
-    /** A safe public reference to the affected contribution or tool. */
-    subject?: string;
-    status?: number;
-  } = {},
-): { status: number; body: ErrorEnvelope } {
-  const status = details.status ?? STATUS[code];
-  return {
-    status,
-    body: {
-      error: {
-        code,
-        message,
-        ...(details.runId === undefined ? {} : { runId: details.runId }),
-        ...(details.questionId === undefined ? {} : { questionId: details.questionId }),
-        ...(details.subject === undefined ? {} : { subject: details.subject }),
-        retryable: details.retryable ?? status === 503,
-        acceptance: details.acceptance ?? 'not_accepted',
-      },
-    },
-  };
-}
+export { type ApiResult, refusal } from './results.ts';
 
 const UNAVAILABLE_STORAGE = 'Run storage is unavailable right now. Nothing was changed; try again shortly.';
 const ACKNOWLEDGEMENT_LOST =
@@ -182,6 +118,8 @@ export interface RunServiceOptions {
   preflight?: McpPreflight;
   /** How approved servers are started; by default from the private state directory with this process's Bun. */
   mcpLaunch?: LaunchDeps;
+  /** Test seam: the bounded server inspection behind explicit discovery. */
+  inspect?: CapabilityServiceOptions['inspect'];
 }
 
 export type McpPreflight = (input: {
@@ -264,6 +202,8 @@ export class RunService {
   readonly login: AnthropicLogin;
   /** Connecting OpenAI from the console (a device login); independent of runs. */
   readonly openaiLogin: OpenAILogin;
+  /** The installed catalog, explicit server inspection and each run's retained capabilities. */
+  readonly capabilities: CapabilityService;
   readonly gates = new KeyedSerializer();
   readonly active = new ActiveInvocations();
   readonly #creations = new KeyedSerializer();
@@ -304,6 +244,14 @@ export class RunService {
       readCredential: (slot) => McpCredentialStore.forStateDir(options.locations.stateDir).read(slot),
     };
     this.#log = options.log ?? (() => {});
+    this.capabilities = new CapabilityService({
+      config: options.operator.capabilities,
+      catalog: this.#catalog,
+      launch: this.#mcpLaunch,
+      policy: () => options.assembly.contentPolicy(),
+      store: this.store,
+      ...(options.inspect === undefined ? {} : { inspect: options.inspect }),
+    });
     this.login = new AnthropicLogin({
       slot: providerSettingsFor(options.operator, 'anthropic')?.credentialSlot,
       coordinator: options.assembly.anthropicAuth.coordinator,

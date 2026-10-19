@@ -3,7 +3,7 @@
 import { canonicalAnswer, type QuestionView } from '@agent-runtime/contracts';
 import { type FormEvent, useState } from 'react';
 import type { ApiClient } from '../api/client.ts';
-import { formatValue } from './format.ts';
+import { actorLabel, formatValue } from './format.ts';
 
 const INVALID: Record<string, string> = {
   answer_missing: 'Choose or enter an answer.',
@@ -74,7 +74,13 @@ export function QuestionForm({
 
   return (
     <form className="panel question" onSubmit={submit} aria-label="Answer the question">
-      <h2>The agent asks</h2>
+      <h2>
+        {question.asker === undefined
+          ? 'The agent asks'
+          : question.asker.kind === 'root'
+            ? 'The root agent asks'
+            : `${actorLabel(question.asker)} asks`}
+      </h2>
       <p className="text prompt">{question.prompt}</p>
       {input.kind === 'text' && (
         <label>

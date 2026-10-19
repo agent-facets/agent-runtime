@@ -86,6 +86,21 @@ describe('request identity', () => {
     expect(identity.idFor({ goal: 'b' })).not.toBe(second);
   });
 
+  test('a command start is one request per exact submission: its revision and raw arguments are part of it', () => {
+    let next = 0;
+    const identity = new RequestIdentity<object>(() => `id-${++next}`);
+    const start = (selectionRevision: string, args: string) => ({
+      provider: 'anthropic',
+      command: { id: 'command:triage', selectionRevision, arguments: args },
+    });
+    const first = identity.idFor(start('a'.repeat(64), ''));
+    identity.settle({ ok: false, kind: 'unreachable' });
+    expect(identity.idFor(start('a'.repeat(64), ''))).toBe(first);
+    // A refreshed revision or different arguments are a different submission, never a retry of the first.
+    expect(identity.idFor(start('b'.repeat(64), ''))).not.toBe(first);
+    expect(identity.idFor(start('a'.repeat(64), ' '))).not.toBe(first);
+  });
+
   test('definite refusals settle the request; only unknown acceptance keeps it', () => {
     const refusedWith = (acceptance: 'not_accepted' | 'unknown' | 'already_accepted') =>
       settlementOf({
@@ -100,5 +115,37 @@ describe('request identity', () => {
       'unknown',
     ]);
     expect(settlementOf({ ok: false, kind: 'invalid_response', status: 200 })).toBe('unknown');
+  });
+
+  test('command starts, the catalog, inspection and run capabilities use their routes and contracts', async () => {
+    const revision = 'a'.repeat(64);
+    const { sent, client } = scripted([
+      json(snapshot('2'), 202),
+      json({ kind: 'unconfigured' }),
+      refusal('capability_selection_changed', 409),
+      json({ kind: 'native', throughSeq: '4' }),
+      json({ kind: 'made_up' }),
+    ]);
+    await client.startRun({
+      requestId: RUN,
+      provider: 'openai',
+      command: { id: 'command:triage', selectionRevision: revision, arguments: '' },
+    });
+    expect(JSON.parse(String(sent[0]?.init.body))).toEqual({
+      requestId: RUN,
+      provider: 'openai',
+      command: { id: 'command:triage', selectionRevision: revision, arguments: '' },
+    });
+    expect(await client.capabilities()).toMatchObject({ ok: true, value: { kind: 'unconfigured' } });
+    expect(sent[1]?.url).toBe('/api/v1/capabilities');
+    expect(await client.discoverServer('git_hub', revision)).toMatchObject({
+      ok: false,
+      error: { code: 'capability_selection_changed' },
+    });
+    expect(sent[2]?.url).toBe('/api/v1/capabilities/servers/git_hub/discover');
+    expect(JSON.parse(String(sent[2]?.init.body))).toEqual({ catalogRevision: revision });
+    expect(await client.runCapabilities(RUN)).toMatchObject({ ok: true, value: { kind: 'native' } });
+    expect(sent[3]?.url).toBe(`/api/v1/runs/${RUN}/capabilities`);
+    expect(await client.runCapabilities(RUN)).toMatchObject({ ok: false, kind: 'invalid_response' });
   });
 });
