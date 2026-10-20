@@ -3,7 +3,7 @@
 // nothing; only an explicit inspection of an approved server starts one short-lived process, which lists tools and
 // closes. The server's own witness log counts processes, listings and calls independently of the runtime.
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { selectionRevision } from '../../packages/runtime/src/capabilities/command.ts';
@@ -185,12 +185,24 @@ describe('command starts over HTTP', () => {
 
   test('refused selections start nothing and never become a goal run', async () => {
     const h = await mcpService({ scratch, persistence, grants: [{ name: 'list_items' }], replies: [] });
+    // A coding tool's materialized command in the workspace is not a runtime contribution: never offered, never
+    // startable, and left untouched.
+    const editorCommand = join(scratch, 'workspace', '.opencode', 'command', 'editor-only.md');
+    mkdirSync(join(editorCommand, '..'), { recursive: true });
+    writeFileSync(editorCommand, '---\ndescription: Editor only\n---\nDo $ARGUMENTS.\n');
+    const catalog = (await h.api('GET', '/capabilities')).body;
+    expect(JSON.stringify(catalog)).not.toContain('editor-only');
     const runs = async () => ((await db.admin`select count(*)::int as n from runtime.runs`)[0] as { n: number }).n;
     const before = await runs();
     for (const [body, status, code] of [
       [start(crypto.randomUUID(), 'owner/repo-a', 'e'.repeat(64)), 409, 'capability_selection_changed'],
       [
         start(crypto.randomUUID(), 'x', selectionRevision(REVISION, 'command:missing'), 'command:missing'),
+        409,
+        'capability_unavailable',
+      ],
+      [
+        start(crypto.randomUUID(), 'x', selectionRevision(REVISION, 'command:editor-only'), 'command:editor-only'),
         409,
         'capability_unavailable',
       ],
@@ -206,6 +218,7 @@ describe('command starts over HTTP', () => {
     expect(h.net.sent).toHaveLength(0);
     expect(h.witness().spawns).toBe(0);
     expect(await runs()).toBe(before);
+    expect(readFileSync(editorCommand, 'utf8')).toBe('---\ndescription: Editor only\n---\nDo $ARGUMENTS.\n');
   });
 });
 

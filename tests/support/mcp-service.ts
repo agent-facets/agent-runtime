@@ -20,6 +20,7 @@ import { RunStore } from '../../packages/runtime/src/records/run-store.ts';
 import { createContentPolicy } from '../../packages/runtime/src/security/content-policy.ts';
 import { handleApi } from '../../packages/runtime/src/service/http.ts';
 import { RunService, type RunServiceOptions } from '../../packages/runtime/src/service/runs.ts';
+import { REAL_TIME } from '../../packages/runtime/src/service/stream.ts';
 import { inferenceNetwork, offeredName, type SentInference } from './anthropic-network.ts';
 import { requireMcpFixture } from './mcp-fixture.ts';
 import {
@@ -242,5 +243,69 @@ export async function mcpService(options: HarnessOptions) {
     // biome-ignore lint/suspicious/noExplicitAny: a test reads whatever the contract returned.
     return { status: response.status, body: (await response.json()) as any };
   };
-  return { service, net, witness, spawns, start, api, stateDir, logs, digests, operator };
+  /** The same command start as `start`, through the production API route. */
+  const startApi = (args: string, requestId = crypto.randomUUID()) =>
+    api('POST', '/runs', {
+      requestId,
+      provider,
+      command: {
+        id: 'command:sync',
+        selectionRevision: selectionRevision(catalog.installationSha256, 'command:sync'),
+        arguments: args,
+      },
+    });
+  /**
+   * Reads a run's event stream through the production route from a cursor (`after`, or the `Last-Event-ID` a
+   * reconnecting browser sends) until the event with sequence `through`, then closes it; returns the events read.
+   */
+  const stream = async (runId: string, cursor: { after?: string; lastEventId?: string }, through: string) => {
+    const response = await handleApi(
+      new Request(`http://127.0.0.1:3000/api/v1/runs/${runId}/stream?after=${cursor.after ?? '0'}`, {
+        headers: cursor.lastEventId === undefined ? {} : { 'last-event-id': cursor.lastEventId },
+      }),
+      () => service,
+      undefined,
+      { ...REAL_TIME, pollMs: 20 },
+    );
+    if (response.status !== 200) throw new Error(`stream refused: ${response.status}`);
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder();
+    // biome-ignore lint/suspicious/noExplicitAny: a test reads whatever the contract returned.
+    const events: any[] = [];
+    let buffer = '';
+    try {
+      while (events.at(-1)?.seq !== through) {
+        const end = buffer.indexOf('\n\n');
+        if (end < 0) {
+          const { done, value } = await reader.read();
+          if (done) throw new Error('the stream ended early');
+          buffer += decoder.decode(value, { stream: true });
+          continue;
+        }
+        const block = buffer.slice(0, end).split('\n');
+        buffer = buffer.slice(end + 2);
+        const data = block.find((line) => line.startsWith('data: '));
+        if (data === undefined) continue;
+        const event = JSON.parse(data.slice('data: '.length));
+        if (!block.includes(`id: ${event.seq}`)) throw new Error('an event was sent without its sequence as its ID');
+        events.push(event);
+      }
+    } finally {
+      await reader.cancel();
+    }
+    return events;
+  };
+  /** A run's complete history through the paginated events route. */
+  const history = async (runId: string) => {
+    // biome-ignore lint/suspicious/noExplicitAny: a test reads whatever the contract returned.
+    const events: any[] = [];
+    for (let after = '0'; ; ) {
+      const page = await api('GET', `/runs/${runId}/events?after=${after}&limit=10`);
+      if (page.status !== 200) throw new Error(`history refused: ${page.status}`);
+      if (page.body.events.length === 0) return events;
+      events.push(...page.body.events);
+      after = page.body.nextAfter;
+    }
+  };
+  return { service, net, witness, spawns, start, startApi, api, stream, history, stateDir, logs, digests, operator };
 }

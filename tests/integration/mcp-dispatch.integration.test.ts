@@ -1,12 +1,14 @@
 // MCP dispatch through the production run service (design Decisions 4, 5 and 8; tasks 12.2–12.6): each new call is
 // permitted by the run's ceiling and the owner's current grants, validated against the approved raw schema, and only
 // then admitted with durable intent and sent once. Refused calls send nothing; matching calls need no confirmation.
-// The bundled synthetic server's witness log counts processes, listings and calls independently.
+// The bundled synthetic server's witness log counts processes, listings and calls independently. A whole-run capture
+// (task 18.3) shows the server's credential reaches nothing but that server.
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openPersistence, type Persistence } from '../../packages/runtime/src/persistence/persistence.ts';
+import { REDACTION } from '../../packages/runtime/src/security/content-policy.ts';
 import {
   type SentInference,
   sse,
@@ -337,4 +339,111 @@ describe('recorded MCP outcomes', () => {
     expect(await checkpointsContaining('toolu_2')).toBeGreaterThan(0);
     expect(await checkpointsContaining('mcp_Alias_')).toBe(0);
   });
+});
+
+describe('the server credential across a whole run', () => {
+  /**
+   * Every surface a run's data can reach, and whether the credential appears in it. Failures name only the surface:
+   * nothing captured is printed.
+   */
+  async function leaks(h: Awaited<ReturnType<typeof mcpService>>, runId: string) {
+    const contains = (value: unknown) => JSON.stringify(value).includes(SLOT_VALUE);
+    const history = await h.history(runId);
+    const stored: Record<string, boolean> = {};
+    const tables = (await db.admin`select table_name as name from information_schema.tables
+      where table_schema = 'runtime' and table_type = 'BASE TABLE'`) as { name: string }[];
+    for (const { name } of tables) {
+      const [row] = await db.admin.unsafe(
+        `select count(*)::int as n from runtime.${name} t where position($1 in row_to_json(t)::text) > 0`,
+        [SLOT_VALUE],
+      );
+      stored[`storage: ${name}`] = row.n > 0;
+    }
+    const surfaces = {
+      'model inputs': contains(h.net.sent.map((request) => request.body)),
+      'retained definitions': contains(await h.service.store.readCapabilities(runId)),
+      'saved graph state': (await checkpointsContaining(SLOT_VALUE)) > 0,
+      ...stored,
+      'API run detail and result': contains((await h.api('GET', `/runs/${runId}`)).body),
+      'API history': contains(history),
+      'API run capabilities': contains((await h.api('GET', `/runs/${runId}/capabilities`)).body),
+      'API catalog': contains((await h.api('GET', '/capabilities')).body),
+      'API run list': contains((await h.api('GET', '/runs')).body),
+      'event stream': contains(await h.stream(runId, { after: '0' }, history.at(-1)?.seq as string)),
+      diagnostics: contains(h.logs),
+    };
+    return {
+      checked: Object.keys(surfaces).length,
+      leaked: Object.entries(surfaces)
+        .filter(([, hit]) => hit)
+        .map(([surface]) => surface),
+    };
+  }
+
+  for (const provider of PROVIDERS) {
+    test(`${provider}: echoed, failed, refused and noisy calls keep it to the server`, async () => {
+      const h = await mcpService({
+        scratch,
+        persistence,
+        provider,
+        grants: [
+          { name: 'list_items', argumentEquals: { repository: 'owner/repo-a' } },
+          { name: 'echo_secret' },
+          { name: 'fail' },
+          { name: 'noisy' },
+          { name: 'env' },
+        ],
+        replies: [
+          call(provider, '1', 'echo_secret', {}),
+          call(provider, '2', 'fail', {}),
+          // (A model reply that repeats the credential fails the run before it is stored: unsafe model output.)
+          call(provider, '4', 'list_items', { repository: 'owner/repo-b' }),
+          call(provider, '5', 'noisy', {}),
+          call(provider, '6', 'env', {}),
+          done(provider),
+        ],
+      });
+      const runId = (await h.startApi('owner/repo-a')).body.run.runId as string;
+      await h.service.settled();
+      expect((await h.service.store.snapshot(runId)).state).toMatchObject({ kind: 'succeeded' });
+      // The server was sent only the calls that passed every check.
+      expect(h.witness().calls).toEqual(['echo_secret', 'fail', 'noisy', 'env']);
+      const ops = await operations(runId);
+      expect(ops.map((op) => [op.outcome, op.code])).toEqual([
+        ['ok', null],
+        ['error', 'mcp_tool_error'],
+        ['refused', 'argument_out_of_scope'],
+        ['ok', null],
+        ['ok', null],
+      ]);
+      // The server received its credential (the echo was redacted, so it carried the value) through its binding.
+      expect(String((ops[0]?.result as { result: { text: string } }).result.text)).toContain(REDACTION);
+      expect((ops[4]?.result as { result: { json: { names: string[] } } }).result.json.names).toContain('REPO_TOKEN');
+      const found = await leaks(h, runId);
+      expect(found.leaked).toEqual([]);
+      expect(found.checked).toBeGreaterThan(15);
+    });
+
+    test(`${provider}: an uncertain call after an echo ends the run without exposing it`, async () => {
+      const h = await mcpService({
+        scratch,
+        persistence,
+        provider,
+        grants: [{ name: 'list_items' }, { name: 'echo_secret' }, { name: 'crash' }],
+        replies: [call(provider, '1', 'echo_secret', {}), call(provider, '2', 'crash', {})],
+      });
+      const runId = (await h.startApi('owner/repo-a')).body.run.runId as string;
+      await h.service.settled();
+      expect(await runFailure(runId)).toMatchObject({
+        kind: 'failed',
+        failure: { category: 'tool_failure', reason: 'mcp_outcome_unknown' },
+      });
+      expect(h.witness().calls).toEqual(['echo_secret', 'crash']);
+      // No model turn after the unknown outcome.
+      expect(h.net.sent).toHaveLength(2);
+      const found = await leaks(h, runId);
+      expect(found.leaked).toEqual([]);
+      expect(found.checked).toBeGreaterThan(15);
+    });
+  }
 });

@@ -57,6 +57,28 @@ describe('runtime metadata profile', () => {
     expect(validateRuntimeMetadata('command', { runtimeVersion: 1, restrict: { shell: ['*'] } }).ok).toBe(false);
   });
 
+  test('execution modes and composition the profile cannot honor are refused, never ignored', () => {
+    for (const [kind, field, value] of [
+      ['agent', 'parallel', true],
+      ['agent', 'background', true],
+      ['agent', 'longLived', true],
+      ['command', 'compose', [{ facet: '@team/tools' }]],
+      ['skill', 'installs', ['@team/tools']],
+    ] as const) {
+      expect(validateRuntimeMetadata(kind, { runtimeVersion: 1, [field]: value })).toEqual({
+        ok: false,
+        reason: 'unsupported_field',
+        fields: [field],
+      });
+    }
+    // An unenforceable restriction category is refused too, not reduced to advice.
+    expect(validateRuntimeMetadata('agent', { runtimeVersion: 1, restrict: { network: ['*'] } })).toEqual({
+      ok: false,
+      reason: 'invalid_field',
+      fields: ['restrict'],
+    });
+  });
+
   test('an agent cannot permit further delegation, but may deny it', () => {
     expect(validateRuntimeMetadata('agent', { runtimeVersion: 1, restrict: { agents: [{ name: 'x' }] } })).toEqual({
       ok: false,
