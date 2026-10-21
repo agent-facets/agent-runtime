@@ -1,10 +1,10 @@
-# Spec Delta
+# Capabilities Specification
 
 ## Purpose
 
 Let the owner reuse installed workflows, skills, named agents, and external tools without changing runtime code. Make their origins, supported behavior, and limits of authority explicit before and during use.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Reproducible runtime facet installation
 
