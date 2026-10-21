@@ -2,7 +2,7 @@
 
 ## Phase 1 as built (MVP 01)
 
-The [MVP 01 design](../openspec/changes/mvp-01-interactive-agent-execution/design.md) (Decisions 1 and 13)
+The MVP 01 design (Decisions 1 and 13)
 supersedes the sections below where they differ. Phase 1 has one protocol: application-owned REST plus server-sent
 events for the browser console. Remote MCP, A2A, identity headers, app capabilities and push are not built.
 

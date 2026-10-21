@@ -4,7 +4,7 @@
 
 PR feedback is a useful test of the generalized framework: the agent must investigate independently, bring evidence to human decisions, remember applicable preferences, and deliver a usable artifact. Today the existing review facet requires repeated per-item gates and stops without producing a VIPER plan, leaving the owner to repeat preferences and translate accepted feedback into implementation work.
 
-This is phase 4 of [the framework MVP roadmap](../../roadmaps/framework-mvp.md). It depends on [`mvp-01-interactive-agent-execution`](../mvp-01-interactive-agent-execution/proposal.md), [`mvp-02-facet-backed-capabilities`](../mvp-02-facet-backed-capabilities/proposal.md), and [`mvp-03-cross-run-memory`](../mvp-03-cross-run-memory/proposal.md). These are proposal dependencies, not claims of implemented functionality.
+This is phase 4 of [the framework MVP roadmap](../../roadmaps/framework-mvp.md). It depends on `mvp-01-interactive-agent-execution`, `mvp-02-facet-backed-capabilities`, and [`mvp-03-cross-run-memory`](../mvp-03-cross-run-memory/proposal.md). These are proposal dependencies, not claims of implemented functionality.
 
 ## What Changes
 

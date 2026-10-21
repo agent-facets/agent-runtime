@@ -25,7 +25,7 @@ to kill assumptions early, not to confirm them.
 ## MVP integration evidence
 
 Added 2026-09-29. These records verify the Phase-1 build
-([mvp-01](../../openspec/changes/mvp-01-interactive-agent-execution/tasks.md)) under Bun. They are separate from
+(`mvp-01-interactive-agent-execution`) under Bun. They are separate from
 the original spike results above, which were measured on Node and are left unchanged.
 
 | Gate | Record | Outcome |

@@ -1,7 +1,7 @@
 # MVP 02 integration witnesses — facet-backed capabilities
 
 **Status: synthetic verification complete; owner acceptance not given.** Recorded under task 18.5 of
-[`mvp-02-facet-backed-capabilities`](../../../openspec/changes/archive/2026-10-20-mvp-02-facet-backed-capabilities/tasks.md). Every
+`mvp-02-facet-backed-capabilities`. Every
 result below comes from scripted providers, a disposable PostgreSQL fixture, the bundled synthetic MCP server, local
 synthetic facets and an isolated Compose project with internal networks. **No live provider request, deployment,
 production facet or grant, or owner-state operation was made.**

@@ -2,7 +2,7 @@
 
 ## Phase 1 as built (MVP 01)
 
-The [MVP 01 design](../openspec/changes/mvp-01-interactive-agent-execution/design.md) (Decisions 9 and 12)
+The MVP 01 design (Decisions 9 and 12)
 supersedes this document where they differ. Phase 1 has **no code execution, no executor sandbox, no network
 tools, no MCP broker, no trust tiers and no approvals as an entity**; the sections below are historical design
 intent for later phases.
@@ -86,7 +86,7 @@ evidence did not cover either.
 
 ## Phase 2 MCP boundary (MVP 02)
 
-The [MVP 02 design](../openspec/changes/archive/2026-10-20-mvp-02-facet-backed-capabilities/design.md) (Decisions 4, 5 and 10) governs
+The MVP 02 design (Decisions 4, 5 and 10) governs
 external tools. The trust tiers and broker below remain historical intent; there is no broker service.
 
 - **Grants are configuration.** Operator configuration approves a server connection (`serverDigest` over its

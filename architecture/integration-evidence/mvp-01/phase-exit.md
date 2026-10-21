@@ -40,7 +40,7 @@ fixture-image rollback, not a rollback of the live deployment.
 ## Requirement coverage
 
 The task 15.2 audit mapped all 32 requirements and 80 scenarios of the
-[execution spec](../../../openspec/changes/mvp-01-interactive-agent-execution/specs/execution/spec.md) to tests and
+MVP 01 execution spec to tests and
 records. It found four gaps, all closed before this record: login-restart and OpenAI service-expiry tests (task 25.2),
 a compatible-image rollback witness (25.3), and stale guidance plus two errors in the recovery record (25.4).
 

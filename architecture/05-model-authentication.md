@@ -2,7 +2,7 @@
 
 ## Phase 1 as built (MVP 01)
 
-The [MVP 01 design](../openspec/changes/mvp-01-interactive-agent-execution/design.md) (Decisions 9–11)
+The MVP 01 design (Decisions 9–11)
 supersedes this document where they differ. In particular, **Phase 1 is subscription-only: there is no API-key
 transport, no API fallback and no transport switching.** A later, explicitly selected API-key mode is anticipated
 by keeping provider identity separate from authentication mode, but it is not implemented or enabled. The
