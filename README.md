@@ -3,14 +3,15 @@
 A personal agent runtime: start a repository task from a browser, leave, return, answer the agent's
 questions, and collect the result using an existing Anthropic or OpenAI subscription.
 
-> **Status: the Anthropic browser slice works against a real Claude subscription** (local trial, 2026-09-30; see
-> [G4 live](architecture/integration-evidence/mvp-01/g4-anthropic-live.md)). The
+> **Status: the Anthropic browser slice works against a real Claude subscription,** locally and in the shipped
+> Docker deployment over Tailscale Serve (see [G4 live](architecture/integration-evidence/mvp-01/g4-anthropic-live.md)
+> and [G4 Docker/tailnet](architecture/integration-evidence/mvp-01/g4-anthropic-docker-tailnet.md)). The
 > [browser console](#browser-console-and-api), its REST/SSE API, controlled agent execution (see
 > [Agent execution](#agent-execution)), PostgreSQL persistence, the confined read/search tools, credential storage
-> and the [providers](#providers) exist: Anthropic subscription login (from the console or a terminal) and inference, and the OpenAI inference
-> transport (not yet usable: no OpenAI login). They are verified against scripted provider networks, including
-> real-browser journeys, and the Anthropic journey also live. A real token renewal, the Tailscale/second-device
-> path, OpenAI login and the remaining acceptance work are delivered by the remaining tasks in
+> and the [providers](#providers) exist: Anthropic and OpenAI subscription login (from the console or a terminal),
+> renewal and inference. They are verified against scripted provider networks, including real-browser journeys,
+> and the Anthropic journey also live. OpenAI has not yet run against the real service; a live OpenAI journey, a
+> real token renewal and the remaining acceptance work are delivered by the remaining tasks in
 > [`openspec/changes/mvp-01-interactive-agent-execution`](openspec/changes/mvp-01-interactive-agent-execution/tasks.md).
 
 Further reading:
@@ -194,8 +195,8 @@ endpoint, API key or other unsupported option can never be silently ignored:
   `codex-0.151.0` (OpenAI); see [Providers](#providers). Only `authMode: "subscription"` exists — there is no
   API-key mode and no billed fallback. At startup the runtime logs each configured provider's readiness
   (`provider_readiness`): Anthropic is `ready` with a usable stored credential (an expired access token still
-  counts; it renews on use) and `reauthorization_required` without one; OpenAI reports `integration_unavailable`
-  until its login exists; an unknown profile ID is `integration_unavailable`.
+  counts; it renews on use) and `reauthorization_required` without one, and the same holds for OpenAI; a profile
+  ID this build does not implement makes the provider `integration_unavailable`.
 - `credentialSlot` (default `default`) names the provider's credential record; the `auth` command uses the
   configured slot unless given `--slot`.
 - The workspace root must be a normalized absolute path that neither contains nor lies inside the runtime state
@@ -274,8 +275,8 @@ login, so a stale refresh can never overwrite a newer login. A definitive reject
 outcome is unknown** (a timeout or lost connection after sending, a server error, an unreadable or unusable
 answer): the issuer may already have rotated it, so the slot is durably marked as needing reauthorization
 (`refresh_outcome_unknown`) for every process. Only a refresh that certainly consumed nothing — never sent, or
-throttled — keeps the credential for a later attempt. Anthropic login and refresh are implemented (see
-[Providers](#providers)); OpenAI's are not yet.
+throttled — keeps the credential for a later attempt. Login and refresh are implemented for both providers (see
+[Providers](#providers)).
 
 **Secret-safe projections.** Goals and answers containing credential material are refused, not rewritten, before
 anything is stored or sent: they are screened against every generation in use and the usable credentials stored
@@ -458,17 +459,40 @@ runtime's credential lock, so it can run while the service is up:
 ```bash
 docker compose exec -it runtime bun dist/auth.js anthropic login     # inside the running application container
 docker compose exec runtime bun dist/auth.js anthropic status        # safe status only; never refreshes
+docker compose exec runtime bun dist/auth.js anthropic renew         # renew now: one token request, no model request
 bun packages/runtime/src/auth.ts anthropic status [--slot s]         # from a checkout (RUNTIME_STATE_DIR, RUNTIME_CONFIG_FILE)
 ```
 
 Token values are never printed. A rejection right after a renewal is definitive: the slot is marked as needing
-reauthorization, and later runs fail with authorization guidance without sending anything.
+reauthorization, and later runs fail with authorization guidance without sending anything. `renew` exists so a
+real renewal can be exercised deliberately; ordinary use never needs it, because access renews itself within five
+minutes of expiry. Like any renewal, one whose outcome is unknown marks the slot as needing a new login.
 
-**OpenAI** (profile `codex-0.151.0`). The inference transport exists: the measured Codex backend profile
-(allowlisted headers, stateless replay of encrypted reasoning and function calls with matching IDs), token and
-account always from one credential generation, and completion only on `response.completed`. It uses Bun's own
-`fetch`, which a test shows adds no browser-style headers. Device login and renewal are not implemented, so OpenAI
-stays unavailable.
+**OpenAI** (profile `codex-0.151.0`). Requests use the measured Codex backend profile (allowlisted headers,
+stateless replay of encrypted reasoning and function calls with matching IDs), token and account always from one
+credential generation, and completion only on `response.completed`. They use Bun's own `fetch`, which a test shows
+adds no browser-style headers. The profile's body settings and client version were captured from one model
+(`gpt-5.6-sol`) at Codex 0.151.0; if OpenAI stops accepting them, runs fail as an unsupported model/profile and the
+profile needs re-capturing as a new profile ID.
+
+**Log in from the console**: select OpenAI, then **Connect OpenAI**. The console shows a short code and a link to
+OpenAI's sign-in page (`https://auth.openai.com/codex/device`); sign in there with your ChatGPT account, enter the
+code and approve. Nothing is pasted back: the runtime notices the approval by itself and the panel switches to
+connected. How it behaves:
+
+- This is OpenAI's device login as the Codex CLI speaks it (reimplemented in
+  `packages/runtime/src/providers/openai/auth.ts`): the runtime polls OpenAI at the interval it asks for (at least
+  every second, by default every five) for up to fifteen minutes. A poll answered "not yet" (HTTP 403/404), throttled
+  or lost is simply followed by the next one; these never count as a model or authorization failure.
+- Waiting holds no credential lock. Once approved, the runtime checks the PKCE pair OpenAI supplies, exchanges it
+  **once** and stores the result as the slot's next generation, with the ChatGPT account ID from the ID token
+  issued alongside (decoded, not signature-checked: it routes requests, it grants nothing).
+- Cancel stops the polling. Pressing Connect again (after a reload) returns the login in progress. Unfinished logins
+  live only in memory; a restart forgets them.
+- The browser receives only the code to type and the page link; tokens stay on the server.
+
+From a terminal, `bun dist/auth.js openai login` prints the same page and code and waits; `openai status` and
+`openai renew` work as for Anthropic.
 
 Offline verification runs the stock models inside the stock agent against scripted provider streams
 (`src/providers/*/inference.test.ts`, and the production assembly on the official saver in
@@ -478,8 +502,10 @@ Offline verification runs the stock models inside the stock agent against script
 [G5 offline](architecture/integration-evidence/mvp-01/g5-openai-offline.md) evidence. Anthropic has also been
 verified live: console login, profile `claude-cli-2.1.280` with `claude-opus-5-5`, and the full
 read/question/restart/answer/result journey ([G4 live](architecture/integration-evidence/mvp-01/g4-anthropic-live.md));
-a real token renewal has not yet occurred. OpenAI has not run against the real service. Live checks happen only
-with the owner's fresh authorization.
+a real token renewal has not yet occurred. OpenAI login, renewal and the read/question/answer/result journey are
+verified offline only (`src/providers/openai/credentials.test.ts`, `src/service/openai-auth.test.ts`, the
+integration and browser suites); OpenAI has not run against the real service. Live checks happen only with the
+owner's fresh authorization.
 
 ## Deployment
 
@@ -509,8 +535,13 @@ docker compose logs tailscale   # first start: open the printed login URL to joi
 
 `AGENT_RUNTIME_PUBLIC_HOST` must be the full tailnet name Serve publishes (`<TS_HOSTNAME>.<your-tailnet>.ts.net`);
 the console only answers requests addressed to it. Restrict the machine to your own devices with your tailnet access
-policy. The real tailnet login, Serve HTTPS and access from a second device are not yet verified: the live Anthropic
-trial runs locally on loopback, and the tailnet journey is a later, separate check.
+policy. This deployment has been verified with a real tailnet node, Serve HTTPS and a second device, including the
+live Anthropic journey and restart/recreation of the runtime container
+([evidence](architecture/integration-evidence/mvp-01/g4-anthropic-docker-tailnet.md)). Enrolling the Tailscale
+container: open the login link it prints (`docker compose logs tailscale`), or, if you cannot complete that sign-in,
+generate a one-time auth key in the Tailscale admin console and run
+`docker compose exec tailscale tailscale login --auth-key=<key>` (do not run the console's install script on the
+host; only the container should join).
 
 Health endpoints: `/healthz` (liveness) and `/readyz` — ready (`200`) only when persistence is ready, agent execution
 is configured and composed, and the console is loaded; each is reported in `checks`. Provider authorization is not
@@ -521,9 +552,9 @@ part of readiness: an unauthorized provider is shown in the console and refuses 
 | Symptom | Cause and remedy |
 |---|---|
 | The console answers `403` | The address is not `RUNTIME_PUBLIC_ORIGIN`, or a change came from another page. Use exactly the configured tailnet name. |
-| Starting a run reports the provider unavailable | No usable authorization: press **Connect Anthropic** on the start form (or run the `auth … login` command); `auth … status` shows the slot's state. |
+| Starting a run reports the provider unavailable | No usable authorization: press **Connect Anthropic** or **Connect OpenAI** on the start form (or run the `auth … login` command); `auth … status` shows the slot's state. |
 | The console login says the code is not from this sign-in | The pasted text is from another (older) sign-in, or only part of the code was copied. Copy the whole code from the tab this login opened. |
-| The console login failed or expired | Press **Connect Anthropic** again for a new sign-in. A failed login never retries its code. |
+| The console login failed or expired | Press **Connect Anthropic** (or **Connect OpenAI**) again for a new sign-in. A failed login never retries its code. |
 | Input is refused as unscreenable | A credential record cannot be read or is invalid. Check `auth … status`, and log in again. |
 | The page shows “Reconnecting” | The connection dropped; the run is unaffected and the page catches up when it reconnects. |
 | `503 acceptance_unknown` | Storage could not confirm a change. Repeat the same action; it cannot be applied twice. |
@@ -531,8 +562,9 @@ part of readiness: an unauthorized provider is shown in the console and refuses 
 
 ## Limitations
 
-- The Anthropic slice has passed one bounded live trial on loopback; a real token renewal and use over Tailscale
-  Serve from a second device are not yet verified. OpenAI login is not implemented, so OpenAI runs cannot be started.
+- The Anthropic slice has passed bounded live trials locally and in the Docker deployment over Tailscale Serve; a
+  real token renewal has not yet occurred. OpenAI is implemented and verified offline but has not yet run against
+  the real service.
 - No application accounts: anyone your tailnet policy admits to the machine can use the console.
 - No backup, retention or restore tooling; ordinary restarts preserve the database volume, nothing more.
 - Read-only mounts and path checks are not a sandbox against hostile processes on the host; the workspace is

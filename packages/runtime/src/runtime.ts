@@ -96,7 +96,7 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
       // Admission stops first; persistence (and with it ownership) is released last.
       await server.stop(true);
       // An unfinished console login is aborted and settles (releasing its credential lock) before shutdown ends.
-      await runs?.login.stop();
+      await Promise.all([runs?.login.stop(), runs?.openaiLogin.stop()]);
       await persistence?.close();
       resolveStopped(code);
       return code;

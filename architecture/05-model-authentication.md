@@ -15,8 +15,8 @@ Implemented so far (`packages/runtime/src/providers/`, `packages/runtime/src/cre
   Models and request profiles are required operator configuration, never inferred from spike IDs. Readiness is one
   of `unconfigured`, `integration_unavailable`, `reauthorization_required`, `temporarily_unavailable` or `ready`,
   computed from stored credentials only (readiness never refreshes) and logged at startup. The service's provider
-  assembly (`providers/assembly.ts`) registers Anthropic and builds each invocation's model from the run's stored
-  binding, refusing an unknown profile; OpenAI stays `integration_unavailable` until its authorization exists.
+  assembly (`providers/assembly.ts`) registers both providers and builds each invocation's model from the run's
+  stored binding, refusing a profile the provider's integration does not implement.
   Ambient API keys are ignored, and the LangSmith gateway and OpenAI organization/project variables are refused at
   startup.
 - **Credential records.** Versioned, strictly decoded, per provider and slot: generation, lifecycle
@@ -89,7 +89,21 @@ would honor them). The spike measured Node's `fetch` adding headers no caller ca
 Bun's `fetch` does not add them (a loopback capture test pins this), so the runtime uses Bun's `fetch` and the
 `node:http` path is not used.
 
-**Console login (design Decision 16).** The owner connects Anthropic from the browser: the console starts an
+OpenAI authorization (`packages/runtime/src/providers/openai/auth.ts` and `credentials.ts`) reimplements the
+device login the Codex CLI 0.151.0 speaks, as measured by Spike 04 (the spike is evidence; nothing imports it):
+JSON `usercode` request with the public Codex client ID; polling of `deviceauth/token` at the server's interval,
+where 403/404 (and throttling, server errors and lost or timed-out polls) mean "keep polling", for at most fifteen
+minutes; a check that the server-supplied PKCE verifier derives its challenge before the one-time code is spent;
+a form-encoded `authorization_code` exchange; and a JSON `refresh_token` grant. Expiry comes from the access
+token's `exp` (epoch seconds, converted to milliseconds) or else `expires_in`; the account ID from the ID token's
+`https://api.openai.com/auth` claim, decoded without signature verification because it is routing metadata, not
+authorization policy. A refresh may rotate the refresh token and, with a new ID token, the account; omitted values
+keep the stored ones. Deliberate differences from Codex: an absent poll interval means five seconds rather than
+zero, an unparsable one fails the login, the interval is clamped to 1–60 s, and each poll has a 30-second limit.
+Requests go through an exact-endpoint transport (three POST routes on `https://auth.openai.com`, no redirects).
+Waiting for approval holds no credential lock; the exchange and durable replacement run under the provider lock.
+
+**Console login (design Decision 16).** The owner connects either provider from the browser. Anthropic: the console starts an
 attempt, links to the same PKCE authorization URL, and posts the code Anthropic's fixed callback page shows to
 `/api/v1/auth/anthropic/complete`. Attempts live only in the runtime's memory (ten-minute lifetime, one unfinished
 at a time, at most 32 retained); the verifier and OAuth state stay on the server. Waiting for the code holds no
@@ -97,9 +111,15 @@ lock. On arrival the code is checked against the attempt's state (a paste from a
 anything is sent), the attempt is claimed, and the existing `loginAnthropic` runs once under the provider lock. A
 claimed attempt's failure is final — rejected, throttled, unknown outcome, lock busy or not stored — and its code is
 never sent again; success is reported only after durable replacement. Shutdown aborts an unfinished exchange and
-waits for its lock to be released. The terminal command remains as a fallback.
+waits for its lock to be released. OpenAI (an owner-approved extension of Decision 16): `/api/v1/auth/openai/begin`
+asks OpenAI for a device code and returns it with the verification page; the owner enters it on OpenAI's page and
+the service, which polls in the background, exchanges and stores the approval. There is no `complete` route:
+nothing is pasted back. `status` and `cancel` work as for Anthropic; cancel stops polling, and an approval already
+being exchanged is reported as it settles. The terminal commands remain as a fallback.
 
-The operator command is bundled into the application image (`bun dist/auth.js anthropic login|status`). A 401
+The operator command is bundled into the application image (`bun dist/auth.js <anthropic|openai>
+login|status|renew`). `renew` forces exactly one refresh of the stored authorization and sends no model request,
+so a real renewal can be exercised deliberately. A 401
 right after a renewal is treated as definitive: the renewed generation is durably marked as needing
 reauthorization, so later runs fail with authorization guidance without dispatching.
 
@@ -107,8 +127,9 @@ The browser API starts runs through the assembly and screens goals and answers a
 before storing them. An optional deployment-wide `modelRequestCeiling` caps model requests across all runs (used
 by the bounded live trial).
 
-Not yet implemented: the OpenAI device flow and refresh, and any live verification. Issuer rotation and local persistence cannot be one transaction: a crash between them can
-require reauthorization.
+Not yet verified: OpenAI against the real service (login, renewal and the journey are verified offline only), and a
+real token renewal for either provider. Issuer rotation and local persistence cannot be one transaction: a crash
+between them can require reauthorization.
 
 ## Historical design
 

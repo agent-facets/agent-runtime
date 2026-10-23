@@ -1,7 +1,9 @@
-// Connecting Anthropic from the console (task 12.17): the built console in headless Chromium against the runtime's
-// API, with a scripted token endpoint as the witness of every exchange. Anthropic's own pages are never loaded:
-// the test reads the sign-in link and pastes what that page would show.
+// Connecting a provider from the console (tasks 12.17 and 14.3): the built console in headless Chromium against the
+// runtime's API, with scripted issuers as the witness of every exchange. The providers' own pages are never loaded:
+// for Anthropic the test reads the sign-in link and pastes what that page would show; for OpenAI the scripted issuer
+// approves the device code as OpenAI's page would.
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -170,6 +172,115 @@ describe('connecting Anthropic from the console', () => {
       await page.getByRole('button', { name: 'Connect Anthropic' }).waitFor({ timeout: TIMEOUT });
       expect(await codeBox(page).count()).toBe(0);
       expect(server.tokens.sent).toHaveLength(1);
+      expect(server.net.sent).toEqual([]);
+    } finally {
+      await context.close();
+      await server.stop();
+    }
+  });
+});
+
+describe('connecting OpenAI from the console', () => {
+  const b64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const jwt = (claims: Record<string, unknown>) => `${b64({ alg: 'RS256' })}.${b64(claims)}.c3ludGhldGlj`;
+  const VERIFIER = 'synthetic-browser-verifier-0123456789abcdefghijklmn';
+  const OPENAI_ACCESS = jwt({ exp: Math.floor(Date.now() / 1000) + 864_000, sub: 'browser-openai-access' });
+  const OPENAI_REFRESH = 'synthetic-browser-openai-refresh-token';
+  const deviceCode = () =>
+    Response.json({ device_auth_id: 'deviceauth_browser', user_code: 'BRWS-24680', interval: '1' });
+  const waiting = () => new Response(null, { status: 403 });
+  const approval = () =>
+    Response.json({
+      authorization_code: 'synthetic-browser-authorization-code',
+      code_verifier: VERIFIER,
+      code_challenge: createHash('sha256').update(VERIFIER).digest('base64url'),
+    });
+  const issued = () =>
+    Response.json({
+      id_token: jwt({ 'https://api.openai.com/auth': { chatgpt_account_id: 'acct_browser' } }),
+      access_token: OPENAI_ACCESS,
+      refresh_token: OPENAI_REFRESH,
+    });
+
+  async function openOpenAI(url: string) {
+    const opened = await openConsole(url);
+    // Nothing may reach OpenAI's real pages from a test.
+    await opened.context.route('https://auth.openai.com/**', (route) => route.abort());
+    await opened.page.getByLabel('Provider').selectOption('openai');
+    return opened;
+  }
+
+  test('the console shows the code and page; approval elsewhere is noticed; no paste, run or model request', async () => {
+    const server = await consoleServer({
+      persistence,
+      scratch,
+      workspaceRoot: fixture.root,
+      replies: [],
+      openai: [deviceCode(), waiting(), waiting(), approval(), issued()],
+    });
+    const { context, page } = await openOpenAI(server.url);
+    try {
+      await page.getByText('Connect it below.').waitFor({ timeout: TIMEOUT });
+      await page.getByLabel('Goal').fill('A goal written before connecting OpenAI.');
+      await page.getByRole('button', { name: 'Connect OpenAI' }).click();
+
+      const link = page.getByRole('link', { name: 'Open OpenAI sign-in' });
+      await link.waitFor({ timeout: TIMEOUT });
+      expect(await link.getAttribute('href')).toBe('https://auth.openai.com/codex/device');
+      expect(await link.getAttribute('target')).toBe('_blank');
+      expect(await link.getAttribute('rel')).toBe('noopener noreferrer');
+      expect(await page.locator('code.user-code').textContent()).toBe('BRWS-24680');
+      expect(await page.getByRole('textbox', { name: 'Code', exact: true }).count()).toBe(0);
+
+      await page.getByText('Connected. You can start tasks now.').waitFor({ timeout: TIMEOUT });
+      await page.getByRole('button', { name: 'Reconnect' }).waitFor({ timeout: TIMEOUT });
+      expect(await page.getByLabel('Provider').inputValue()).toBe('openai');
+      expect(await page.getByLabel('Goal').inputValue()).toBe('A goal written before connecting OpenAI.');
+      expect(await page.getByText('Connect it below.').count()).toBe(0);
+
+      expect(server.openaiSent).toEqual([
+        '/api/accounts/deviceauth/usercode',
+        '/api/accounts/deviceauth/token',
+        '/api/accounts/deviceauth/token',
+        '/api/accounts/deviceauth/token',
+        '/oauth/token',
+      ]);
+      expect(server.net.sent).toEqual([]);
+      expect(server.tokens.sent).toEqual([]);
+      const stored = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }));
+      const html = await page.content();
+      for (const secret of [OPENAI_ACCESS, OPENAI_REFRESH, VERIFIER, 'synthetic-browser-authorization-code']) {
+        expect(stored).not.toContain(secret);
+        expect(html).not.toContain(secret);
+        expect(server.logs.join('\n')).not.toContain(secret);
+      }
+    } finally {
+      await context.close();
+      await server.stop();
+    }
+  });
+
+  test('cancelling while waiting closes the login; a reload finds a login still waiting', async () => {
+    const server = await consoleServer({
+      persistence,
+      scratch,
+      workspaceRoot: fixture.root,
+      replies: [],
+      openai: [deviceCode(), ...Array.from({ length: 60 }, waiting)],
+    });
+    const { context, page } = await openOpenAI(server.url);
+    try {
+      await page.getByRole('button', { name: 'Connect OpenAI' }).click();
+      await page.locator('code.user-code').waitFor({ timeout: TIMEOUT });
+      await page.reload();
+      await page.getByLabel('Provider').selectOption('openai');
+      await page.getByRole('button', { name: 'Connect OpenAI' }).click();
+      expect(await page.locator('code.user-code').textContent()).toBe('BRWS-24680');
+      expect(server.openaiSent.filter((path) => path.endsWith('/usercode'))).toHaveLength(1);
+
+      await page.getByRole('button', { name: 'Cancel' }).click();
+      await page.getByRole('button', { name: 'Connect OpenAI' }).waitFor({ timeout: TIMEOUT });
+      expect(server.openaiSent).not.toContain('/oauth/token');
       expect(server.net.sent).toEqual([]);
     } finally {
       await context.close();

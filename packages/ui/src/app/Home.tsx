@@ -3,7 +3,7 @@ import type { Options, Provider, RunSummary } from '@agent-runtime/contracts';
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import type { ApiClient } from '../api/client.ts';
 import { RequestIdentity } from '../api/requests.ts';
-import { ConnectAnthropic } from './Connect.tsx';
+import { ConnectAnthropic, ConnectOpenAI } from './Connect.tsx';
 import { formatTime, providerLabel, STATE_LABELS } from './format.ts';
 import { runHref } from './route.ts';
 
@@ -123,18 +123,19 @@ export function StartForm({ client }: { client: ApiClient }) {
         {selected !== undefined && selected.readiness !== 'ready' && (
           <p className="notice error">
             {providerLabel(selected.provider)} is not ready ({selected.readiness.replaceAll('_', ' ')}).
-            {selected.provider === 'anthropic' &&
-              selected.readiness === 'reauthorization_required' &&
-              ' Connect it below.'}
+            {selected.readiness === 'reauthorization_required' && ' Connect it below.'}
           </p>
         )}
         {notice !== undefined && <p className={`notice ${notice.tone}`}>{notice.text}</p>}
       </form>
       {/* Its own form, outside the task form: the code is never part of a task. */}
-      {selected?.provider === 'anthropic' &&
-        (selected.readiness === 'ready' || selected.readiness === 'reauthorization_required') && (
+      {selected !== undefined &&
+        (selected.readiness === 'ready' || selected.readiness === 'reauthorization_required') &&
+        (selected.provider === 'anthropic' ? (
           <ConnectAnthropic client={client} readiness={selected.readiness} onConnected={() => void loadOptions()} />
-        )}
+        ) : (
+          <ConnectOpenAI client={client} readiness={selected.readiness} onConnected={() => void loadOptions()} />
+        ))}
     </section>
   );
 }
