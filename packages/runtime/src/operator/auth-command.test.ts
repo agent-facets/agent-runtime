@@ -140,7 +140,9 @@ describe('auth anthropic login/status', () => {
     ]) {
       const attempt = session({ env });
       expect(await runAuthCommand(argv, attempt.io)).toBe(2);
-      expect(attempt.err).toEqual(['usage: auth <anthropic|openai> <login|status|renew> [--slot <slot>]']);
+      expect(attempt.err).toEqual([
+        'usage: auth <anthropic|openai> <login|status|renew> [--slot <slot>] | auth mcp <set|status> <slot>',
+      ]);
     }
     const badSlot = session({ env });
     expect(await runAuthCommand(['anthropic', 'status', '--slot', '../escape'], badSlot.io)).toBe(2);
@@ -274,5 +276,117 @@ describe('auth openai login/status', () => {
     expect(await runAuthCommand(['openai', 'login'], login.io)).toBe(1);
     expect(login.err).toEqual(['OpenAI refused the authorization. Run the login again.']);
     expect(await Bun.file(join(env.RUNTIME_STATE_DIR, 'credentials', 'openai', 'default.json')).exists()).toBe(false);
+  });
+});
+
+describe('auth mcp set/status', () => {
+  const VALUE = 'synthetic-mcp-secret-value-0000';
+
+  function mcpSession(options: {
+    env: Record<string, string>;
+    stdin?: string;
+    maintenance?: AuthCommandIo['maintenance'];
+  }) {
+    const out: string[] = [];
+    const err: string[] = [];
+    const requests: string[] = [];
+    const maintained: string[] = [];
+    const io: AuthCommandIo = {
+      env: options.env,
+      out: (line) => out.push(line),
+      err: (line) => err.push(line),
+      fetch: (async (url: string) => {
+        requests.push(url);
+        throw new Error('no request is expected');
+      }) as unknown as typeof fetch,
+      readLine: async () => {
+        throw new Error('auth mcp never reads a line');
+      },
+      readSecret: async (maxBytes) => {
+        const input = options.stdin ?? '';
+        return Buffer.byteLength(input) > maxBytes + 2 ? undefined : input.replace(/\r?\n$/, '');
+      },
+      maintenance:
+        options.maintenance ??
+        (async (url, body) => {
+          maintained.push(url);
+          return body();
+        }),
+    };
+    return { io, out, err, requests, maintained };
+  }
+  const slotFile = (env: Record<string, string>, slot = 'repo-token') =>
+    join(env.RUNTIME_STATE_DIR as string, 'mcp-credentials', `${slot}.json`);
+
+  test('set reads the value from stdin under maintenance ownership; status reports only its state', async () => {
+    const env = { RUNTIME_STATE_DIR: stateDir(), DATABASE_URL: 'postgres://fixture@127.0.0.1/db' };
+    const set = mcpSession({ env, stdin: `${VALUE}\n` });
+    expect(await runAuthCommand(['mcp', 'set', 'repo-token'], set.io)).toBe(0);
+    expect(set.maintained).toEqual([env.DATABASE_URL]);
+    expect(JSON.parse(readFileSync(slotFile(env), 'utf8'))).toEqual({ version: 1, value: VALUE });
+
+    const status = mcpSession({ env });
+    expect(await runAuthCommand(['mcp', 'status', 'repo-token'], status.io)).toBe(0);
+    expect(status.out).toEqual(['mcp/repo-token: present']);
+    const missing = mcpSession({ env });
+    expect(await runAuthCommand(['mcp', 'status', 'other'], missing.io)).toBe(1);
+    expect(missing.out).toEqual(['mcp/other: missing']);
+    writeFileSync(slotFile(env), '{', { mode: 0o600 });
+    const unusable = mcpSession({ env });
+    expect(await runAuthCommand(['mcp', 'status', 'repo-token'], unusable.io)).toBe(1);
+    expect(unusable.out).toEqual(['mcp/repo-token: unusable']);
+
+    for (const session of [set, status, missing, unusable]) {
+      expect(session.requests).toEqual([]);
+      expect([...session.out, ...session.err].join('\n')).not.toContain(VALUE);
+    }
+  });
+
+  test('the value is never accepted from arguments, and invalid values change nothing', async () => {
+    const env = { RUNTIME_STATE_DIR: stateDir(), DATABASE_URL: 'postgres://fixture@127.0.0.1/db' };
+    const argv = mcpSession({ env, stdin: VALUE });
+    expect(await runAuthCommand(['mcp', 'set', 'repo-token', VALUE], argv.io)).toBe(2);
+    expect(await runAuthCommand(['mcp', 'set', 'repo-token', '--value', VALUE], argv.io)).toBe(2);
+    expect(await runAuthCommand(['mcp', 'set', '--slot', 'repo-token'], argv.io)).toBe(2);
+    for (const stdin of ['short-value', 'a'.repeat(16_385), `${'a'.repeat(20)} spaced`, 'non-ascii-é-value-000', '']) {
+      const session = mcpSession({ env, stdin });
+      expect(await runAuthCommand(['mcp', 'set', 'repo-token'], session.io)).toBe(1);
+      expect(session.maintained).toEqual([]);
+      expect(session.err.join('\n')).toContain('Nothing was changed');
+    }
+    expect(await Bun.file(slotFile(env)).exists()).toBe(false);
+    expect([...argv.out, ...argv.err].join('\n')).not.toContain(VALUE);
+  });
+
+  test('set refuses without a database or while the runtime owns it, changing nothing', async () => {
+    const noDatabase = { RUNTIME_STATE_DIR: stateDir() };
+    const unconfigured = mcpSession({ env: noDatabase, stdin: VALUE });
+    expect(await runAuthCommand(['mcp', 'set', 'repo-token'], unconfigured.io)).toBe(1);
+    expect(unconfigured.err.join('\n')).toContain('DATABASE_URL');
+
+    const env = { RUNTIME_STATE_DIR: stateDir(), DATABASE_URL: 'postgres://fixture@127.0.0.1/db' };
+    const { MaintenanceRefused } = await import('../persistence/maintenance.ts');
+    const running = mcpSession({
+      env,
+      stdin: VALUE,
+      maintenance: async () => {
+        throw new MaintenanceRefused('runtime_running');
+      },
+    });
+    expect(await runAuthCommand(['mcp', 'set', 'repo-token'], running.io)).toBe(1);
+    expect(running.err.join('\n')).toContain('Stop the runtime first');
+    expect(await Bun.file(slotFile(env)).exists()).toBe(false);
+  });
+
+  test('refuses unknown actions and invalid slots', async () => {
+    const env = { RUNTIME_STATE_DIR: stateDir() };
+    for (const argv of [
+      ['mcp', 'login', 'slot'],
+      ['mcp', 'status'],
+      ['mcp', 'status', 'a', 'b'],
+    ]) {
+      expect(await runAuthCommand(argv, mcpSession({ env }).io)).toBe(2);
+    }
+    expect(await runAuthCommand(['mcp', 'status', 'Bad/Slot'], mcpSession({ env }).io)).toBe(2);
   });
 });

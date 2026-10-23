@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "workspace": { "id": "main", "label": "My repository", "root": "/workspace" },
+  "providers": {
+    "anthropic": { "authMode": "subscription", "model": "your-model-id", "profileId": "claude-cli-2.1.280" }
+  },
+  "defaultProvider": "anthropic",
+  "stepBudget": 50,
+  "capabilities": {
+    "installation": {
+      "path": "/etc/agent-runtime/facets/installation.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "allowSkills": ["skill:review"],
+    "allowAgents": ["agent:scout"],
+    "maxDelegationsPerRun": 8,
+    "localPrograms": {
+      "repo-tools": {
+        "bundlePath": "/opt/agent-runtime/mcp/repo-tools/1111111111111111111111111111111111111111111111111111111111111111.js",
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    },
+    "servers": [
+      {
+        "serverId": "repo-tools",
+        "programId": "repo-tools",
+        "literalEnv": { "REPO_MODE": "read" },
+        "credentialEnv": { "REPO_TOKEN": "repo-token" },
+        "toolTimeoutSeconds": 60,
+        "approval": {
+          "kind": "approved",
+          "serverDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "tools": [
+            {
+              "name": "list_pull_requests",
+              "definitionDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+              "argumentEquals": { "repository": "owner/repo-a" }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

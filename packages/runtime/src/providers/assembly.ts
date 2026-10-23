@@ -2,11 +2,13 @@
 // readiness, and the model wiring for one invocation of a run's stored binding. Both subscription providers are
 // registered; a stored binding whose profile this build does not support is `profile_unsupported`, never rebound.
 // One credential screen covers every request the service makes, so the content policy it supplies screens all
-// generations in use.
+// generations in use, and the configured MCP credentials once they have been admitted at startup.
 import { PROFILE_IDS, type Transport } from '@agent-runtime/anthropic-subscription';
+import { configuredCredentialSlots } from '../config/capabilities.ts';
 import type { OperatorConfig } from '../config/operator.ts';
 import { DEFAULT_MODEL_REQUEST_DEADLINE_SECONDS, providerSettingsFor } from '../config/operator.ts';
 import { CredentialCoordinator, type CredentialIssuer } from '../credentials/coordinator.ts';
+import type { ConfiguredMcpCredentials } from '../credentials/mcp-store.ts';
 import { CredentialScreen, ownerInputMatcher } from '../credentials/screening.ts';
 import { CredentialStore } from '../credentials/store.ts';
 import type { RequestAdmission } from '../execution/terminal.ts';
@@ -57,6 +59,11 @@ export interface ProviderAssembly {
    * for each configured provider and the given bindings. Undefined when screening cannot be completed.
    */
   ownerInputPolicy(bindings?: readonly ProviderBinding[]): Promise<ContentPolicy | undefined>;
+  /**
+   * Screens the configured MCP credentials from now on (read once, at startup, under runtime ownership). While a
+   * configured slot is unusable, or before admission when slots are configured, owner input cannot be screened.
+   */
+  admitMcpCredentials(loaded: ConfiguredMcpCredentials): void;
   wire(request: InvocationRequest): WiredModel | Unwired;
 }
 
@@ -96,6 +103,8 @@ export function createProviderAssembly(options: ProviderAssemblyOptions): Provid
     integration('anthropic', PROFILE_IDS),
     integration('openai', OPENAI_PROFILE_IDS),
   ]);
+  // Owner input is refused until every configured MCP credential is known to the screen.
+  let mcpScreeningComplete = configuredCredentialSlots(options.config).length === 0;
   const deadlineMs = (options.config?.modelRequestDeadlineSeconds ?? DEFAULT_MODEL_REQUEST_DEADLINE_SECONDS) * 1000;
 
   return {
@@ -104,6 +113,7 @@ export function createProviderAssembly(options: ProviderAssemblyOptions): Provid
     openaiAuth: { coordinator: (slot) => coordinator('openai', slot), transport: openaiTransport },
     contentPolicy: () => createContentPolicy(screen.matcher()),
     async ownerInputPolicy(bindings = []) {
+      if (!mcpScreeningComplete) return undefined;
       const slots = new Map<string, { provider: Provider; slot: string }>();
       for (const provider of ['anthropic', 'openai'] as const) {
         const settings = options.config === undefined ? undefined : providerSettingsFor(options.config, provider);
@@ -118,6 +128,10 @@ export function createProviderAssembly(options: ProviderAssemblyOptions): Provid
       }
       const result = await ownerInputMatcher(screen, store, [...slots.values()]);
       return result.ok ? createContentPolicy(result.matcher) : undefined;
+    },
+    admitMcpCredentials(loaded) {
+      screen.screenPermanently(loaded.values);
+      mcpScreeningComplete = loaded.unusable.length === 0;
     },
     wire(request) {
       const resolved = registry.reconstruct(request.binding);

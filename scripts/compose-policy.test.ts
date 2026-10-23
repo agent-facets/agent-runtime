@@ -101,6 +101,18 @@ describe('private browser access', () => {
       configFile: '/etc/agent-runtime/config.json',
     });
     expect(config.workspace.root).toBe('/workspace');
+    expect(config.capabilities).toBeUndefined();
+  });
+
+  test('the example capability configuration is valid and holds no credential value', async () => {
+    const { parseOperatorConfig } = await import('../packages/runtime/src/config/operator.ts');
+    const source = await Bun.file(join(repoRoot, 'deploy', 'runtime', 'config.capabilities.example.json')).text();
+    const config = parseOperatorConfig(source, {
+      stateDir: '/var/lib/agent-runtime',
+      configFile: '/etc/agent-runtime/config.json',
+    });
+    expect(config.capabilities?.servers[0]?.credentialEnv).toEqual({ REPO_TOKEN: 'repo-token' });
+    expect(config.capabilities?.servers[0]?.approval.kind).toBe('approved');
   });
 });
 

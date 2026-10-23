@@ -9,6 +9,9 @@
 //
 // The screen is bounded. When every retained generation is leased, a new generation is refused, so the request that
 // needed it is not sent: screening fails closed rather than quietly losing coverage.
+//
+// Configured MCP credentials are screened for the process's whole life, separately from provider generations: they
+// never count against the bound, are never evicted and take no lease.
 
 import type { Provider } from '../records/schemas.ts';
 import { type ExactSecretMatcher, exactSecretMatcher } from './matcher.ts';
@@ -36,6 +39,7 @@ export interface ScreenLease {
 export class CredentialScreen {
   /** In recency order: the first entry is the least recently leased. */
   readonly #entries = new Map<string, { tokens: readonly string[]; leases: number }>();
+  #permanent: readonly string[] = [];
   #matcher: ExactSecretMatcher = exactSecretMatcher([]);
 
   readonly #capacity: number;
@@ -61,7 +65,7 @@ export class CredentialScreen {
       this.#entries.delete(key);
     }
     this.#entries.set(key, entry);
-    if (added) this.#matcher = exactSecretMatcher([...this.#entries.values()].flatMap((retained) => retained.tokens));
+    if (added) this.#rebuild();
     entry.leases++;
     const held = entry;
     let released = false;
@@ -72,6 +76,20 @@ export class CredentialScreen {
         held.leases--;
       },
     };
+  }
+
+  /** Screens these values (configured MCP credentials) from now on, in addition to provider generations. */
+  screenPermanently(values: readonly string[]): void {
+    this.#permanent = [...new Set([...this.#permanent, ...values])];
+    this.#rebuild();
+  }
+
+  #retained(): string[] {
+    return [...this.#permanent, ...[...this.#entries.values()].flatMap((retained) => retained.tokens)];
+  }
+
+  #rebuild(): void {
+    this.#matcher = exactSecretMatcher(this.#retained());
   }
 
   /** A matcher over every retained generation, current at the time of the call. */
@@ -86,7 +104,7 @@ export class CredentialScreen {
   matcherIncluding(credentials: readonly ScreenedCredential[]): ExactSecretMatcher {
     if (credentials.length === 0) return this.#matcher;
     return exactSecretMatcher([
-      ...[...this.#entries.values()].flatMap((retained) => retained.tokens),
+      ...this.#retained(),
       ...credentials.flatMap((credential) => [credential.accessToken, credential.refreshToken]),
     ]);
   }

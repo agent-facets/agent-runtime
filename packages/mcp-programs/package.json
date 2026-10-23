@@ -1,0 +1,14 @@
+{
+  "name": "@agent-runtime/mcp-programs",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "bun src/build.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1"
+  }
+}

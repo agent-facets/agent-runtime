@@ -36,6 +36,12 @@ export const EXECUTION_ROOTS: readonly string[] = [
   'src/execution/saved-state.ts',
   'src/execution/terminal.ts',
   'src/records/run-store.ts',
+  // Capability authority and the MCP boundary decide what a resumed run may dispatch and how; they join the
+  // definition as they land, before the execution layer reaches them through imports.
+  'src/capabilities/authority.ts',
+  'src/mcp/call.ts',
+  'src/mcp/schema.ts',
+  'src/mcp/transport.ts',
 ];
 
 /** The adapter roots of each provider this build includes: its model, request profile, credentials and wiring. */

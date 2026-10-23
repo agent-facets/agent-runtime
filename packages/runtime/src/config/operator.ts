@@ -4,6 +4,7 @@
 import { z } from 'zod';
 import { isStorableText } from '../domain/text.ts';
 import type { Provider } from '../records/schemas.ts';
+import { capabilityConfigSchema } from './capabilities.ts';
 
 export const OPERATOR_CONFIG_MAX_BYTES = 65_536;
 export const DEFAULT_STEP_BUDGET = 50;
@@ -75,6 +76,8 @@ const operatorSchema = z
     modelRequestDeadlineSeconds: z.number().int().min(10).max(3600).default(DEFAULT_MODEL_REQUEST_DEADLINE_SECONDS),
     /** Optional limit on model requests across every run of this deployment, e.g. for a bounded live trial. */
     modelRequestCeiling: z.number().int().min(1).max(1_000_000).optional(),
+    /** Facet-backed capabilities; absent leaves the deployment goal-only. */
+    capabilities: capabilityConfigSchema.optional(),
   })
   .refine((config) => config.providers[config.defaultProvider] !== undefined, {
     message: 'the default provider must be configured',

@@ -138,6 +138,16 @@ installation. To seal the remaining contributions, omit the server in `facets.js
 Contributions that reference MCP tools are refused for the same reason. Exporting or installing a declaration never
 approves runtime access to a server.
 
+## Server programs, approvals and credentials
+
+A declared server's `command` is never run. The deployment supplies each server as a self-contained Bun bundle,
+built from an explicitly selected entry in `packages/mcp-programs` (none is selected), and operator configuration
+binds the server to that bundle and its SHA-256 (`capabilities.localPrograms`). Connection approval, tool grants
+and argument restrictions also live only in operator configuration; credentials live in private slots provisioned
+with `auth mcp set` while the runtime is stopped. See
+[Capability configuration](../../../README.md#capability-configuration) and the MCP server notes under
+[Authority boundaries](../../../README.md#authority-boundaries).
+
 ## Verification
 
 `bun run test:facets` exercises this procedure with synthetic fixture facets (`tests/facets/fixtures/`). Each run

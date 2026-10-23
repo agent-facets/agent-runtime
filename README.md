@@ -33,6 +33,7 @@ A Bun-workspace monorepo orchestrated by [Turborepo](https://turborepo.com), dep
 | `packages/contracts` | Browser-safe API schemas, the public run-state and event unions, command envelopes and answer validation, shared by the runtime and the console. Pure validation (`zod` only). |
 | `packages/ui` | The React browser console: API client, replaying event store, run views and question/cancellation controls. Its public entry is the HTML page the runtime bundles. |
 | `packages/facet-adapter` | Install-time tooling for the runtime's own facet installation: the `agent-runtime` adapter for the `facet` CLI and the sealer that turns a completed installation into the bundle the runtime verifies. Never imported by the runtime or shipped in its image. See [Runtime facets](#runtime-facets). |
+| `packages/mcp-programs` | Builds explicitly selected MCP server programs into self-contained, content-addressed Bun bundles with a manifest of their exact dependencies. No program is selected; its synthetic test servers (`test-support/`) are built only by `bun run test:integration`. See [Capability configuration](#capability-configuration). |
 | `packages/anthropic-subscription` | Private, server-only Anthropic subscription authorization and request profile: a minimal, project-maintained derivative of `@ex-machina/opencode-anthropic-auth` ([provenance](packages/anthropic-subscription/PROVENANCE.md)). No I/O of its own. |
 | `scripts/` | Repository checks, fixture launchers, the acceptance-trial tool and their tests. |
 | `tests/` | Explicitly launched integration, browser, container and facet-export fixtures and the shared acceptance-trial fixture (never run by ordinary checks). |
@@ -104,14 +105,14 @@ Run from the repository root (prefix with `mise exec --` if mise is not activate
 | Command | What it does |
 |---|---|
 | `bun run dev` | Runs the runtime with hot reload (uncached). |
-| `bun run build` | Builds the application to `packages/runtime/dist/` and the runtime facet adapter to `packages/facet-adapter/dist/`. |
+| `bun run build` | Builds the application to `packages/runtime/dist/`, the runtime facet adapter to `packages/facet-adapter/dist/` and the (empty) MCP program set to `packages/mcp-programs/dist/`. |
 | `bun run start` | Runs the built application. |
 | `bun run check` | Lint, typechecks, unit tests and build through Turbo; reuses valid local cache results. |
 | `bun run check:verify` | The same graph with `--force`: every task executes. Use this for acceptance. |
 | `bun run test` / `typecheck` | Package and repository-script tests / typechecks through Turbo. |
 | `bun run lint` | Biome lint and format check (read-only). `bun run format` applies fixes. |
 | `bun test` | Direct Bun discovery of unit suites; excludes spikes, `tests/**`, generated output and `*.integration`/`*.live` suites. |
-| `bun run test:integration` | Starts a disposable PostgreSQL fixture and runs `tests/integration` (persistence, ownership, run records, lifecycle, provider assembly and the API). Requires Docker. |
+| `bun run test:integration` | Starts a disposable PostgreSQL fixture and runs `tests/integration` (persistence, ownership, run records, lifecycle, provider assembly, the API and the MCP/Bun process gate, whose synthetic server bundles it builds into a disposable directory first). Requires Docker. |
 | `bun run test:browser` | Starts a disposable PostgreSQL fixture and runs `tests/browser`: the built console in headless Chromium against the run service, with scripted providers, including the acceptance-trial rehearsal. Requires Docker and `bun run browser:install`. |
 | `bun run console:offline` | Runs the console on this machine at `http://127.0.0.1:4310/` (or a free port, printed) with nothing real behind it: a disposable PostgreSQL fixture, a synthetic workspace and credential, and a scripted model that reads a file, asks one question and reports your answer. Goals containing “text”, “several” or “fail” choose a text question, a multiple-choice question or a provider failure. No provider is contacted. Ctrl+C stops it and removes everything it created. Requires Docker. |
 | `bun run test:facets` | Runs `tests/facets` with the pinned `facet` CLI (on `PATH`): installs synthetic fixture facets into disposable runtime and editor homes, then checks exports, sealing, reproducibility, server-bearing refusal and isolation between the two installations. Refuses an unpinned CLI without running it. No Docker, model or MCP server is used. |
@@ -256,6 +257,50 @@ enables the LangSmith gateway (`LANGSMITH_GATEWAY`), disables or replaces TLS ve
 `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are ignored: nothing reads them, and providers are selected only from this
 configuration.
 
+### Capability configuration
+
+An optional `capabilities` section holds the owner's grants for facet-backed command runs. Without it the
+deployment is goal-only, exactly as before. Command runs are not offered, so these grants are not used by any run.
+[`deploy/runtime/config.capabilities.example.json`](deploy/runtime/config.capabilities.example.json) shows every
+setting with placeholder digests:
+
+- `installation`: the absolute path of the sealed `installation.json` and its pinned SHA-256 (see
+  [Runtime facets](#runtime-facets)).
+- `allowSkills`, `allowAgents`: the skills and agents (`skill:<name>`, `agent:<name>`) runs may use.
+  `maxDelegationsPerRun` defaults to 8, at most 32.
+- `localPrograms`: deployment-supplied MCP server bundles by program ID. Each `bundlePath` must end in
+  `<programId>/<sha256>.js`, and the bundle's bytes must match `sha256` before it is started.
+- `servers`: one entry per installed server. `programId` names the bundle that runs for it; the facet's own
+  `command` never runs. `literalEnv` holds non-secret settings, and `credentialEnv` maps environment variables to
+  private credential slots. `toolTimeoutSeconds` is the per-call deadline (default 60, at most 300). There is no
+  working-directory setting.
+- `approval` is either `{ "kind": "denied" }` or `{ "kind": "approved", "serverDigest", "tools" }`. Approving a
+  server permits connecting to it; each entry in `tools` permits calls to one tool, identified by name and the
+  `definitionDigest` of its exact advertised definition. An empty `tools` list permits discovery only.
+  `argumentEquals` restricts named top-level arguments to exact scalar values, compared without coercion, for
+  example `{ "repository": "owner/repo-a" }`. No other kind of restriction exists.
+- A changed server declaration needs a new `serverDigest`, which blocks all of that server's tools until then. A
+  changed tool definition needs a new `definitionDigest` for that tool only. Grants are read at startup:
+  revoking one takes effect on restart, and new grants never widen a run that was already accepted.
+- Refused: unknown settings, duplicate servers or tool grants, a denied entry carrying grants, an environment
+  variable set as both a literal and a credential, a recognizable credential in a literal value, and any attempt to
+  set process identity, location, loader, proxy, TLS, tracing, debug, provider, database or runtime settings
+  (`HOME`, `PATH`, `TMPDIR`, `NODE_*`, `BUN_*`, `LD_*`, `*_PROXY`, `DEBUG`, `ANTHROPIC_*`, `PG*`, `RUNTIME_*` and
+  similar).
+
+**MCP credentials** live in private slots, never in the configuration. Provision one with the runtime **stopped**,
+reading the value from standard input (never from arguments), for example from a file:
+
+```bash
+bun dist/auth.js mcp set repo-token < /path/to/token-file    # inside the application image, runtime stopped
+bun dist/auth.js mcp status repo-token                       # missing, present or unusable; never the value
+```
+
+`set` accepts 16 to 16,384 printable, non-space ASCII characters, and needs `DATABASE_URL`. It takes the runtime's
+singleton database ownership for the write, without migrating or changing the owner epoch, so it refuses while the
+runtime (or another `set`) is running. The value takes effect when the runtime next starts. Neither command makes a
+network request, and nothing deletes a slot.
+
 ## Runtime facets
 
 Commands, skills and agents for the runtime come from a dedicated facet project,
@@ -359,6 +404,38 @@ sanitized inside the model call, before the graph checkpoints them, keeping the 
 calls, reasoning and replay metadata); only displayable text is redacted, and a credential anywhere else withholds
 the response.
 Diagnostics are flat allowlisted fields only — no free text, errors, requests, headers or bodies.
+
+**MCP credentials** live under `RUNTIME_STATE_DIR/mcp-credentials/<slot>.json` (`{ "version": 1, "value" }`) with
+the same private-file rules and atomic replacement as provider records. The runtime reads the configured slots once
+at startup, after it owns the database, and screens their values for the rest of its life, like provider
+credentials: in goals, answers, tool arguments, declarations and results. A missing slot holds nothing to screen
+(its server cannot start). If a configured slot is unusable, every goal and answer is refused as unscreenable until
+it is fixed, and startup logs `mcp_credentials_unusable`.
+
+**MCP servers** (the boundary used by facet-backed command runs) are local stdio programs only; HTTP declarations,
+OAuth, server-initiated sampling, elicitation and roots, resource reads and asynchronous tasks are refused. One
+module starts them: the owner-bound bundle is verified against its configured SHA-256 and run by the runtime's own
+pinned Bun with `--config=/dev/null --no-install --no-env-file`, from `RUNTIME_STATE_DIR/mcp/<serverId>/` with
+`HOME` and `TMPDIR` in its `home/` and `tmp/` (owner-only, kept across restarts, refused rather than repaired when
+unsafe). The argument vector is fixed (no shell). The environment is built from nothing: fixed identity values,
+the declaration's and owner's literals (which must agree) and that server's own credentials; nothing of the
+runtime's environment, including provider credentials, is passed on. Standard error is discarded.
+
+- Discovery and initialization share one 15-second deadline, at most eight listing pages and 128 tools, and one
+  incoming message is at most 1 MiB. A tool definition is at most 32 KiB, with input schemas limited to a closed
+  subset: object roots, scalar types (or a scalar paired with `null`), nested objects, single-schema arrays,
+  `required`, `additionalProperties` as a boolean, `enum`/`const` and numeric, length and item bounds. References,
+  `anyOf`/`oneOf`/`allOf`, conditionals, patterns and formats are refused, and such a tool is unavailable.
+  Arguments are validated against the raw approved schema as given: no defaults are inserted and nothing is
+  coerced.
+- A call is exactly one request, with no retry, reconnect or resource fetch, within the server's
+  `toolTimeoutSeconds`; progress notifications cannot extend it. Arguments are at most 32 KiB and are refused if
+  they carry credential material. Only text and JSON results are used: text is screened whole and then clipped to
+  the 64-KiB result limit, and structured content carrying a credential is withheld. A server's error reply
+  becomes a fixed message. If a call was sent but its completion cannot be established (deadline, cancellation, a
+  lost connection or a reply over 1 MiB), the outcome is uncertain, and the process is closed and awaited.
+- Grants restrict what the runtime **sends**. A server is trusted, unsandboxed code running as the runtime user,
+  with that user's access to other writable runtime locations; its data directory is a location, not a sandbox.
 
 ## Agent execution
 
@@ -633,6 +710,8 @@ part of readiness: an unauthorized provider is shown in the console and refuses 
 | OpenAI shows “integration unavailable” | The configured profile is not one this build implements (for example the retired `codex-0.151.0`). Configure `codex-responses-v1`. See [Providers](#providers). |
 | The console login says the code is not from this sign-in | The pasted text is from another (older) sign-in, or only part of the code was copied. Copy the whole code from the tab this login opened. |
 | The console login failed or expired | Press **Connect Anthropic** again for a new sign-in. A failed login never retries its code. |
+| `auth mcp set` says to stop the runtime first | The runtime (or another `set`) owns the database. Stop the runtime, run `set`, then start it again; nothing was changed. |
+| Every goal is refused as unscreenable and startup logged `mcp_credentials_unusable` | A configured MCP credential slot cannot be read safely (permissions, owner, links or an invalid record). Check it with `auth mcp status <slot>`, fix its storage or set it again with the runtime stopped. |
 | Input is refused as unscreenable | A credential record cannot be read or is invalid. Check `auth … status`, and log in again. |
 | The page shows “Reconnecting” | The connection dropped; the run is unaffected and the page catches up when it reconnects. |
 | `503 acceptance_unknown` | Storage could not confirm a change. Repeat the same action; it cannot be applied twice. |

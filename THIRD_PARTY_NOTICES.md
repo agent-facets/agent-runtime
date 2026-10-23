@@ -67,6 +67,9 @@ license.
 | Node and Debian base images | Spike Dockerfiles | Their own licenses |
 | `@agent-facets/adapter@0.30.0` | `packages/facet-adapter` (install-time adapter and sealer; bundled into its locally built adapter, not into the runtime image) | MIT, Copyright (c) 2026 Agent Facets, Inc.; see the [repository license](https://github.com/agent-facets/facets/blob/main/LICENSE). The npm package carries no `license` field or license file. |
 | `yaml@2.9.0` | Dependency of `@agent-facets/adapter`, bundled with it | ISC; <https://github.com/eemeli/yaml> |
+| `@modelcontextprotocol/sdk@1.32.1` | `packages/runtime` (MCP client and stdio transport, bundled into the runtime image); `packages/mcp-programs` (synthetic test servers only) | MIT, Copyright Anthropic, PBC; <https://github.com/modelcontextprotocol/typescript-sdk> |
+| `@langchain/mcp-adapters@1.1.4` | `packages/runtime` (tool-definition adaptation only; its invocation helpers are never executed), bundled into the runtime image | MIT; <https://github.com/langchain-ai/langchainjs> |
+| Transitive dependencies of the two packages above, including `ajv`, `ajv-formats`, `cross-spawn`, `debug` and the optional `extended-eventsource` | Bundled with them as needed | Their own licenses (MIT for those named), as recorded in `bun.lock` |
 | `facet` CLI 0.35.0 | Runtime facet installation, installed separately by the owner | The [Agent Facets repository license](https://github.com/agent-facets/facets/blob/main/LICENSE) (MIT); the binary's own terms were not separately verified |
 
 ### Obsidian
