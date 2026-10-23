@@ -1,0 +1,99 @@
+version: 2.1
+
+# One required status, `ci/circleci: check`: the complete non-live gate, `bun run check`. It runs on every branch,
+# including stacked and merge-queue branches, except Graphite's temporary `graphite-base/*` branches. Branches in this
+# repository share Turbo's remote cache through the `turbo-cache` context. Pull requests from forks (`pull/<n>`) run the
+# same check without any context, so their code never sees cache credentials. No deployment, provider or production
+# context is used.
+
+jobs:
+  check:
+    machine:
+      # Local Docker: the fixture suites publish loopback ports and bind-mount host directories.
+      image: ubuntu-2404:2026.05.1
+    resource_class: large
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-mise-{{ arch }}-{{ checksum "mise.toml" }}
+      - run:
+          name: Install the pinned Bun with mise
+          command: |
+            [ -x "$HOME/.local/bin/mise" ] || curl -fsSL https://mise.run | MISE_VERSION=v2026.3.8 sh
+            "$HOME/.local/bin/mise" trust
+            "$HOME/.local/bin/mise" install
+            echo "export PATH=\"$("$HOME/.local/bin/mise" where bun)/bin:\$PATH\"" >> "$BASH_ENV"
+      - save_cache:
+          key: v1-mise-{{ arch }}-{{ checksum "mise.toml" }}
+          paths:
+            - ~/.local/bin/mise
+            - ~/.local/share/mise/installs
+      - restore_cache:
+          keys:
+            - v1-bun-{{ arch }}-{{ checksum "bun.lock" }}
+      - run:
+          name: Install dependencies
+          command: bun install --frozen-lockfile
+      - save_cache:
+          key: v1-bun-{{ arch }}-{{ checksum "bun.lock" }}
+          paths:
+            - ~/.bun/install/cache
+      - restore_cache:
+          keys:
+            - v1-facet-{{ arch }}-{{ checksum "packages/facet-adapter/src/toolchain.ts" }}
+      - run:
+          name: Install the pinned facet CLI
+          command: |
+            pin=$(bun -e "const { PINNED_CLI } = await import('./packages/facet-adapter/src/toolchain.ts'); console.log(PINNED_CLI.version, PINNED_CLI.sha256['linux-x64'])")
+            version=${pin% *}
+            sha256=${pin#* }
+            bin="$HOME/.facet/bin/facet"
+            if ! echo "$sha256  $bin" | sha256sum --check --status 2>/dev/null; then
+              mkdir -p "$(dirname "$bin")"
+              curl -fsSL "https://registry.npmjs.org/@agent-facets/cli-linux-x64/-/cli-linux-x64-${version}.tgz" \
+                | tar -xzOf - package/bin/facet > "$bin.download"
+              echo "$sha256  $bin.download" | sha256sum --check --strict
+              mv "$bin.download" "$bin"
+              chmod 0755 "$bin"
+            fi
+            echo "export PATH=\"$HOME/.facet/bin:\$PATH\"" >> "$BASH_ENV"
+      - save_cache:
+          key: v1-facet-{{ arch }}-{{ checksum "packages/facet-adapter/src/toolchain.ts" }}
+          paths:
+            - ~/.facet/bin/facet
+      - restore_cache:
+          keys:
+            - v1-playwright-{{ arch }}-{{ checksum "bun.lock" }}
+      - run:
+          name: Install the pinned headless browser
+          command: |
+            bun --bun node_modules/playwright/cli.js install-deps chromium-headless-shell
+            bun run browser:install
+      - save_cache:
+          key: v1-playwright-{{ arch }}-{{ checksum "bun.lock" }}
+          paths:
+            - ~/.cache/ms-playwright
+      - run:
+          name: Check
+          command: bun run check
+          no_output_timeout: 30m
+
+workflows:
+  check:
+    jobs:
+      - check:
+          context:
+            - turbo-cache
+          filters:
+            branches:
+              ignore:
+                - /pull\/[0-9]+/
+                - /graphite-base\/.*/
+  check-fork:
+    jobs:
+      - check:
+          filters:
+            branches:
+              only:
+                - /pull\/[0-9]+/

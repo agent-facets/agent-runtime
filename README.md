@@ -77,7 +77,7 @@ dependency) with its headless Chromium, installed once with `bun run browser:ins
 Each spike harness has its own README with separate requirements. The root `facets.json` configures optional
 coding-tool facets for working on this repository; neither is needed to build or run the runtime. The runtime's own
 facet installation is separate (see [Runtime facets](#runtime-facets)) and needs the pinned `facet` CLI only when you
-install facets for it or run `bun run test:facets`.
+install facets for it or run `bun run test:facets` (part of `bun run check`).
 
 ### Worktrees
 
@@ -99,7 +99,7 @@ Run from the repository root (prefix with `mise exec --` if mise is not activate
 | `bun run dev` | Runs the runtime with hot reload (uncached). |
 | `bun run build` | Builds the application to `packages/runtime/dist/`, the runtime facet adapter to `packages/facet-adapter/dist/` and the (empty) MCP program set to `packages/mcp-programs/dist/`. |
 | `bun run start` | Runs the built application. |
-| `bun run check` | Lint, typechecks, unit tests and build through Turbo; reuses valid local cache results. |
+| `bun run check` | The complete non-live gate through Turbo: lint, typechecks, unit tests, the build, then the facet, integration, browser and container suites one at a time. Reuses valid cached results. Requires Docker, `bun run browser:install` and the pinned `facet` CLI on `PATH`. CI runs this. |
 | `bun run check:verify` | The same graph with `--force`: every task executes. Use this for acceptance. |
 | `bun run test` / `typecheck` | Package and repository-script tests / typechecks through Turbo. |
 | `bun run lint` | Biome lint and format check (read-only). `bun run format` applies fixes. |
@@ -113,13 +113,21 @@ Run from the repository root (prefix with `mise exec --` if mise is not activate
 | `bun run acceptance:anthropic` | The live trial's operator tool (Anthropic by default; `--provider openai --ceiling <n>` for OpenAI); use only as the [checklist](deploy/runtime/anthropic-acceptance.md) describes, after fresh authorization. Its `report` only reads two named runs. |
 | `bun run provenance:anthropic` | Maintenance only, uses the network: re-verifies the subscription package's recorded upstream baseline, or lists what differs at a candidate revision (see [PROVENANCE.md](packages/anthropic-subscription/PROVENANCE.md)). Never part of `check`. |
 
-Turbo caching is **local only** (remote caching and telemetry disabled). Package tasks are invalidated by
-changes to their workspace dependencies' sources and to shared configuration (`bun.lock`, `bunfig.toml`,
-`mise.toml`, root `package.json`, `tsconfig.base.json`). A cache hit restores `dist/` — server bundle, console page
-and assets, operator command and execution manifest. Because cached results are replayed logs, acceptance evidence
-uses `check:verify`. Build caching and run continuation are separate: a console-only change rebuilds the image but
-does not change any execution manifest, so paused runs stay answerable; a change to execution code — including a
-contracts module the server's execution uses — does change it.
+Turbo commands run through `scripts/run-turbo.ts`, with telemetry disabled. Results are shared through the
+`agent-facets` remote cache when Turbo has its credentials (in CI, the `turbo-cache` context); otherwise caching is
+local. Every cache key includes the platform and Bun version. Package tasks are invalidated by changes to their
+workspace dependencies' sources and to shared configuration (`bun.lock`, `bunfig.toml`, `mise.toml`, root
+`package.json`, `tsconfig.base.json`). A cache hit restores `dist/` — server bundle, console page and assets, operator
+command and execution manifest.
+
+The fixture suites cache only their success, never databases, images or temporary homes. Their keys cover the
+package sources, tests, launchers, Docker and deployment files, and the exact facet CLI, headless browser, Docker
+Engine and Compose versions; documentation changes do not invalidate them. Because a cache hit does not start a
+launcher, `check` itself first refuses the environment overrides the launchers refuse (below) and verifies their
+prerequisites. Because cached results are replayed logs, acceptance evidence uses `check:verify`. Build caching and
+run continuation are separate: a console-only change rebuilds the image but does not change any execution manifest,
+so paused runs stay answerable; a change to execution code — including a contracts module the server's execution
+uses — does change it.
 
 The integration, container and facet launchers accept no arguments, never read `.env`, forward only an allowlisted
 environment, and refuse to start if storage, Compose, credential, provider or facet-CLI variables (for example

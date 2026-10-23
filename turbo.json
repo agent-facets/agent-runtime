@@ -1,8 +1,9 @@
 {
   "$schema": "https://turborepo.com/schema.json",
   "ui": "stream",
-  "remoteCache": { "enabled": false },
+  "remoteCache": { "teamSlug": "agent-facets" },
   "globalDependencies": ["bun.lock", "bunfig.toml", "mise.toml", "package.json", "tsconfig.base.json"],
+  "globalEnv": ["CHECK_PLATFORM"],
   "tasks": {
     "transit": {
       "dependsOn": ["^transit"]
@@ -24,7 +25,18 @@
       "dependsOn": ["test", "//#test:scripts"]
     },
     "check": {
-      "dependsOn": ["//#lint", "//#typecheck:scripts", "//#test:scripts", "typecheck", "test", "build"]
+      "dependsOn": [
+        "//#lint",
+        "//#typecheck:scripts",
+        "//#test:scripts",
+        "typecheck",
+        "test",
+        "build",
+        "//#test:facets",
+        "//#test:integration",
+        "//#test:browser",
+        "//#test:container"
+      ]
     },
     "//#lint": {
       "inputs": ["$TURBO_DEFAULT$", "packages/**", "!packages/*/dist/**", "!packages/*/.turbo/**"]
@@ -34,6 +46,82 @@
     },
     "//#test:scripts": {
       "inputs": ["$TURBO_DEFAULT$", "packages/**", "!packages/*/dist/**", "!packages/*/.turbo/**"]
+    },
+    "//#test:facets": {
+      "description": "Facet export suite. Waits for the adapter build its launcher rebuilds, so the two never write dist/ at once.",
+      "dependsOn": ["@agent-runtime/facet-adapter#build"],
+      "env": ["CHECK_FIXTURE_TOOLCHAIN"],
+      "passThroughEnv": ["TMPDIR", "TERM"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "packages/**",
+        "!packages/*/dist/**",
+        "!packages/*/.turbo/**",
+        "!packages/*/node_modules/**",
+        "!.circleci/**",
+        "!architecture/**",
+        "!openspec/**",
+        "!spikes/**",
+        "!AGENTS.md",
+        "!README.md"
+      ]
+    },
+    "//#test:integration": {
+      "description": "Integration suite. The fixture suites run one at a time, so they never compete for the machine.",
+      "dependsOn": ["//#test:facets"],
+      "env": ["CHECK_FIXTURE_TOOLCHAIN"],
+      "passThroughEnv": ["TMPDIR", "TERM", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "packages/**",
+        "!packages/*/dist/**",
+        "!packages/*/.turbo/**",
+        "!packages/*/node_modules/**",
+        "!.circleci/**",
+        "!architecture/**",
+        "!openspec/**",
+        "!spikes/**",
+        "!AGENTS.md",
+        "!README.md"
+      ]
+    },
+    "//#test:browser": {
+      "description": "Browser smoke checks, after the integration suite.",
+      "dependsOn": ["//#test:integration"],
+      "env": ["CHECK_FIXTURE_TOOLCHAIN"],
+      "passThroughEnv": ["TMPDIR", "TERM", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "packages/**",
+        "!packages/*/dist/**",
+        "!packages/*/.turbo/**",
+        "!packages/*/node_modules/**",
+        "!.circleci/**",
+        "!architecture/**",
+        "!openspec/**",
+        "!spikes/**",
+        "!AGENTS.md",
+        "!README.md"
+      ]
+    },
+    "//#test:container": {
+      "description": "Container smoke test, last: it builds images from the package sources.",
+      "dependsOn": ["//#test:browser"],
+      "env": ["CHECK_FIXTURE_TOOLCHAIN"],
+      "passThroughEnv": ["TMPDIR", "TERM", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "packages/**",
+        "!packages/*/dist/**",
+        "!packages/*/.turbo/**",
+        "!packages/*/node_modules/**",
+        "!.circleci/**",
+        "!architecture/**",
+        "!openspec/**",
+        "!spikes/**",
+        "!AGENTS.md",
+        "!README.md"
+      ]
     },
     "dev": {
       "cache": false,
