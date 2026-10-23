@@ -2,7 +2,7 @@
 // readiness, and the model wiring for one invocation of a run's stored binding. Anthropic is registered; OpenAI
 // stays `integration_unavailable` until its authorization exists. One credential screen covers every request the
 // service makes, so the content policy it supplies screens all generations in use.
-import { PROFILE_IDS } from '@agent-runtime/anthropic-subscription';
+import { PROFILE_IDS, type Transport } from '@agent-runtime/anthropic-subscription';
 import type { OperatorConfig } from '../config/operator.ts';
 import { DEFAULT_MODEL_REQUEST_DEADLINE_SECONDS, providerSettingsFor } from '../config/operator.ts';
 import { CredentialCoordinator } from '../credentials/coordinator.ts';
@@ -36,6 +36,8 @@ export type Unwired = { unavailable: 'integration_unavailable' | 'profile_unsupp
 
 export interface ProviderAssembly {
   registry: ProviderRegistry;
+  /** What a console login needs: the slot's coordinator (shared with refresh) and the token-endpoint transport. */
+  anthropicAuth: { coordinator(slot: string): CredentialCoordinator; transport: Transport };
   contentPolicy(): ContentPolicy;
   /**
    * The content policy owner input is screened with: every generation in use, plus the usable credentials stored
@@ -82,6 +84,7 @@ export function createProviderAssembly(options: ProviderAssemblyOptions): Provid
 
   return {
     registry,
+    anthropicAuth: { coordinator: anthropicCoordinator, transport: auth },
     contentPolicy: () => createContentPolicy(screen.matcher()),
     async ownerInputPolicy(bindings = []) {
       const slots = new Map<string, { provider: Provider; slot: string }>();

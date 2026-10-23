@@ -10,6 +10,10 @@ Owner-approved corrective replan on 2026-09-30 inserts groups 17–18 after the 
 
 Owner-approved provider replan on 2026-09-30 replaces the upstream public-release prerequisite with the minimal internal v2-derived Anthropic subscription package in revised design Decision 10. LangChain/LangGraph and stock ChatAnthropic remain unchanged. Completed task descriptions, including the release research at 9.2, record the earlier work and SHALL remain intact; their upstream-delivery assumptions are superseded for future execution by this amendment. All 128 task identities, the 73 completed checkboxes, document order and model-switch/approval/verification gates are preserved. The pending provider tasks below implement the approved ownership change and the identified in-flight screening prerequisite. This artifact revision completes no additional task or gate and does not authorize implementation before 9.5 approval and the 10.1 pause, upstream edits or live provider traffic. Retained evidence and adversarial artifacts SHALL NOT be rewritten to describe the new approach as already verified.
 
+Owner-approved trial replan on 2026-09-30, at the 12.11 Review: the Anthropic G4 live journey (12.12) runs locally — the built runtime started directly on the owner's machine, loopback-only, with a dedicated database — instead of through Compose, Tailscale Serve and a second tailnet device. Private-network access is not abandoned: inserted task 16.7 (Step 129) verifies Serve HTTPS and a second-device journey before phase-exit evidence. G4 evidence SHALL state that the tailnet path was not covered by the local trial. The live allowance itself is recorded at 12.11.
+
+Owner-approved browser-auth replan, after the local runtime was shown to the owner: pause the live trial and implement the Connect Anthropic flow in revised design Decision 16. Proposal, specification, design and this task amendment were each approved in the conversation. Insert tasks 12.16–12.20 (Steps 130–134) after historical 12.11 and before 12.12; execute in document order, not numeric order. The three implementation steps, offline Verify and fresh live-authorization Review join the existing implementation phase without introducing another exploration block or changing any existing model-switch Pause. All 129 prior task identities, completed-work history and retained adversarial artifacts SHALL remain intact. The five new tasks start unfinished. The earlier terminal-login allowance at 12.11 SHALL NOT authorize browser auth or model traffic on the revised build. Demo hardening, mobile-specific work, OpenAI auth expansion and the deferred tailnet journey are outside this addition.
+
 ## Step Types
 
 - **Verify** → CHECK. Run automated checks (tests, lint, type checks).
@@ -39,7 +43,7 @@ Execution constraints:
 - Default tests SHALL be deterministic and independent of live credentials, provider traffic, production databases, and production services. Integration commands SHALL require isolated test storage and explicit invocation; fixtures SHALL never reset owner volumes or import spike credentials.
 - Future-block test cases MAY remain explicitly skipped with a task reference until their prerequisite lands. A skipped mandatory G1–G5 check SHALL NOT count as passed. All Phase-1 acceptance skips SHALL be resolved before final acceptance.
 - The project SHALL own the minimal internal Anthropic extraction specified in design Decision 10. Its baseline is the reviewed `@ex-machina/opencode-anthropic-auth@2.0.0-next.5` source and recorded revision/integrity, not a moving tag or the historical 1.8.1 spike profile. No new upstream release is required. Block 9 confirms ownership/extraction scope; block 10 implements and tests the actual package before connecting production registration and deployment. Actual-package G2 and offline G4/G5 remain mandatory before console buildout. Test doubles SHALL NOT substitute for acceptance. No runtime private upstream imports, OpenCode host/plugin dependency, global-fetch patch, framework/SDK fork, upstream edit or extraction beyond the reviewed scope is authorized.
-- Live verification SHALL have fresh approval for the named provider/model, account setup or renewal operations, maximum physical model requests, and any retry allowance. Approval of this task list or a prior spike SHALL NOT grant that authority. Operator login SHALL occur in the owner's private terminal; only safe readiness and verification outcomes enter the execution transcript.
+- Live verification SHALL have fresh approval for the named provider/model, account setup or renewal operations, maximum physical model requests, and any retry allowance. Approval of this task list or a prior spike SHALL NOT grant that authority. The owner SHALL handle sensitive login steps personally, through the explicitly approved dedicated browser-auth flow or private-terminal fallback. The executor SHALL NOT inspect provider sign-in content, pasted codes or authentication network bodies; only safe readiness and verification outcomes enter the execution transcript. This replaces the terminal-only constraint for the browser-auth addition, not for unapproved provider flows.
 - Verification failures SHALL stop dependent work. Changed approaches require explicit replanning; failed Bun checks SHALL NOT silently select Node, a custom saver, a middleware-only request counter, or billed access.
 - Gate evidence SHALL live under `architecture/integration-evidence/mvp-01/`, indexed from `architecture/spike-reports/README.md`. Fixed files are `g1-bun-persistence.md`, `g2-anthropic-boundary.md`, `g3-dispatch-lifecycle.md`, `g4-anthropic-offline.md`, `g4-anthropic-live.md`, `g5-openai-offline.md`, `g5-openai-live.md`, `upstream-handoff.md`, `openai-cost-checkpoint.md`, and `phase-exit.md`.
 - The retained `upstream-handoff.md` path SHALL record internal derivative ownership, exact upstream provenance/license, intentional differences and the update procedure; it SHALL NOT claim delivery of an upstream standalone release. G2 SHALL identify the actual internal package revision and tested source, not infer acceptance from its upstream version or from consumer fakes.
@@ -660,31 +664,74 @@ Run block checks and complete offline API/browser/Serve suites with G1–G3 and 
 Require the packaged UI to work in the single runtime image, contract changes to invalidate the relevant consumer checks/builds, and browser bundles to exclude runtime-only dependencies/private material. Recheck execution fingerprints after contract extraction: UI-only changes do not refuse continuation, while changes to execution-used shared modules do. Use forced check execution for acceptance, not a restored Turbo log.
 
 ### Step 91 - Review: Confirm live Anthropic authorization; obtain the bounded allowance
-- [ ] 12.11 Review: Confirm live Anthropic authorization; obtain the bounded allowance
+- [x] 12.11 Review: Confirm live Anthropic authorization; obtain the bounded allowance
 
 After offline checks pass, present the exact provider/model, owner-approved fixture content, auth/renewal operations, maximum physical model requests and retry allowance. Obtain fresh owner authorization now. The owner performs login in a private terminal; the executor receives only safe readiness/status. If authorization is withheld, stop before live verification.
 
+Granted 2026-09-30 against commit `e91a7d6`, after fresh `check:verify` (12/12, none cached), integration (141), browser (6) and container smoke (11) passes: Anthropic subscription, profile `claude-cli-2.1.280`, model `claude-opus-5-5`, credential slot `default`; one owner-performed `anthropic login` in a private terminal, refresh only as the runtime performs it on use; the `TRIAL` fixture note and two fixed goals in `tests/acceptance/anthropic-trial.ts`; two runs with a step budget of 6 each and a deployment-wide ceiling of 12 physical model requests, retries included. Any failure, refusal or exhausted limit stops the trial; a further attempt needs new authorization here. The executor drives the browser while the owner watches. Local deployment per the trial replan above.
+
+**Historical allowance, now suspended.** The owner subsequently chose browser login first. At suspension the executor had started the local runtime and dedicated database, opened the console, and observed Anthropic requiring authorization with no runs; the executor had performed no live auth or model request. The completed Review above records the earlier decision, not ongoing authority. Resume only after 12.16–12.19 and fresh authorization at 12.20 for the changed build and browser-login operation. Preserve the local trial's storage; do not silently restart its allowance or execute the old terminal-login instructions.
+
+### Step 130 - Implement: Add protected browser-auth operations; verify attempt and credential-boundary tests
+- [x] 12.16 Implement: Add protected browser-auth operations; verify attempt and credential-boundary tests
+
+Implement design Decision 16 in the existing contracts, runtime service/HTTP and runtime composition boundaries. Add strict browser-safe auth schemas, a bounded in-memory Anthropic attempt service and the begin/complete/status/cancel operations. Bind the configured subscription slot server-side. Reuse `beginLogin`, `loginAnthropic`, the exact-endpoint auth transport and the existing credential coordinator/store; supply already-submitted code to `loginAnthropic` so no credential lock is held during the owner's wait. Preserve the lock around exchange and durable credential replacement, CLI coexistence and all provider-profile/billing rules. No new database tables, auth framework, provider callback protocol, dependencies or upstream edits.
+
+Test bounded expiry/retention, one active attempt, atomic completion claims, concurrent and repeated submissions, cancellation before submission, restart loss, CLI/refresh contention, storage failure and ambiguous exchange outcomes. Independently count issuer/model I/O: begin/status/cancel make no issuer call, completion exchanges at most once, and all auth operations make zero inference requests. Exercise exact Host/Origin and Fetch Metadata rejection, bounded JSON/unknown-field refusal, no-store success/errors and secret-free response/diagnostic projections. Complete work is service-owned and bounded; closing a browser response SHALL NOT silently authorize another exchange. Tests use synthetic inputs and injected transports only.
+
+### Step 131 - Implement: Add the console connection panel; verify browser-only onboarding and safe handling
+- [x] 12.17 Implement: Add the console connection panel; verify browser-only onboarding and safe handling
+
+Add Connect/reauthorize Anthropic beside provider readiness in the existing Home/start view, typed API-client methods and a dedicated code form. Guide the owner through the official separate-tab link, provide a popup-blocker fallback link, and visibly report waiting, completing, connected and safe failure/expiry states. Refresh options after success without losing the owner's unsubmitted goal. Do not nest the auth form inside the start-run form. Clear the code on submit/cancel/unmount, keep it out of persistent browser storage and never route it through a task/question API. Do not expose token values, credential files or server-only package imports. Preserve the existing CLI fallback and OpenAI unavailable state.
+
+Add synthetic UI/Playwright journeys for first connection, reauthorization, refusal, pending-attempt expiry/restart, cancel, duplicate completion and lost-reply status inspection. Verify that Connected follows durable storage/readiness rather than an optimistic click. Scan protected surfaces for seeded codes/verifiers/access/refresh tokens with only the explicitly intended transient code input/auth request exempted; never exempt ordinary APIs, history, checkpoints or logs. This step changes the shipped desktop app, not the demo launcher or mobile layout.
+
+### Step 132 - Implement: Document browser-first login; verify local-trial and privacy guidance
+- [x] 12.18 Implement: Document browser-first login; verify local-trial and privacy guidance
+
+Update README, relevant authentication/security/network architecture guidance and `deploy/runtime/anthropic-acceptance.md` to describe Connect Anthropic and its paste-code form as the normal browser path, with terminal login optional. Reconcile the previously terminal-only/headless instructions and the local-trial amendment: the current G4 journey uses loopback, while real Serve HTTPS/second-device evidence remains 16.7. State the fixed provider callback, transient attempt lifetime/restart behavior, durable private tokens and safe error handling. Do not describe browser auth or the live trial as passed before verification.
+
+Document the live owner handoff precisely: show the console before asking the owner to act; the owner controls provider sign-in and code submission without executor screenshots/snapshots/network inspection; resume executor operation only after the owner reports completion and safe status confirms readiness. The revised acceptance checklist SHALL require the fresh 12.20 allowance and prohibit reuse of the historical 12.11 allowance. Preserve all prior reports and adversarial history.
+
+### Step 133 - Verify: Run browser-auth offline acceptance; require current-build isolation and regression evidence
+- [x] 12.19 Verify: Run browser-auth offline acceptance; require current-build isolation and regression evidence
+
+Passed 2026-09-30 on `e91a7d6` plus the uncommitted browser-login changes: forced `check:verify` 12/12 (none cached; runtime 400, contracts 17, subscription 61, UI 24 tests); PostgreSQL integration 144; browser 9 (including three console-login journeys); container smoke 11. The packaged bundle contains the connection panel and none of the server-only login code. No real login, refresh or model request was made.
+
+Run forced `check:verify`, PostgreSQL integration, browser and container smoke suites on the revised tree. Require new synthetic auth/concurrency/secrecy cases, existing CLI/provider/agent regressions and browser/server import boundaries to pass. Verify the packaged desktop console exposes the new connection flow and that successful auth alone never starts a run or makes an inference request. Record exact commands, tested source identity, counts and unresolved issues; cached logs or the earlier `e91a7d6` results SHALL NOT substitute. A failing mandatory check stops dependent work. No real login, refresh or model request belongs to this gate; leave the standalone demo stopped.
+
+### Step 134 - Review: Renew local browser-trial authorization; obtain the bounded allowance for the tested build
+- [x] 12.20 Review: Renew local browser-trial authorization; obtain the bounded allowance for the tested build
+
+After 12.19 passes, present the revised source/build identity, Anthropic subscription model/profile/slot, browser authorization exchange and permitted renewal operations, synthetic fixture, maximum physical model requests and retry/stop conditions. The earlier proposed two fixed runs, six requests per run and twelve total remain a proposal, not an active allowance. Obtain fresh explicit owner authorization using the question tool. The owner alone handles sensitive provider sign-in and pasted-code submission. On withheld approval, failure or refusal, stop before further live work. This is the immediately preceding live-authorization Review for 12.12; no authority carries from the historical 12.11 grant.
+
+Granted 2026-09-30, for the commit the owner makes of the 12.19-verified tree (its identity is recorded with the G4 evidence): Anthropic subscription, profile `claude-cli-2.1.280`, model `claude-opus-5-5`, credential slot `default`; one owner-performed console login (Connect Anthropic), with no executor screenshots, page reads or network inspection during it, and renewal only as the runtime performs it on use; the `TRIAL` fixture note and two fixed goals in the existing local trial storage; two runs with a step budget of 6 each and a deployment-wide ceiling of 12 physical model requests, retries included. The trial runtime restarts on the new build with its storage preserved. The executor drives the journey in a Chrome tab the owner watches. Any failure, refusal or exhausted limit stops the trial; a further attempt needs new authorization here.
+
 ### Step 92 - Verify: Run authorized Anthropic G4; require the bounded live journey to pass
-- [ ] 12.12 Verify: Run authorized Anthropic G4; require the bounded live journey to pass
+- [x] 12.12 Verify: Run authorized Anthropic G4; require the bounded live journey to pass
 
-Use only the fresh allowance from the immediately preceding live-authorization Review. The owner completes headless setup in a private terminal. Verify real read/tool-result/question/restart/answer/final-result and browser reconnect behavior within the declared cap. Report safe metadata and request counts only. Missing authority or failed evidence leaves this step unfinished; do not silently spend another allowance.
+Use only the fresh allowance from the immediately preceding live-authorization Review at 12.20. First show the owner the real console and its Connect Anthropic control. The owner completes provider authorization and the dedicated code form personally, with no executor inspection of sensitive pages, input or network bodies. After the owner confirms completion, check safe readiness and verify real read/tool-result/question/restart/answer/final-result and browser reconnect behavior within the declared cap. Report safe metadata and request counts only. Missing authority or failed evidence leaves this step unfinished; do not silently spend another allowance.
 
-The owner SHALL perform the browser journey from a second approved tailnet device over Tailscale Serve. Record safe device/context and outcome metadata within the same authorized trial; this does not grant extra model calls. Confirm the existing forged-Host/Origin and no-published-port checks also pass.
+Per the trial replan, run the built runtime locally on loopback with a dedicated database, private state directory and trial-only workspace, and perform the browser journey on the same machine. Close/reopen the page and restart the runtime process with its storage preserved. Record safe browser/context and outcome metadata within the same authorized trial; this does not grant extra model calls. Serve HTTPS and the second-device journey move to 16.7.
+
+Passed 2026-09-30 on commit `4ac0809` (loopback, Chrome on the owner's desktop): the owner connected Anthropic through the console (one real exchange; status ready, generation 1). Journey run `04f40616-…`: real read of the trial note, one yes/no question; page closed and reopened with the same single pending question; runtime restarted while waiting (both runs still waiting, authorization still ready); answer `false` accepted and a final result that respected it; succeeded with 3 model requests. Cancellation run `047df3bc-…`: question pending after 1 request, cancelled from the console, still cancelled with its question closed after a second restart. `acceptance:anthropic report`: journey 3, cancellation 1, total 4 of 12; `trial conditions hold`. No console errors or failed page requests. Evidence is recorded at 12.13.
 
 ### Step 93 - Implement: Record G4 evidence; verify correspondence to observed results
-- [ ] 12.13 Implement: Record G4 evidence; verify correspondence to observed results
+- [x] 12.13 Implement: Record G4 evidence; verify correspondence to observed results
 
 Write `g4-anthropic-live.md` from the preceding verification results and relevant owner reports/authorization. Include exact tested versions, source identity, commands, outcomes, request counts, unresolved issues and skips. Update the separately dated spike-index pointer. Do not rerun providers or infer a pass from missing evidence.
 
 ### Step 94 - Verify: Check G4 evidence; require accurate, safe and complete records
-- [ ] 12.14 Verify: Check G4 evidence; require accurate, safe and complete records
+- [x] 12.14 Verify: Check G4 evidence; require accurate, safe and complete records
 
 Check `g4-anthropic-live.md` and index links against the observed results, including tested-build identity and request allowance/counts. Reject unsupported pass claims, missing mandatory cases or sensitive content. This step checks records only and performs no new live provider requests.
 
 ### Step 95 - Review: Assess the usable Anthropic slice; obtain owner acceptance
-- [ ] 12.15 Review: Assess the usable Anthropic slice; obtain owner acceptance
+- [x] 12.15 Review: Assess the usable Anthropic slice; obtain owner acceptance
 
 Present the actual journey, evidence and limitations before proceeding to full OpenAI operational completion.
+
+Owner accepted the current local Anthropic slice after personally using it and reviewing the four remaining areas: real token renewal, Tailscale/second-device access, real Anthropic usage inside Docker, and OpenAI operational support. These are unverified paths/unfinished scope, not four observed failures. The owner emphasized small iterative delivery and early validation of the real containerized process. Acceptance does not establish a Docker-live pass or grant another auth/model allowance. The trial runtime is stopped; its database and saved authorization are preserved.
 
 ## 13. OpenAI operational completion — Research
 
@@ -763,7 +810,7 @@ Present both subscription journeys and remaining limitations or defects. A skipp
 ### Step 110 - Explore: Audit acceptance coverage; verify all requirements and gates have evidence
 - [ ] 15.2 Explore: Audit acceptance coverage; verify all requirements and gates have evidence
 
-Inspect all 30 requirements and 65 scenarios, directory-reading coverage, G1–G5 records, exact pins, block-local documentation and deferred-test markers. Report missing evidence without editing code or declaring skips passed. An omission returns to its owning block for an explicitly approved correction, not late feature work here.
+Inspect all 31 requirements and 71 scenarios, directory-reading coverage, G1–G5 records, browser-auth acceptance, exact pins, block-local documentation and deferred-test markers. Report missing evidence without editing code or declaring skips passed. An omission returns to its owning block for an explicitly approved correction, not late feature work here.
 
 Check README coverage of setup/pins, Compose/Tailscale, both providers' auth and model configuration, workspace restrictions, browser operation, budget/cancellation, restart and troubleshooting. Check every architecture document in design Decision 14. Compare historical spikes against the recorded pre-execution baseline, not an assumption that the working tree was clean. Missing documentation returns to its owning block.
 
@@ -792,6 +839,11 @@ Require the complete root/runtime/UI/contracts check graph to execute through `c
 - [ ] 16.3 Verify: Exercise restart and rollback integration; require truthful preserved-state outcomes
 
 Run existing checks for ordinary restart, interrupted/cancelled outcomes, compatible/incompatible questions, rollback to a compatible image and preserved-volume readiness. Require no destructive volume action, state loss, secret leak, fabricated success or unauthorized redispatch; both provider acceptance records must apply to the tested build.
+
+### Step 129 - Verify: Exercise private-network access; require Serve HTTPS and a second-device journey
+- [ ] 16.7 Verify: Exercise private-network access; require Serve HTTPS and a second-device journey
+
+Deferred from 12.12 by the trial replan. Deploy through Compose with Tailscale Serve and, from a second owner device on the tailnet, list runs, start a task, inspect it, answer a question, cancel a run and view a result over HTTPS. Confirm forged-Host/Origin refusals and no published ports against the real deployment. Any model requests need fresh bounded authorization in the immediately preceding Review; without it, verify only the request-free parts and leave the rest unfinished.
 
 ### Step 115 - Implement: Record phase-exit evidence; verify correspondence to observed results
 - [ ] 16.4 Implement: Record phase-exit evidence; verify correspondence to observed results

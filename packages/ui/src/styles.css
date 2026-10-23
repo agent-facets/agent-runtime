@@ -65,7 +65,8 @@ label {
 }
 
 textarea,
-select {
+select,
+input[type="text"] {
   display: block;
   width: 100%;
   box-sizing: border-box;
@@ -105,6 +106,31 @@ button.secondary {
   color: var(--accent);
 }
 
+/* A link that starts an action elsewhere (Anthropic's sign-in), styled like a button. */
+a.button {
+  display: inline-block;
+  padding: 0.4rem 0.9rem;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  text-decoration: none;
+}
+
+.connect {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.connect ol {
+  padding-left: 1.25rem;
+}
+
+.connect li {
+  margin-bottom: 0.75rem;
+}
+
 button.danger {
   border-color: var(--bad);
   background: transparent;
@@ -129,6 +155,11 @@ button.danger {
 .notice.uncertain {
   border-color: var(--warn);
   color: var(--warn);
+}
+
+.notice.ok {
+  border-color: var(--ok);
+  color: var(--ok);
 }
 
 /* Owner and agent text keeps its line breaks and never runs off the page. */

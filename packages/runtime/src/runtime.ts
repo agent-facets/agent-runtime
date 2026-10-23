@@ -95,6 +95,8 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
       if (status === 'starting' || status === 'ready' || status === 'unconfigured') status = 'stopping';
       // Admission stops first; persistence (and with it ownership) is released last.
       await server.stop(true);
+      // An unfinished console login is aborted and settles (releasing its credential lock) before shutdown ends.
+      await runs?.login.stop();
       await persistence?.close();
       resolveStopped(code);
       return code;

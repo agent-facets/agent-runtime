@@ -22,7 +22,7 @@ import {
   type RunSnapshot as RunSnapshotView,
   type StartRunCommand,
 } from '@agent-runtime/contracts';
-import type { OperatorConfig } from '../config/operator.ts';
+import { type OperatorConfig, providerSettingsFor } from '../config/operator.ts';
 import { type FailureReason, failureFor } from '../domain/failures.ts';
 import { runAdmission } from '../execution/admission.ts';
 import { createExecutionAgent, type ExecutionAgentOptions, executionAgentParams } from '../execution/agent.ts';
@@ -49,6 +49,7 @@ import { type ContentPolicy, screenOwnerInput } from '../security/content-policy
 import { formatDiagnostic } from '../security/diagnostics.ts';
 import { admitWorkspace, type PrivateLocations, type WorkspaceAdmission } from '../workspace/admission.ts';
 import type { WorkspacePolicy } from '../workspace/policy.ts';
+import { AnthropicLogin } from './auth.ts';
 import { decodeRunCursor, encodeRunCursor, eventView, snapshotView, summaryView } from './projection.ts';
 
 /** A complete API outcome: the HTTP status and the contract-shaped body. */
@@ -113,7 +114,7 @@ const READINESS_MESSAGES: Record<Exclude<ProviderReadiness, 'ready'>, string> = 
   integration_unavailable:
     'That provider cannot be used by this runtime yet, or its configured profile is unsupported.',
   reauthorization_required:
-    'The provider has no usable authorization. Authorize it with the documented `auth` login command, then try again.',
+    'The provider has no usable authorization. Connect it from the console (or with the `auth` login command), then try again.',
   temporarily_unavailable: 'The provider’s stored authorization cannot be read right now. Try again shortly.',
 };
 
@@ -163,6 +164,8 @@ class WiringUnavailable extends Error {
 
 export class RunService {
   readonly store: RunStore;
+  /** Connecting Anthropic from the console; independent of runs. */
+  readonly login: AnthropicLogin;
   readonly gates = new KeyedSerializer();
   readonly active = new ActiveInvocations();
   readonly #creations = new KeyedSerializer();
@@ -187,6 +190,12 @@ export class RunService {
     this.#admit = options.admit ?? admitWorkspace;
     this.#code = options.code ?? currentCodeManifest;
     this.#log = options.log ?? (() => {});
+    this.login = new AnthropicLogin({
+      slot: providerSettingsFor(options.operator, 'anthropic')?.credentialSlot,
+      coordinator: options.assembly.anthropicAuth.coordinator,
+      transport: options.assembly.anthropicAuth.transport,
+      log: this.#log,
+    });
     this.#controller = new RunController({
       store: this.store,
       gates: this.gates,

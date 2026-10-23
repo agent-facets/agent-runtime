@@ -358,6 +358,44 @@ The system SHALL provide documented means to establish and reauthorize access to
 - **WHEN** the runtime host has no browser and the owner follows the documented authorization procedure using a browser on another device
 - **THEN** the owner SHALL be able to establish access to either supported subscription provider
 
+### Requirement: Anthropic access can be connected from the console
+
+The owner SHALL be able to connect or reauthorize Anthropic subscription access from the console without a terminal command. The console SHALL provide an explicit connect action, guide the owner to the provider's authorization page and accept the provider-issued code in a dedicated authentication form. It SHALL distinguish an unfinished login, safely stored authorization and an unsuccessful or uncertain attempt. Connecting an account SHALL NOT start an agent run or make a model request. Existing terminal authorization MAY remain available as a fallback.
+
+#### Scenario: Connect without a terminal
+- **WHEN** Anthropic requires authorization and the owner chooses to connect it from the console
+- **THEN** the console SHALL guide the owner through provider authorization in a separate tab and submission of the resulting code in the dedicated form
+- **AND** it SHALL show connected status and refresh run-start readiness only after usable authorization has been durably stored
+- **AND** no terminal command or agent task SHALL be required
+
+#### Scenario: Login is refused or cannot be confirmed
+- **WHEN** the provider rejects a submitted code, the exchange outcome is uncertain, or the runtime cannot confirm durable credential storage
+- **THEN** the console SHALL explain the unsuccessful or uncertain login without claiming that attempt connected the account
+- **AND** it SHALL NOT automatically repeat the exchange, start a run, or erase previously stored authorization
+- **AND** its explanation SHALL omit codes, tokens and raw provider error content
+
+#### Scenario: An unfinished login expires or the runtime restarts
+- **WHEN** an unfinished login expires or the runtime restarts before its completion can be confirmed
+- **THEN** the console SHALL require the owner to inspect current connection status or explicitly start a new login rather than silently reuse the old code
+- **AND** previously stored usable authorization SHALL remain available across the restart
+
+#### Scenario: A completion is submitted more than once
+- **WHEN** the owner double-submits a login completion or loses its response and checks the same attempt again
+- **THEN** the runtime SHALL perform at most one provider exchange for that attempt
+- **AND** it SHALL report the attempt's known disposition, or that it can no longer be confirmed, without treating an unknown outcome as permission to repeat the exchange
+
+#### Scenario: The owner cancels before submitting a code
+- **WHEN** the owner cancels an unfinished login before submitting its code
+- **THEN** the console SHALL discard the form's sensitive input and close that attempt
+- **AND** later submission to that cancelled attempt SHALL NOT exchange a code or replace credentials
+- **AND** cancelling login SHALL NOT revoke previously saved authorization
+
+#### Scenario: Login material stays separate from agent work
+- **WHEN** the owner submits an authorization code through the console
+- **THEN** it SHALL be sent only to the dedicated authentication operation and cleared from the input on submission or dismissal
+- **AND** it SHALL NOT appear in task inputs, agent context, run history, progress events, results, browser persistent storage, diagnostic logs or echoed responses
+- **AND** provider access and refresh tokens SHALL remain server-only
+
 ### Requirement: Usable subscription authorization survives ordinary restart
 
 Existing usable authorization, including successfully renewed credentials, SHALL be reused after an ordinary runtime restart with persistent storage preserved. Restarting alone SHALL NOT require reauthorization.
@@ -436,7 +474,7 @@ The agent's permitted tools SHALL be limited to workspace reading, workspace sea
 
 ### Requirement: Provider credentials stay private
 
-The system SHALL keep its provider credentials out of agent context and agent-accessible tool results, run histories, progress events, final results, browser-console data, and diagnostic logs. Provider failures and authentication guidance SHALL expose safe status information without credential values.
+The system SHALL keep its provider access and refresh credentials out of agent context and agent-accessible tool results, run histories, progress events, final results, browser-console data, and diagnostic logs. Provider failures and authentication guidance SHALL expose safe status information without credential values. A short-lived owner-supplied authorization code MAY pass transiently through the dedicated login form and authentication operation, subject to the separate login-material requirement above; it SHALL NOT enter any agent-work or diagnostic surface.
 
 #### Scenario: A provider error contains sensitive request data
 - **WHEN** a provider or authentication operation fails with an error containing credential values or authorization headers

@@ -1,10 +1,11 @@
 // The live Anthropic acceptance trial's operator tool (task 12.8; run only under the allowance confirmed at task
-// 12.11). It talks to the deployed runtime's API — never to Anthropic, whose requests the runtime makes and caps —
-// and prints safe outcomes only.
+// 12.20). It talks to the deployed runtime's API — never to Anthropic, whose requests the runtime makes and caps —
+// and prints safe outcomes only. The origin is the console's address: loopback for the local trial, or the
+// tailnet name behind Serve.
 //
-//   bun run acceptance:anthropic -- check  --origin https://<tailnet name> [--trial <name>]
-//   bun run acceptance:anthropic -- start  --origin https://<tailnet name> --trial <name>
-//   bun run acceptance:anthropic -- report --origin https://<tailnet name> --journey <run> --cancel <run>
+//   bun run acceptance:anthropic -- check  --origin <http://127.0.0.1:port | https://tailnet-name> [--trial <name>]
+//   bun run acceptance:anthropic -- start  --origin <origin> --trial <name>
+//   bun run acceptance:anthropic -- report --origin <origin> --journey <run> --cancel <run>
 //
 // `check` changes nothing. `start` starts (or finds) the trial's two runs; repeating it starts nothing new.
 // `report` only reads the two runs `start` printed and states whether the trial's pass conditions hold.
@@ -19,7 +20,7 @@ import {
 } from '../tests/acceptance/anthropic-trial.ts';
 
 const USAGE =
-  'usage: acceptance:anthropic <check|start> --origin https://<host> [--trial <name>] | report --origin https://<host> --journey <run> --cancel <run>';
+  'usage: acceptance:anthropic <check|start> --origin <https://host | http://127.0.0.1:port> [--trial <name>] | report --origin <origin> --journey <run> --cancel <run>';
 
 const { positionals, values } = parseArgs({
   args: Bun.argv.slice(2),

@@ -4,7 +4,9 @@
 // it may only be retried with the same request identity.
 import {
   type AnswerAccepted,
+  type AuthAttempt,
   answerAcceptedSchema,
+  authAttemptSchema,
   type CancellationAccepted,
   cancellationAcceptedSchema,
   type ErrorEnvelope,
@@ -93,6 +95,24 @@ export class ApiClient {
 
   cancel(runId: string, requestId: string): Promise<ApiOutcome<CancellationAccepted>> {
     return this.#post(`/api/v1/runs/${encodeURIComponent(runId)}/cancel`, { requestId }, cancellationAcceptedSchema);
+  }
+
+  /** Starts connecting Anthropic, or returns the login already in progress. */
+  beginLogin(): Promise<ApiOutcome<AuthAttempt>> {
+    return this.#post('/api/v1/auth/anthropic/begin', {}, authAttemptSchema);
+  }
+
+  /** Submits the code Anthropic showed. Sent only here, never through a task or an answer. */
+  completeLogin(attemptId: string, code: string): Promise<ApiOutcome<AuthAttempt>> {
+    return this.#post('/api/v1/auth/anthropic/complete', { attemptId, code }, authAttemptSchema);
+  }
+
+  loginStatus(attemptId: string): Promise<ApiOutcome<AuthAttempt>> {
+    return this.#post('/api/v1/auth/anthropic/status', { attemptId }, authAttemptSchema);
+  }
+
+  cancelLogin(attemptId: string): Promise<ApiOutcome<AuthAttempt>> {
+    return this.#post('/api/v1/auth/anthropic/cancel', { attemptId }, authAttemptSchema);
   }
 
   #get<T>(path: string, schema: Schema<T>): Promise<ApiOutcome<T>> {

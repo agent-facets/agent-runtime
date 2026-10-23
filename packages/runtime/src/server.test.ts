@@ -114,27 +114,30 @@ describe('request policy', () => {
         return Response.json({ ok: true });
       },
     });
-    const post = (headers: Record<string, string>) =>
-      fetch(`${base}/api/v1/runs`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', ...headers },
-        body: '{}',
-      });
-    expect(
-      (await post({ host: 'agent-runtime.example.ts.net', origin: PUBLIC, 'sec-fetch-site': 'same-origin' })).status,
-    ).toBe(200);
-    expect((await post({ origin: base })).status).toBe(200);
-    const refused: Record<string, string>[] = [
-      { host: 'agent-runtime.example.ts.net' },
-      { host: 'agent-runtime.example.ts.net', origin: 'null' },
-      { host: 'agent-runtime.example.ts.net', origin: 'https://evil.example' },
-      { host: 'agent-runtime.example.ts.net', origin: 'http://agent-runtime.example.ts.net' },
-      { host: 'agent-runtime.example.ts.net', origin: base },
-      { host: 'agent-runtime.example.ts.net', origin: PUBLIC, 'sec-fetch-site': 'cross-site' },
-      { host: 'agent-runtime.example.ts.net', origin: PUBLIC, 'sec-fetch-site': 'same-site' },
-    ];
-    for (const headers of refused) expect((await post(headers)).status).toBe(403);
-    expect(handled).toBe(2);
+    // Run commands and the console login (which carries an authorization code) are guarded alike.
+    for (const path of ['/api/v1/runs', '/api/v1/auth/anthropic/complete']) {
+      const post = (headers: Record<string, string>) =>
+        fetch(`${base}${path}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...headers },
+          body: '{}',
+        });
+      expect(
+        (await post({ host: 'agent-runtime.example.ts.net', origin: PUBLIC, 'sec-fetch-site': 'same-origin' })).status,
+      ).toBe(200);
+      expect((await post({ origin: base })).status).toBe(200);
+      const refused: Record<string, string>[] = [
+        { host: 'agent-runtime.example.ts.net' },
+        { host: 'agent-runtime.example.ts.net', origin: 'null' },
+        { host: 'agent-runtime.example.ts.net', origin: 'https://evil.example' },
+        { host: 'agent-runtime.example.ts.net', origin: 'http://agent-runtime.example.ts.net' },
+        { host: 'agent-runtime.example.ts.net', origin: base },
+        { host: 'agent-runtime.example.ts.net', origin: PUBLIC, 'sec-fetch-site': 'cross-site' },
+        { host: 'agent-runtime.example.ts.net', origin: PUBLIC, 'sec-fetch-site': 'same-site' },
+      ];
+      for (const headers of refused) expect((await post(headers)).status).toBe(403);
+    }
+    expect(handled).toBe(4);
   });
 
   test('no response grants cross-origin access, and every response carries the security headers', async () => {
