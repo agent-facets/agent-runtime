@@ -58,7 +58,7 @@ Inspect selected dependency/image candidates and Compose/Tailscale requirements.
 Assess Turbo task inputs/outputs, local-only caching and browser/server TypeScript configuration. Check the design's Bun 1.3.14, Turbo 2.10.4 and other development-tool candidates, including the corrected core 1.2.13 candidate required by LangChain 1.5.14. Package metadata compatibility is not a passed Bun integration gate.
 
 ### Step 3 - Propose: Present foundation changes and upstream handoff; obtain owner approval
-- [ ] 1.3 Propose: Present foundation changes and upstream handoff; obtain owner approval
+- [x] 1.3 Propose: Present foundation changes and upstream handoff; obtain owner approval
 
 Present scaffold, test isolation, container topology and commands. Notify the owner of the release contract needed at block 9; missing delivery does not prevent the independent work in blocks 1–8. Obtain approval for the next implementation block without implying provider authorization or upstream source-edit permission.
 
@@ -67,10 +67,10 @@ Include separate runtime/UI package scaffolding, the deferred contracts package,
 ## 2. Development foundation — Implementation
 
 ### Step 4 - Pause: Switch model for implementation
-- [ ] 2.1 Pause: Switch model for implementation
+- [x] 2.1 Pause: Switch model for implementation
 
 ### Step 5 - Implement: Pin the toolchain and commands; verify frozen installation and scaffold checks
-- [ ] 2.2 Implement: Pin the toolchain and commands; verify frozen installation and scaffold checks
+- [x] 2.2 Implement: Pin the toolchain and commands; verify frozen installation and scaffold checks
 
 Extend root `package.json`, `bun.lock` and `mise.toml` into the Bun/Turbo workspace. Add `turbo.json`, root/package Bun configuration, shared strict TypeScript and Biome configuration, root scripts, and separate `packages/runtime`/`packages/ui` package scaffolds. Replace the root Bun-init entrypoint with the runtime package entrypoint; root scripts remain the documented interface. Pin Bun and dependencies, remove unused floating Node, and establish frozen-install/dev/start/build/check/check:verify/test/typecheck/lint plus explicit integration commands. Root owns development tooling; packages declare their own application dependencies and use `workspace:*` for internal links. Include checks preventing runtime imports from `spikes/**` and UI imports of runtime internals.
 
@@ -81,7 +81,7 @@ Assert `mise exec -- bun --version` reports the pinned Bun version (initial targ
 Assert root `packageManager` agrees with mise, Turbo is pinned to the selected version, workspace resolution is local and package entry points cannot bypass the import-boundary guards. `check:verify` SHALL force the complete offline check graph; ordinary `check` MAY reuse valid local results.
 
 ### Step 6 - Implement: Add the container foundation; verify topology and readiness smoke tests
-- [ ] 2.3 Implement: Add the container foundation; verify topology and readiness smoke tests
+- [x] 2.3 Implement: Add the container foundation; verify topology and readiness smoke tests
 
 Add the non-root Bun image and Compose runtime/PostgreSQL/Tailscale topology, private volumes, read-only `/workspace`, scratch space and minimal health/readiness entrypoint. Add synthetic-configuration and container smoke coverage for namespace/bind/mount policy; do not build the browser console or contact real providers.
 
@@ -90,21 +90,21 @@ Include `.env.example` with placeholders only. Check digest-pinned images, non-r
 Build from the repository root using the frozen root lockfile and required workspace manifests/sources, excluding historical harnesses and private material from the build context. Verify the image starts the runtime package entrypoint and resolves any unbundled workspace/runtime dependencies without Turbo or a separate UI server. Initial workspace pruning is deferred; this block's image contains no functional console.
 
 ### Step 7 - Implement: Isolate test execution; verify unsafe targets are rejected
-- [ ] 2.4 Implement: Isolate test execution; verify unsafe targets are rejected
+- [x] 2.4 Implement: Isolate test execution; verify unsafe targets are rejected
 
 Add isolated integration-fixture configuration and explicit test-service commands. Default `bun test` SHALL start no external services or external suites; integration commands SHALL refuse production database and credential paths. Land the tests proving these boundaries.
 
 Cover both bare root Bun discovery and Turbo's root/package test graph: exclude spikes, generated outputs and integration/live suites from ordinary checks, and verify every implemented package's unit suite is included. Integration/live commands and dev/start tasks SHALL be uncached; ordinary checks SHALL NOT invoke them. Add synthetic task-graph fixtures proving relevant shared-configuration and transitive source changes invalidate consumers, including a source-only dependency, and that a warm build-cache hit restores actual deployable outputs. Verify local-only cache operation and task-specific report paths without ambient credentials or owner data.
 
 ### Step 8 - Implement: Document the foundation; verify README commands and scope
-- [ ] 2.5 Implement: Document the foundation; verify README commands and scope
+- [x] 2.5 Implement: Document the foundation; verify README commands and scope
 
 Replace README boilerplate with implemented setup/check/container prerequisites and limitations. Add MVP-precedence notices to `architecture/README.md` and `architecture/10-delivery-phases.md`. Match the actual scripts and do not describe undelivered features as working.
 
 Document runtime/UI package ownership, the later contracts extraction, one application deployment, root versus package commands, direct versus Turbo test execution, forced `check:verify`, cache/output behavior and the workspace-aware Docker build. Clearly distinguish UI scaffolding from an implemented console.
 
 ### Step 9 - Verify: Run foundation checks; require passing installation and smoke suites
-- [ ] 2.6 Verify: Run foundation checks; require passing installation and smoke suites
+- [x] 2.6 Verify: Run foundation checks; require passing installation and smoke suites
 
 Run block checks, frozen-install verification and isolated container smoke tests. Report exact tool/image versions and results. Do not use source-changing lint flags.
 

@@ -1,0 +1,74 @@
+name: agent-runtime
+
+services:
+  tailscale:
+    image: tailscale/tailscale:v1.102.5@sha256:c507f3a2a6ab1cabd8d809b98edeb41edbd5c3fb6ad9632ffd098b4c7d0b4065
+    hostname: ${TS_HOSTNAME:-agent-runtime}
+    environment:
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: 'true'
+      TS_AUTH_ONCE: 'true'
+      TS_ACCEPT_DNS: 'false'
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./deploy/tailscale:/config:ro
+    networks:
+      - backend
+      - egress
+    restart: unless-stopped
+
+  runtime:
+    image: ${AGENT_RUNTIME_IMAGE:-agent-runtime/runtime:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Shares the Tailscale namespace and listens only on its loopback interface; Serve is the sole ingress.
+    network_mode: service:tailscale
+    depends_on:
+      tailscale:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    environment:
+      DATABASE_URL: postgres://agent_runtime:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/agent_runtime
+      RUNTIME_STATE_DIR: /var/lib/agent-runtime
+      RUNTIME_WORKSPACE_ROOT: /workspace
+    volumes:
+      - runtime-state:/var/lib/agent-runtime
+      - ${AGENT_RUNTIME_WORKSPACE:?set AGENT_RUNTIME_WORKSPACE}:/workspace:ro
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17.11-bookworm@sha256:639ab7ceb90e13123085b741fb31ef493fba25463002f6da665352e7b534b652
+    environment:
+      POSTGRES_DB: agent_runtime
+      POSTGRES_USER: agent_runtime
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-U', 'agent_runtime', '-d', 'agent_runtime']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+networks:
+  backend:
+    internal: true
+  egress: {}
+
+volumes:
+  tailscale-state: {}
+  runtime-state: {}
+  postgres-data: {}

@@ -1,0 +1,18 @@
+# Disposable PostgreSQL fixture for explicit integration suites. The launcher supplies a unique project
+# name and database; the port is published on loopback only, with an ephemeral host port.
+services:
+  postgres:
+    image: postgres:17.11-bookworm@sha256:639ab7ceb90e13123085b741fb31ef493fba25463002f6da665352e7b534b652
+    environment:
+      POSTGRES_DB: ${FIXTURE_DATABASE:?launcher-provided}
+      POSTGRES_USER: agent_runtime_fixture
+      POSTGRES_PASSWORD: ${FIXTURE_PASSWORD:?launcher-provided}
+    ports:
+      - 127.0.0.1::5432
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U agent_runtime_fixture -d "$${POSTGRES_DB}"']
+      interval: 2s
+      timeout: 3s
+      retries: 30

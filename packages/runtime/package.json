@@ -1,0 +1,23 @@
+{
+  "name": "@agent-runtime/runtime",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot src/main.ts",
+    "start": "bun dist/main.js",
+    "build": "bun build src/main.ts --target bun --outdir dist",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@langchain/core": "1.2.13",
+    "@langchain/langgraph": "1.4.13",
+    "@langchain/langgraph-checkpoint": "1.1.5",
+    "@langchain/langgraph-checkpoint-postgres": "1.0.5",
+    "langchain": "1.5.14",
+    "pg": "8.16.3"
+  },
+  "devDependencies": {
+    "@types/pg": "8.15.6"
+  }
+}

@@ -1,0 +1,13 @@
+# Offline smoke overrides: an inert namespace holder replaces the Tailscale daemon, so no tailnet
+# login or control-plane traffic occurs, and every network is internal.
+services:
+  tailscale:
+    entrypoint: ['sh', '-c', "trap 'exit 0' TERM INT; while :; do sleep 3600 & wait $$!; done"]
+    environment: !reset {}
+    volumes: !reset []
+    networks: !override
+      - backend
+
+networks:
+  egress:
+    internal: true

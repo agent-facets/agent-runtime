@@ -6,6 +6,16 @@ These documents capture design intent before implementation. They are not a
 specification of shipped behaviour. Where a decision is still open, it is
 recorded as an open question rather than resolved silently.
 
+> **MVP precedence (2026-09-29).** The four-phase
+> [framework MVP roadmap](../openspec/roadmaps/framework-mvp.md) and its OpenSpec
+> changes supersede these documents wherever they differ. Phase 1 is being built
+> as a Bun/Turborepo monorepo with separate `packages/runtime` and `packages/ui`
+> packages delivered as one Docker Compose application; LangChain `createAgent`
+> owns the agent loop. Only the development foundation exists so far — see the
+> root [README](../README.md) for what is actually implemented. Older
+> crash-survival, memory-canonicality and delivery-order descriptions here are
+> historical intent, not current guarantees.
+
 ## Reading order
 
 | Document                                                           | Covers                                                      |
@@ -78,10 +88,10 @@ of them invalidates multiple documents.
 
 ## Status
 
-Pre-implementation. No application code exists yet beyond a Bun hello-world
-scaffold. The repository contains OpenSpec governance, optional facet tooling
-configuration (`facets.json`), these documents, and the throwaway P0 spike
-harnesses under `spikes/`.
+Pre-implementation. Only the development foundation exists (see the root
+[README](../README.md)). The repository also contains OpenSpec governance,
+optional facet tooling configuration (`facets.json`), these documents, and the
+throwaway P0 spike harnesses under `spikes/`.
 
 These documents and the spike results below are a historical record of the
 design as it stood when they were written. Where they disagree with the
