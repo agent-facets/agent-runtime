@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { ApiClient } from '../api/client.ts';
 import type { Connection } from '../state/sync.ts';
 import { RunTimeline } from '../state/timeline.ts';
-import { AT, answered, asked, attempt, message, QUESTION, snapshot, status } from '../test-support/fixtures.ts';
+import { AT, answered, asked, attempt, message, QUESTION, RUN, snapshot, status } from '../test-support/fixtures.ts';
 import { FAILURE_LABELS, STATE_LABELS } from './format.ts';
 import { RunPage } from './RunDetail.tsx';
 
@@ -106,6 +106,90 @@ describe('run views', () => {
     expect(html).not.toContain('<img');
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     expect(html).not.toContain('href="javascript');
+  });
+
+  test('command-run history distinguishes the command, delegations, repeated delegates and the root result', () => {
+    const first = 'b'.repeat(64);
+    const second = 'c'.repeat(64);
+    const helper = (delegationId: string) => ({ kind: 'delegate' as const, delegationId, agentId: 'agent:helper' });
+    const at = (seq: number) => ({ runId: RUN, seq: String(seq), recordedAt: AT });
+    const events: RunEvent[] = [
+      {
+        ...at(1),
+        kind: 'run.command',
+        payload: {
+          commandId: 'command:triage',
+          selectionRevision: QUESTION,
+          arguments: 'owner/repo-a',
+          snapshotDigest: QUESTION,
+        },
+      },
+      {
+        ...at(2),
+        kind: 'delegation.started',
+        payload: {
+          delegationId: first,
+          agentId: 'agent:helper',
+          parentActor: { kind: 'root' },
+          task: 'Read the issue.',
+        },
+      },
+      {
+        ...at(3),
+        kind: 'assistant.message',
+        payload: { messageId: 'd1', text: 'First finding.', actor: helper(first) },
+      },
+      {
+        ...at(4),
+        kind: 'delegation.finished',
+        payload: { delegationId: first, outcome: 'result', operationId: first },
+      },
+      {
+        ...at(5),
+        kind: 'assistant.message',
+        payload: { messageId: 'd2', text: 'Second finding.', actor: helper(second) },
+      },
+      {
+        ...at(6),
+        kind: 'delegation.finished',
+        payload: { delegationId: second, outcome: 'abandoned', operationId: second },
+      },
+      { ...at(7), kind: 'assistant.message', payload: { messageId: 'r', text: 'Final.', actor: { kind: 'root' } } },
+    ];
+    const html = page({ kind: 'succeeded', finishedAt: AT, resultSeq: '7' }, events, 'complete', {}, '7');
+    expect(html).toContain('Command <code>command:triage</code> selected with arguments:');
+    expect(html).toContain('Read the issue.');
+    expect(html).toContain('Delegate agent:helper · bbbbbbbb');
+    expect(html).toContain('Delegate agent:helper · cccccccc');
+    expect(html).toContain('Delegation bbbbbbbb returned a result.');
+    expect(html).toContain('Delegation cccccccc was abandoned.');
+    // Only the root's final message is the result; a delegate's message never is.
+    expect((html.match(/<p class="label">Result<\/p>/g) ?? []).length).toBe(1);
+    expect(html).toMatch(/class="message final"><p class="label">Result<\/p><p class="text">Final\.<\/p>/);
+  });
+
+  test('external tool dispositions never read as delivered or successful when they are not known', () => {
+    const tool = (seq: number, disposition: unknown): RunEvent =>
+      ({
+        runId: RUN,
+        seq: String(seq),
+        recordedAt: AT,
+        kind: 'tool.operation',
+        payload: {
+          operationId: QUESTION,
+          toolName: 'mcp_ext_x',
+          disposition,
+          binding: { kind: 'mcp', serverId: 'github', toolName: 'list_issues', definitionDigest: QUESTION },
+        },
+      }) as RunEvent;
+    const html = page({ kind: 'working' }, [
+      tool(1, { kind: 'dispatching' }),
+      tool(2, { kind: 'completed', outcome: 'uncertain', result: { outcome: 'uncertain' } }),
+    ]);
+    expect(html).toContain('github / list_issues');
+    expect(html).toContain('request may have been sent');
+    expect(html).toContain('outcome unknown: it may or may not have taken effect');
+    expect(html).not.toContain('completed');
   });
 
   test('a waiting run offers its question with typed choices; the connection is shown separately', () => {

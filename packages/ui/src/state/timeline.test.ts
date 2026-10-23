@@ -40,6 +40,19 @@ describe('run timeline', () => {
     expect(timeline.state.kind).toBe('working');
   });
 
+  test('a replayed delegated question keeps its asker; a legacy question has none', () => {
+    const delegate = { kind: 'delegate' as const, delegationId: 'b'.repeat(64), agentId: 'agent:helper' };
+    const live = new RunTimeline(snapshot('0'));
+    const delegated = asked(1);
+    if (delegated.kind !== 'question.asked') throw new Error('fixture');
+    live.applyEvents([{ ...delegated, payload: { ...delegated.payload, actor: delegate } }]);
+    expect(live.run.pendingQuestion?.asker).toEqual(delegate);
+    const legacy = new RunTimeline(snapshot('0'));
+    legacy.applyEvents([asked(1)]);
+    expect(legacy.run.pendingQuestion).toBeDefined();
+    expect(Object.hasOwn(legacy.run.pendingQuestion as object, 'asker')).toBe(false);
+  });
+
   test('a run is complete only when finished and every event up to its bound has arrived', () => {
     const timeline = new RunTimeline(snapshot('3', succeeded));
     expect(timeline.complete).toBe(false);

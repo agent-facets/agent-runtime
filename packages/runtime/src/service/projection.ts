@@ -73,7 +73,7 @@ function payloadView(event: StoredEvent['event']): Pick<RunEventView, 'kind' | '
     case 'run.status':
       return { kind: event.kind, payload: { state: stateView(event.payload.state) } };
     case 'model.attempt': {
-      const { attemptId, ordinal, state, budget } = event.payload;
+      const { attemptId, ordinal, state, budget, actor } = event.payload;
       const publicState =
         state.kind === 'completed'
           ? {
@@ -83,12 +83,20 @@ function payloadView(event: StoredEvent['event']): Pick<RunEventView, 'kind' | '
               outcome: state.outcome,
             }
           : state;
-      return { kind: event.kind, payload: { attemptId, ordinal, state: publicState, budget } };
+      return {
+        kind: event.kind,
+        payload: { attemptId, ordinal, state: publicState, budget, ...(actor === undefined ? {} : { actor }) },
+      };
     }
+    // Agent activity carries only public references: an actor names a delegation and agent, never its checkpoint
+    // binding; a tool binding names a public contribution. An absent actor is the root.
     case 'assistant.message':
     case 'tool.operation':
     case 'question.asked':
     case 'question.closed':
+    case 'run.command':
+    case 'delegation.started':
+    case 'delegation.finished':
       return { kind: event.kind, payload: event.payload } as Pick<RunEventView, 'kind' | 'payload'>;
     case 'question.answered': {
       const { questionId, answer, acceptedAt } = event.payload;

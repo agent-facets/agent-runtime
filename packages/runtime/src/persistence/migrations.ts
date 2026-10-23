@@ -85,12 +85,21 @@ export async function readSaverLedger(sql: SQL | ReservedSQL): Promise<number[] 
   return rows.map((row: { v: number | string }) => Number(row.v));
 }
 
-export async function inspectRuntimeSchema(sql: SQL | ReservedSQL): Promise<RuntimeSchemaState> {
-  return classifyRuntimeJournal(await readRuntimeJournal(sql));
+export async function inspectRuntimeSchema(
+  sql: SQL | ReservedSQL,
+  known: readonly RuntimeMigration[] = RUNTIME_MIGRATIONS,
+): Promise<RuntimeSchemaState> {
+  return classifyRuntimeJournal(await readRuntimeJournal(sql), known);
 }
 
-/** Applies pending runtime migrations, each atomically with its journal row. Callers must hold the migration lock. */
-export async function migrateRuntimeSchema(connection: ReservedSQL): Promise<void> {
+/**
+ * Applies pending runtime migrations, each atomically with its journal row. Callers must hold the migration lock.
+ * `known` is the registry this build ships; fixtures pass a prefix of it to stand for an earlier build.
+ */
+export async function migrateRuntimeSchema(
+  connection: ReservedSQL,
+  known: readonly RuntimeMigration[] = RUNTIME_MIGRATIONS,
+): Promise<void> {
   await sessionTransaction(connection, async () => {
     await connection`create schema if not exists runtime`;
     await connection`create table if not exists runtime.schema_migrations (
@@ -100,7 +109,7 @@ export async function migrateRuntimeSchema(connection: ReservedSQL): Promise<voi
       applied_at timestamptz not null default now()
     )`;
   });
-  const state = await inspectRuntimeSchema(connection);
+  const state = await inspectRuntimeSchema(connection, known);
   if (state.kind === 'incompatible') throw new PersistenceError('schema_incompatible', state.reason);
   if (state.kind === 'current') return;
   for (const migration of state.pending) {

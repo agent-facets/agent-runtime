@@ -107,6 +107,42 @@ exception text: `authorization`, `rate_or_quota_limit`, `provider_failure`, `ste
 `continuation_unavailable`, `tool_failure`, `runtime_failure`. Cancellation and lost ownership are not failures:
 the former has its own outcome, and the latter stops the service, leaving the run to startup reconciliation.
 
+## Phase 2 capability records (MVP 02)
+
+The [MVP 02 design](../openspec/changes/mvp-02-facet-backed-capabilities/design.md) (Decisions 6–8) adds, in
+migration 4, without editing migrations 1–3 or rewriting existing rows:
+
+| Record | Identity and purpose |
+|---|---|
+| `capability_snapshots` | SHA-256 of canonical JSON; the exact definitions a command run retains (command, skills and their resources, agents, MCP declarations and tool definitions, original authority ceiling, limits). Immutable, never collected, at most 16 MiB; revalidated against its digest on every read |
+| `run_capabilities` | One per command run: the normalized submission (command, selection revision, raw arguments, provider), its snapshot and captured delegation limit. Immutable; native goal runs have none |
+| `run_actors` | `(run, actor key)`: exactly one `root` per run, created with it (existing runs gained theirs in the migration), and one-level delegates keyed by their parent delegation operation, with `active`, `waiting`, `completed` or `abandoned` state |
+| `loaded_skills` | `(run, actor, skill)`: first successful load only, from that actor's own completed load operation |
+
+Existing records gain attribution: tool operations carry an identity version, actor key and the public binding the
+call was admitted under; model attempts and questions carry their actor. Version-1 operation identity is unchanged
+and always the root's. Version 2 is SHA-256 over `v2`, run, actor key, model message and provider call ID, so a
+provider call ID is unique per actor rather than per run, and replay is decided by the exact recorded binding.
+Question bindings keep the phase-1 shape for historical records; version 2 adds root and delegate variants, the
+latter naming its delegation and the root task it belongs to. External calls add a `dispatching` (intent recorded,
+delivery unknown) state and an `uncertain` outcome; both exist only for MCP-bound operations.
+
+The deferred consistency check now also requires: a root actor; delegates only in command runs, within the captured
+limit and started by their parent's delegation operation; a pending delegated question with its delegate waiting
+on it; questions asked by the actor that issued them; loaded skills backed by a successful load; a command binding
+together with exactly one matching `run.command` history event; attributed events naming a delegate of the same
+run; no active or waiting delegate in a finished run; and success referencing a root assistant message. Owner and
+system events cannot carry an actor. Agent events in command runs name their actor; native and older runs keep the
+phase-1 event shape, and an absent actor means the root.
+
+Settlement: when local work ends without a result for them — process death found at startup, accepted
+cancellation, or a finished invocation — a recorded dispatch intent becomes `uncertain` (never `abandoned`, never
+retried) and a running or waiting delegate becomes `abandoned`, each with its history event. Completed outcomes are
+never changed. Cancelling a run that waits on a delegated question abandons that delegate at once.
+
+Upgrades are forward only. A build that knows fewer migrations refuses the newer history before changing either
+schema; there is no down-migration, and snapshots, credentials and history are never deleted by an upgrade.
+
 The sections below are historical design intent.
 
 ## Entities

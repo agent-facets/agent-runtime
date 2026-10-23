@@ -1,6 +1,6 @@
 // Display wording for run states, failure categories and times. All text is application-owned; values from the
 // server are rendered as plain text by React, never as markup.
-import type { FailureCategory, Provider, RunStateKind } from '@agent-runtime/contracts';
+import type { ActorRef, FailureCategory, Provider, RunStateKind } from '@agent-runtime/contracts';
 import { PROVIDER_LABELS } from '@agent-runtime/contracts';
 
 export const STATE_LABELS: Record<RunStateKind, string> = {
@@ -35,6 +35,22 @@ export const FAILURE_LABELS: Record<FailureCategory, string> = {
 };
 
 export const providerLabel = (provider: Provider) => PROVIDER_LABELS[provider];
+
+/**
+ * Who performed recorded agent activity. Root activity in a native or older run carries no actor and needs no
+ * label; delegates are told apart by their delegation, so two calls to one named agent stay distinguishable.
+ */
+export function actorLabel(actor: ActorRef | undefined): string | undefined {
+  if (actor === undefined) return undefined;
+  return actor.kind === 'root' ? 'Root agent' : `Delegate ${actor.agentId} · ${actor.delegationId.slice(0, 8)}`;
+}
+
+export const DELEGATION_OUTCOME_LABELS = {
+  result: 'returned a result',
+  refused: 'was refused',
+  failed: 'failed',
+  abandoned: 'was abandoned',
+} as const;
 
 /** A recorded instant in the reader's locale, with the exact UTC value available on hover. */
 export function formatTime(instant: string): string {

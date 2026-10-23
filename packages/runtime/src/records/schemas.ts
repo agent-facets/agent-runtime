@@ -2,11 +2,17 @@
 // persistence/migrations/002-run-records.ts: exact keys, discriminators and primitive types. Unknown fields are
 // refused rather than stripped. These are server records, not browser wire contracts.
 import {
+  actorRefSchema,
+  agentIdSchema,
   answerSchema,
+  commandEventSchema,
+  delegationFinishedSchema,
+  delegationStartedSchema,
   failureSchema,
   providerSchema,
   questionInputSchema,
   questionPromptSchema,
+  toolBindingSchema,
   withinQuestionText,
 } from '@agent-runtime/contracts';
 import { z } from 'zod';
@@ -79,19 +85,49 @@ export type RunState = z.infer<typeof runStateSchema>;
 export type RunStateKind = RunState['kind'];
 export const TERMINAL_STATES: ReadonlySet<RunStateKind> = new Set(['succeeded', 'failed', 'cancelled', 'interrupted']);
 
-export const questionBindingSchema = z.strictObject({
+const leafBinding = {
   threadId: uuid,
   checkpointNs: z.string().max(512),
   checkpointId: nonEmpty(256),
   taskId: nonEmpty(256),
   interruptId: nonEmpty(256),
-  ordinal: z.literal(0),
   operationId: digest,
   payloadDigest: digest,
   requiredStateDigest: digest,
   definitionDigest: digest,
-});
+};
+
+/** The phase-1 binding, retained unchanged for historical records and native goal runs. */
+export const legacyQuestionBindingSchema = z.strictObject({ ...leafBinding, ordinal: z.literal(0) });
+
+/** Version 2: the asking actor's saved leaf state; a delegate's also identifies its root task and delegation. */
+export const questionBindingV2Schema = z.discriminatedUnion('actor', [
+  z.strictObject({ version: z.literal(2), actor: z.literal('root'), ...leafBinding }),
+  z
+    .strictObject({
+      version: z.literal(2),
+      actor: z.literal('delegate'),
+      delegationId: digest,
+      agentId: agentIdSchema,
+      ...leafBinding,
+      parent: z.strictObject({
+        checkpointNs: z.string().max(512),
+        checkpointId: nonEmpty(256),
+        taskId: nonEmpty(256),
+        operationId: digest,
+      }),
+    })
+    .refine((binding) => binding.parent.operationId === binding.delegationId, 'delegation is not its parent operation')
+    .refine((binding) => binding.checkpointNs.length > 0, 'a delegate question has a child namespace'),
+]);
+
+export const questionBindingSchema = z.union([legacyQuestionBindingSchema, questionBindingV2Schema]);
 export type QuestionBinding = z.infer<typeof questionBindingSchema>;
+
+/** The storage key of the actor that asked a bound question. */
+export function questionActorKey(binding: QuestionBinding): string {
+  return 'version' in binding && binding.actor === 'delegate' ? binding.delegationId : 'root';
+}
 
 /** Requires the answer property to be present; false, null, zero and empty text are valid answers. */
 const answeredDisposition = z
@@ -108,9 +144,11 @@ export type QuestionDisposition = z.infer<typeof questionDispositionSchema>;
 export const toolDispositionSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('started') }),
   z.strictObject({ kind: z.literal('paused'), questionId: digest }),
+  /** An external request may have been sent: durable intent, never proof of delivery. */
+  z.strictObject({ kind: z.literal('dispatching') }),
   z.strictObject({
     kind: z.literal('completed'),
-    outcome: z.enum(['ok', 'refused', 'error']),
+    outcome: z.enum(['ok', 'refused', 'error', 'uncertain']),
     result: z.record(z.string(), z.json()),
   }),
   z.strictObject({ kind: z.literal('abandoned'), reason: code }),
@@ -159,22 +197,41 @@ export const eventSchema = z.discriminatedUnion('kind', [
       ordinal: int(1, 2_147_483_647),
       state: attemptStateSchema,
       budget: budgetSchema,
+      actor: actorRefSchema.optional(),
     }),
   }),
   z.strictObject({
     kind: z.literal('assistant.message'),
-    payload: z.strictObject({ messageId: nonEmpty(256), text: z.string().max(1_048_576) }),
+    payload: z.strictObject({
+      messageId: nonEmpty(256),
+      text: z.string().max(1_048_576),
+      actor: actorRefSchema.optional(),
+    }),
   }),
   z.strictObject({
     kind: z.literal('tool.operation'),
-    payload: z.strictObject({ operationId: digest, toolName: nonEmpty(128), disposition: toolDispositionSchema }),
+    payload: z.strictObject({
+      operationId: digest,
+      toolName: nonEmpty(128),
+      disposition: toolDispositionSchema,
+      actor: actorRefSchema.optional(),
+      binding: toolBindingSchema.optional(),
+    }),
   }),
   z.strictObject({
     kind: z.literal('question.asked'),
     payload: z
-      .strictObject({ questionId: digest, prompt: questionPromptSchema, input: questionInputSchema })
+      .strictObject({
+        questionId: digest,
+        prompt: questionPromptSchema,
+        input: questionInputSchema,
+        actor: actorRefSchema.optional(),
+      })
       .refine(withinQuestionText, 'question text is too large'),
   }),
+  z.strictObject({ kind: z.literal('run.command'), payload: commandEventSchema }),
+  z.strictObject({ kind: z.literal('delegation.started'), payload: delegationStartedSchema }),
+  z.strictObject({ kind: z.literal('delegation.finished'), payload: delegationFinishedSchema }),
   z.strictObject({
     kind: z.literal('question.answered'),
     payload: z
@@ -199,4 +256,26 @@ export function operationIdFor(runId: string, modelMessageId: string, providerTo
     if (part.length === 0 || part.length > 256 || /\p{Cc}/u.test(part)) throw new Error('invalid call identity');
   }
   return new Bun.CryptoHasher('sha256').update(`${runId}\n${modelMessageId}\n${providerToolCallId}`).digest('hex');
+}
+
+const ACTOR_KEY = /^(?:root|[0-9a-f]{64})$/;
+
+/**
+ * Version-2, actor-scoped operation identity: SHA-256 over `v2`, the run, actor key, model message and provider
+ * tool-call IDs (newline-separated). An identical replay has the same identity; another actor or a new message does
+ * not. Version 1 above stays unchanged for historical and native records.
+ */
+export function operationIdV2(
+  runId: string,
+  actorKey: string,
+  modelMessageId: string,
+  providerToolCallId: string,
+): string {
+  if (!ACTOR_KEY.test(actorKey)) throw new Error('invalid actor key');
+  for (const part of [modelMessageId, providerToolCallId]) {
+    if (part.length === 0 || part.length > 256 || /\p{Cc}/u.test(part)) throw new Error('invalid call identity');
+  }
+  return new Bun.CryptoHasher('sha256')
+    .update(`v2\n${runId}\n${actorKey}\n${modelMessageId}\n${providerToolCallId}`)
+    .digest('hex');
 }

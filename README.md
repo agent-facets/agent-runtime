@@ -175,8 +175,19 @@ Details are in [the G1 evidence](architecture/integration-evidence/mvp-01/g1-bun
 Migration 3 limits question prompts to 16 KiB of UTF-8 (migration 2 counted characters). A database already
 holding a longer prompt fails that migration and startup, rather than having its history rewritten.
 
-Run records (runs, questions, invocations, model attempts, tool operations, events and execution definitions) are
-validated both by runtime decoders and by database constraints; see
+Migration 4 adds the records for facet-backed command runs: content-addressed capability snapshots (the exact
+definitions a command run retains), each command run's binding to its snapshot, run actors (every run's root
+agent and any delegates) and loaded-skill membership. It also adds actor attribution to operations, model attempts
+and questions, and a dispatch-intent state for external calls. Existing runs gain a root actor and nothing else:
+their events, answers, results, provider bindings and execution definitions keep their recorded bytes. Snapshots
+are never garbage-collected, and removing installed facets does not remove them.
+
+Migrations only move forward. There is no down-migration: a build that predates migration 4 refuses an upgraded
+database (`schema_incompatible`) before changing it, so rolling back the image after upgrading needs a build that
+knows the newer schema. Preserved credentials and history are never rewritten or deleted by an upgrade.
+
+Run records (runs, questions, invocations, model attempts, tool operations, events, execution definitions, and the
+capability records above) are validated both by runtime decoders and by database constraints; see
 [`architecture/09-data-model-and-lifecycle.md`](architecture/09-data-model-and-lifecycle.md).
 
 ## Configuration
@@ -377,7 +388,9 @@ loop; the runtime only constrains what crosses into graph state and what is disp
   final commit's outcome cannot be established, the service stops rather than guess.
 - **Restart.** Before it reports ready, startup marks runs that were working as `interrupted` (their accepted answers
   kept, admissions never confirmed as sent recorded unconfirmed) and runs whose cancellation was accepted as
-  `cancelled`. Waiting and finished runs are unchanged. Nothing is resumed, retried or dispatched.
+  `cancelled`. A delegate still running is recorded abandoned, and an external call whose dispatch may have begun
+  is recorded with an unknown outcome rather than as sent, completed or unsent. Waiting and finished runs are
+  unchanged. Nothing is resumed, retried or dispatched.
 
 The run service (`src/service/runs.ts`) composes all of this for the API: it admits the workspace afresh for each
 start and continuation, builds each invocation from the run's stored binding through the provider assembly

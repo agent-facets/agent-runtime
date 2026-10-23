@@ -3,6 +3,7 @@ import { PersistenceError, sqlStateOf } from './errors.ts';
 import { KeyedSerializer } from './keyed-serializer.ts';
 import { classifySaverLedger, inspectRuntimeSchema, migrateRuntimeSchema, readSaverLedger } from './migrations.ts';
 import { LOCK_NAMESPACE, MIGRATION_LOCK, Ownership, type OwnershipOptions, releaseLockedSession } from './ownership.ts';
+import type { RuntimeMigration } from './runtime-migrations.ts';
 import { type CheckpointStore, createCheckpointStore } from './saver/checkpoint-saver.ts';
 
 export type StartupStage = 'owned' | 'migrating' | 'migrated' | 'epoch_claimed';
@@ -25,6 +26,8 @@ export interface OpenPersistenceOptions {
   ownership?: OwnershipOptions;
   /** Test witness for startup progress; never used to make decisions. */
   onStage?: (stage: StartupStage) => void;
+  /** The runtime migration registry; defaults to this build's. Fixtures pass a prefix to stand for an older build. */
+  migrations?: readonly RuntimeMigration[];
 }
 
 function requireCompatible(state: { kind: string; reason?: string }): void {
@@ -71,11 +74,11 @@ export async function openPersistence(options: OpenPersistenceOptions): Promise<
       options.onStage?.('migrating');
 
       // Both schemas are checked before either is changed.
-      requireCompatible(await inspectRuntimeSchema(migration));
+      requireCompatible(await inspectRuntimeSchema(migration, options.migrations));
       requireCompatible(classifySaverLedger(await readSaverLedger(migration)));
       await ownership.verify();
 
-      await migrateRuntimeSchema(migration);
+      await migrateRuntimeSchema(migration, options.migrations);
       await ownership.verify();
 
       checkpoints = createCheckpointStore({ url: options.url, onFault: options.onFault });
