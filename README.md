@@ -129,6 +129,11 @@ run continuation are separate: a console-only change rebuilds the image but does
 so paused runs stay answerable; a change to execution code — including a contracts module the server's execution
 uses — does change it.
 
+**Continuous integration.** CircleCI runs `bun run check` (`.circleci/config.yml`) on every pushed branch except
+Graphite's `graphite-base/*`, and reports `ci/circleci: check`, the status `main` requires. Branches in this repository
+use the `turbo-cache` context, so a branch reuses results from earlier runs anywhere. Fork pull requests must run
+without that context, so building forks stays off in the CircleCI trigger.
+
 The integration, container and facet launchers accept no arguments, never read `.env`, forward only an allowlisted
 environment, and refuse to start if storage, Compose, credential, provider or facet-CLI variables (for example
 `DATABASE_URL`, `PG*`, `COMPOSE_*`, `AGENT_RUNTIME_*`, `ANTHROPIC_*`, `FACET_*`) are set. Each run uses a uniquely named
