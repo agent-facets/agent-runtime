@@ -41,6 +41,7 @@ import {
   type RunState,
   runStateSchema,
   TERMINAL_STATES,
+  type ToolDisposition,
   toolDispositionSchema,
   type WorkspaceSnapshot,
   workspaceSchema,
@@ -181,8 +182,13 @@ export interface ToolOperationIdentity {
 
 export type ToolOperationStart =
   | { kind: 'execute' }
-  | { kind: 'reuse'; outcome: Record<string, unknown> & { outcome: 'ok' | 'refused' | 'error' } }
-  | { kind: 'not_dispatchable' };
+  | { kind: 'reuse'; outcome: RecordedToolOutcome }
+  | { kind: 'not_dispatchable' }
+  /** An external call's dispatch intent was recorded but its outcome never was: its effect is unknown. */
+  | { kind: 'unresolved' };
+
+/** The result of admitting an external call's dispatch under the run's dispatch gate. */
+export type ExternalAdmission = 'admitted' | 'not_dispatchable' | 'unresolved';
 
 export interface PublishQuestionInput {
   runId: string;
@@ -225,7 +231,7 @@ export type CancellationResult =
   | { kind: 'finished'; state: RunState };
 
 /** A recorded tool outcome: the complete object returned to the agent. */
-export type RecordedToolOutcome = Record<string, unknown> & { outcome: 'ok' | 'refused' | 'error' };
+export type RecordedToolOutcome = Record<string, unknown> & { outcome: 'ok' | 'refused' | 'error' | 'uncertain' };
 
 /**
  * Identity of a creation request: the submitted content only, never server defaults applied afterwards. A goal's
@@ -476,9 +482,8 @@ export class RunStore {
         if (disposition.kind === 'completed') {
           return { kind: 'reuse', outcome: disposition.result as RecordedToolOutcome };
         }
-        return disposition.kind === 'abandoned' || disposition.kind === 'dispatching'
-          ? { kind: 'not_dispatchable' }
-          : { kind: 'execute' };
+        if (disposition.kind === 'dispatching') return { kind: 'unresolved' };
+        return disposition.kind === 'abandoned' ? { kind: 'not_dispatchable' } : { kind: 'execute' };
       }
       if (actorKey !== 'root') {
         const [actor] = await tx`select state ->> 'kind' as kind from runtime.run_actors
@@ -508,6 +513,64 @@ export class RunStore {
       ]);
       return { kind: 'execute' };
     });
+  }
+
+  /**
+   * Records an external call's dispatch intent (design Decision 8): the started MCP operation becomes `dispatching`,
+   * only while the run is still working under `invocationId` and its actor is active. The caller sends the request
+   * after this commits and before it releases the run's dispatch gate, so accepted cancellation can never fall
+   * between them. An intent already recorded is `unresolved`: it is never a licence to send again.
+   */
+  async admitExternalCall(runId: string, invocationId: string, operationId: string): Promise<ExternalAdmission> {
+    return withOwnerFence(this.db, this.owner, async (tx) => {
+      const run = await this.#lockRun(tx, runId);
+      if (run.state.kind !== 'working' || run.state.invocationId !== invocationId) return 'not_dispatchable';
+      const [row] = await tx`
+        select tool_name, actor_key, tool_binding::text as tool_binding, disposition::text as disposition
+        from runtime.tool_operations where run_id = ${runId} and operation_id = ${operationId} for update`;
+      if (row === undefined) throw new RunStoreError('invariant_violation', 'the tool operation was never started');
+      const binding = row.tool_binding === null ? undefined : (parseJsonText(row.tool_binding) as ToolBinding);
+      if (binding?.kind !== 'mcp')
+        throw new RunStoreError('invariant_violation', 'only an external call is dispatched');
+      const current = toolDispositionSchema.parse(parseJsonText(row.disposition));
+      if (current.kind === 'dispatching') return 'unresolved';
+      if (current.kind !== 'started') {
+        throw new RunStoreError('invariant_violation', 'the external operation is not awaiting dispatch');
+      }
+      if (row.actor_key !== 'root') {
+        const [actor] = await tx`select state ->> 'kind' as kind from runtime.run_actors
+          where run_id = ${runId} and actor_key = ${row.actor_key}`;
+        if (actor?.kind !== 'active') return 'not_dispatchable';
+      }
+      const disposition = toolDispositionSchema.parse({ kind: 'dispatching' });
+      await tx`update runtime.tool_operations set disposition = ${jsonText(disposition)}::text::jsonb
+        where run_id = ${runId} and operation_id = ${operationId}`;
+      await this.#append(tx, runId, [
+        {
+          event: {
+            kind: 'tool.operation',
+            payload: {
+              operationId,
+              toolName: row.tool_name,
+              disposition,
+              ...(await this.#attribution(tx, runId, row.actor_key)),
+              binding,
+            },
+          },
+          sourceKey: `tool:${operationId}:dispatching`,
+        },
+      ]);
+      return 'admitted';
+    });
+  }
+
+  /** A tool operation's recorded disposition, for readback after an uncertain commit; undefined if never started. */
+  async readToolDisposition(runId: string, operationId: string): Promise<ToolDisposition | undefined> {
+    const [row] = await this.db.readOnly(
+      (tx) => tx`select disposition::text as disposition from runtime.tool_operations
+        where run_id = ${runId} and operation_id = ${operationId}`,
+    );
+    return row === undefined ? undefined : toolDispositionSchema.parse(parseJsonText(row.disposition));
   }
 
   /**

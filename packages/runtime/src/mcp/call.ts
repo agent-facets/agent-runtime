@@ -38,6 +38,11 @@ export interface CallInput {
   signal: AbortSignal;
   policy: ContentPolicy;
   operationId: string;
+  /**
+   * The caller's dispatch admission. It receives `send`, which hands the request to the transport at once, and must
+   * call it before releasing its dispatch gate, or not at all. Without it the request is sent directly.
+   */
+  admit?: (send: () => void) => Promise<void>;
 }
 
 export interface CallResult {
@@ -127,7 +132,10 @@ export function projectResult(raw: unknown, policy: ContentPolicy): ExternalOutc
   return { ...outcome, text: `${clipped}${CLIPPED}` };
 }
 
-/** Makes the call. The caller has already established authority and durable dispatch intent. */
+/**
+ * Makes the call. The caller has already established authority; durable dispatch intent is recorded by `admit`
+ * (or was established by the caller).
+ */
 export async function callTool(input: CallInput): Promise<CallResult> {
   const refused = checkArguments(input);
   if (refused !== undefined) return { outcome: refused, dispatched: false, closed: false };
@@ -159,13 +167,28 @@ export async function callTool(input: CallInput): Promise<CallResult> {
   };
   const limit = deadline(input.timeoutMs, input.signal);
   try {
-    let raw: unknown;
-    try {
-      raw = await input.session.client.request(
+    let pending: Promise<unknown> | undefined;
+    // The SDK writes the request to the transport synchronously within `request()`.
+    const send = () => {
+      pending = input.session.client.request(
         { method: 'tools/call', params: { name: input.toolName, arguments: input.args } },
         rawResultSchema,
         limit.requestOptions(),
       );
+      pending.catch(() => {});
+    };
+    if (input.admit === undefined) send();
+    else await input.admit(send);
+    if (pending === undefined) {
+      return {
+        outcome: fail('refused', 'not_admitted', 'The call was not admitted for dispatch.'),
+        dispatched: false,
+        closed: false,
+      };
+    }
+    let raw: unknown;
+    try {
+      raw = await pending;
     } catch (error) {
       const code = (error as { code?: unknown }).code;
       if (typeof code === 'number' && !LOCAL_ERROR_CODES.has(code) && !limit.expired() && !oversized) {

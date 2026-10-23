@@ -47,6 +47,18 @@ export function classifyInvocationFailure(error: unknown, provider: Provider): F
   const failure = executionFailureOf(error);
   if (failure === undefined) return fail('invariant_violation', provider);
   if (failure.code === 'dispatch_refused') return { kind: 'superseded' };
+  if (failure.code === 'commit_unknown') return { kind: 'fail_stop' };
+  if (failure.code === 'mcp_outcome_unknown') {
+    return {
+      kind: 'failure',
+      failure: failureFor('mcp_outcome_unknown', {
+        provider,
+        ...(failure.operationId === undefined
+          ? {}
+          : { operation: { kind: 'tool_operation', operationId: failure.operationId } }),
+      }),
+    };
+  }
   if (failure.code !== 'model_request_failed')
     return fail(EXECUTION_REASONS[failure.code] ?? 'invariant_violation', provider);
 

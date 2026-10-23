@@ -4,16 +4,16 @@
 // current definitions, and one short-lived connection initializes, lists tools and closes — no tool or model is ever
 // called. The definitions found are what the run retains. Servers needed only by optional tools are not launched;
 // their tools are simply not bound. Reading the catalog launches nothing.
-import type { CapabilityConfig, ServerAccess } from '../config/capabilities.ts';
-import type { McpSlotRead } from '../credentials/mcp-store.ts';
+import type { CapabilityConfig } from '../config/capabilities.ts';
 import { adaptDefinitions } from '../mcp/adapt.ts';
 import { type DiscoveredTool, inspectServer } from '../mcp/discovery.ts';
-import { declarationLaunchInputs, type LaunchSpec, planLaunch } from '../mcp/transport.ts';
-import { digestOf } from '../records/canonical.ts';
 import type { ContentPolicy } from '../security/content-policy.ts';
-import type { Catalog, InstalledServer } from './installation.ts';
+import type { Catalog } from './installation.ts';
 import { CAPABILITY_LIMITS, type CapabilitySnapshot } from './records.ts';
+import { approvedConnection, type LaunchDeps, planServerLaunch } from './server-access.ts';
 import type { BoundTools } from './snapshot.ts';
+
+export { serverDigest } from './server-access.ts';
 
 type CommandDefinition = CapabilitySnapshot['command'];
 
@@ -21,31 +21,7 @@ export type PreflightResult =
   | { ok: true; bound: BoundTools }
   | { ok: false; code: 'capability_unavailable' | 'mcp_server_unavailable'; reason: string; subject?: string };
 
-/**
- * The approval digest of a server connection: its portable declaration and everything the runtime adds to run it —
- * the program bundle, the argument vector, the logical working directory and the environment and credential-slot
- * bindings. Credential values are never part of it. Any change requires the owner to approve the new digest.
- */
-export function serverDigest(
-  server: Pick<InstalledServer, 'serverId' | 'declaration'>,
-  access: ServerAccess,
-  program: { sha256: string },
-): string {
-  return digestOf({
-    version: 1,
-    declaration: server.declaration,
-    program: { id: access.programId, sha256: program.sha256 },
-    workingDirectory: `mcp/${server.serverId}`,
-    literalEnv: access.literalEnv,
-    credentialEnv: access.credentialEnv,
-  });
-}
-
-export interface PreflightDeps {
-  stateDir: string;
-  /** The runtime's own pinned Bun. */
-  bunPath: string;
-  readCredential(slot: string): Promise<McpSlotRead>;
+export interface PreflightDeps extends LaunchDeps {
   /** Test seam: the bounded inspection itself. */
   inspect?: typeof inspectServer;
 }
@@ -108,39 +84,22 @@ export function createMcpPreflight(deps: PreflightDeps) {
     // Everything that can be decided without starting anything is decided first.
     const installed = input.catalog.installation.servers.find((server) => server.serverId === serverId);
     if (installed === undefined) return refuse('prerequisite_missing');
-    const access = input.grants.servers.find((server) => server.serverId === serverId);
-    if (access === undefined) return refuse('server_not_approved');
-    if (access.approval.kind === 'denied') return refuse('server_denied');
-    const program = input.grants.localPrograms[access.programId];
-    if (program === undefined) return refuse('program_unavailable', 'mcp_server_unavailable');
-    const digest = serverDigest(installed, access, program);
-    if (access.approval.serverDigest !== digest) return refuse('server_reapproval_required');
+    const approved = approvedConnection(installed, input.grants);
+    if (!approved.ok) {
+      return refuse(approved.reason, approved.reason === 'program_unavailable' ? 'mcp_server_unavailable' : undefined);
+    }
+    const { access, digest } = approved;
     const grants = access.approval.tools;
     const ungranted = toolNames.find((name) => !grants.some((grant) => grant.name === name));
     if (ungranted !== undefined) return refuse('tool_not_granted', 'capability_unavailable', ungranted);
-    const declaration = declarationLaunchInputs(installed.declaration);
-    if (!declaration.ok) return refuse(declaration.reason);
-
-    const credentialEnv: Record<string, string> = {};
-    for (const [name, slot] of Object.entries(access.credentialEnv)) {
-      const read = await deps.readCredential(slot);
-      if (read.kind !== 'present') return refuse('credential_unavailable', 'mcp_server_unavailable');
-      credentialEnv[name] = read.value;
-    }
-    const spec: LaunchSpec = {
-      serverId,
-      program,
-      args: declaration.args,
-      declarationEnv: declaration.env,
-      literalEnv: access.literalEnv,
-      credentialEnv,
-    };
-    const plan = await planLaunch(spec, { stateDir: deps.stateDir, bunPath: deps.bunPath, policy: input.policy });
-    if (!plan.ok)
+    const plan = await planServerLaunch(installed, input.grants, deps, input.policy);
+    if (!plan.ok) {
+      const ownerFixable = ['transport_unsupported', 'declaration_invalid', 'credential_in_declaration'];
       return refuse(
         plan.reason,
-        plan.reason === 'credential_in_declaration' ? 'capability_unavailable' : 'mcp_server_unavailable',
+        ownerFixable.includes(plan.reason) ? 'capability_unavailable' : 'mcp_server_unavailable',
       );
+    }
 
     const discovery = await inspect({ params: plan.params, policy: input.policy });
     if (!('tools' in discovery)) return refuse(discovery.reason, 'mcp_server_unavailable');
