@@ -90,6 +90,14 @@ describe('MCP server launch plan', () => {
     }
   });
 
+  test('a server without a credential binding receives no credential', async () => {
+    const { spec, context } = fixture();
+    const plan = await planLaunch({ ...spec, credentialEnv: {} }, context);
+    if (!plan.ok) throw new Error(plan.reason);
+    expect(Object.hasOwn(plan.params.env ?? {}, 'REPO_TOKEN')).toBe(false);
+    expect(JSON.stringify(plan.params).includes(SECRET)).toBe(false);
+  });
+
   test('directories persist and keep their contents across launches', async () => {
     const { stateDir, spec, context } = fixture();
     await planLaunch(spec, context);

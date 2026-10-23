@@ -66,6 +66,7 @@ export const text = (provider: Provider, id: string, value: string) =>
 
 const LIST = { repository: 'owner/repo-a' };
 const ASK = YES_NO_QUESTION;
+const REFERENCE = { skill: 'skill:review', path: 'references/guide.md' };
 
 /** The replies of one phase: 1 runs until the delegate's first question, 2 until its second, 3 to the end. */
 export function phaseReplies(provider: Provider, phase: 1 | 2 | 3): Reply[] {
@@ -78,6 +79,8 @@ export function phaseReplies(provider: Provider, phase: 1 | 2 | 3): Reply[] {
             ['call_r1a', 'mcp_LoadSkill', { skill: 'skill:review' }],
             ['call_r1b', wire(request, 'list_items'), LIST],
           ]),
+        // A reference becomes readable only in a response after its skill's load.
+        () => one(provider, 'r1r', ['call_r1r', 'mcp_ReadSkillReference', REFERENCE]),
         () => one(provider, 'r2', ['call_r2', 'mcp_Delegate', { agent: 'agent:worker', task: 'Check the count.' }]),
         (request) => one(provider, 'd1', ['call_d1', wire(request, 'list_items'), LIST]),
         () => one(provider, 'd2', ['call_d2', 'mcp_AskUser', ASK]),
@@ -90,6 +93,30 @@ export function phaseReplies(provider: Provider, phase: 1 | 2 | 3): Reply[] {
       ];
     case 3:
       return [() => text(provider, 'd5', 'Checked twice.'), () => text(provider, 'r3', 'The worker checked.')];
+  }
+}
+
+/**
+ * The retention and revocation witness (task 18.2). Phase 1 calls the server and asks the owner before anything else
+ * is used. Phase 2 runs after a restart that replaced or removed the installation and revoked the tool's grant: the
+ * root first uses the retained skill, its reference and agent, and the delegate's new call is refused unsent.
+ */
+export function retentionReplies(provider: Provider, phase: 1 | 2): Reply[] {
+  switch (phase) {
+    case 1:
+      return [
+        (request) => one(provider, 'k1', ['call_k1', wire(request, 'list_items'), LIST]),
+        () => one(provider, 'k2', ['call_k2', 'mcp_AskUser', ASK]),
+      ];
+    case 2:
+      return [
+        () => one(provider, 'k3', ['call_k3', 'mcp_LoadSkill', { skill: 'skill:review' }]),
+        () => one(provider, 'k4', ['call_k4', 'mcp_ReadSkillReference', REFERENCE]),
+        () => one(provider, 'k5', ['call_k5', 'mcp_Delegate', { agent: 'agent:worker', task: 'Check the count.' }]),
+        (request) => one(provider, 'k6', ['call_k6', wire(request, 'list_items'), LIST]),
+        () => text(provider, 'k7', 'The tool was refused.'),
+        () => text(provider, 'k8', 'Reviewed from the retained skill.'),
+      ];
   }
 }
 

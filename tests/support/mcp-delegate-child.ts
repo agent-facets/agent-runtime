@@ -1,11 +1,20 @@
-// The first phase of the real-MCP delegate restart witness, run in its own process: it starts the command run through
-// the production service and waits until the delegate asks its first question, reports, and waits to be killed.
+// The first phase of the real-MCP restart witnesses, run in its own process: it starts the command run through the
+// production API, waits until the run asks its first question, reports, and waits to be killed. `SCENARIO_KIND`
+// selects the retention witness's replies instead of the delegate witness's.
 // Synthetic inputs only; launched by tests/integration/mcp-delegate-restart.integration.test.ts.
 import { openPersistence } from '../../packages/runtime/src/persistence/persistence.ts';
-import { type Provider, phaseReplies, SCENARIO } from './mcp-delegate-scenario.ts';
-import { mcpService } from './mcp-service.ts';
+import { type Provider, phaseReplies, retentionReplies, SCENARIO } from './mcp-delegate-scenario.ts';
+import { mcpService, SLOT_VALUE } from './mcp-service.ts';
 
-const report = (value: Record<string, unknown>) => process.stdout.write(`${JSON.stringify(value)}\n`);
+/** Reports to the parent; a report carrying the server's credential is replaced, never printed. */
+const report = (value: Record<string, unknown>) => {
+  const line = JSON.stringify(value);
+  process.stdout.write(
+    line.includes(SLOT_VALUE)
+      ? `${JSON.stringify({ w: 'child-error', message: 'a report carried the credential' })}\n`
+      : `${line}\n`,
+  );
+};
 try {
   const provider = process.env.SCENARIO_PROVIDER as Provider;
   const persistence = await openPersistence({ url: process.env.SCENARIO_DATABASE_URL as string, onFault: () => {} });
@@ -16,10 +25,11 @@ try {
     grants: [...SCENARIO.grants],
     allowAgents: [...SCENARIO.allowAgents],
     allowSkills: [...SCENARIO.allowSkills],
-    replies: phaseReplies(provider, 1),
+    replies: process.env.SCENARIO_KIND === 'retention' ? retentionReplies(provider, 1) : phaseReplies(provider, 1),
   });
-  const started = await h.start('owner/repo-a');
-  const runId = (started.body as { run: { runId: string } }).run.runId;
+  const started = await h.startApi('owner/repo-a');
+  if (started.status !== 202) throw new Error(`start refused: ${started.status}`);
+  const runId = started.body.run.runId as string;
   await h.service.settled();
   const snapshot = await h.service.store.snapshot(runId);
   report({

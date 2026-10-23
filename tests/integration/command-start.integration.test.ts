@@ -64,7 +64,9 @@ const definition = (kind: string, name: string, extra: Record<string, unknown>) 
     },
   },
 });
-function bundle(body: string): Uint8Array {
+/** The installation; `review: 'refused'` seals the skill `command:triage` requires as an unsupported contribution. */
+function bundle(body: string, review: 'ready' | 'refused' = 'ready'): Uint8Array {
+  const skill = definition('skill', 'review', { instructions: 'Review carefully.', resources: [] });
   return new TextEncoder().encode(
     `${canonicalJson({
       format: 2,
@@ -83,7 +85,10 @@ function bundle(body: string): Uint8Array {
           arguments: { required: true },
           requires: [{ kind: 'skill', id: 'skill:review' }],
         }),
-        definition('skill', 'review', { instructions: 'Review carefully.', resources: [] }),
+        review === 'ready'
+          ? skill
+          : { ...skill, state: { kind: 'refused', reason: 'unsupported_field', fields: ['model'] } },
+        definition('command', 'plain', { body: 'Summarize notes/plan.md.', arguments: { required: false } }),
       ],
       servers: [],
       omittedServers: [],
@@ -263,6 +268,39 @@ describe('command starts', () => {
     await h.service.settled();
     expect(h.net.sent).toEqual([]);
     for (const requestId of ids) expect(await h.service.store.findCreation(requestId)).toBeUndefined();
+  });
+
+  test('a command whose declared prerequisite is refused starts nothing; an unrelated command still starts', async () => {
+    const h = await harness();
+    h.installed.bytes = bundle('Triage $ARGUMENTS.', 'refused');
+    const requestId = crypto.randomUUID();
+    const refused = await h.start(requestId, 'owner/repo-a');
+    // biome-ignore lint/suspicious/noExplicitAny: response body under test
+    expect([refused.status, (refused.body as any).error]).toEqual([
+      409,
+      // The refusal names the prerequisite that is unavailable.
+      expect.objectContaining({
+        code: 'capability_unavailable',
+        acceptance: 'not_accepted',
+        subject: 'skill:review',
+      }),
+    ]);
+    expect(await h.service.store.findCreation(requestId)).toBeUndefined();
+    expect(h.counts.preflight).toBe(0);
+    const plain = await h.service.createRun({
+      kind: 'command',
+      requestId: crypto.randomUUID(),
+      provider: 'anthropic',
+      command: {
+        id: 'command:plain',
+        selectionRevision: selectionRevision(sha(h.installed.bytes), 'command:plain'),
+        arguments: '',
+      },
+    });
+    expect(plain.status).toBe(202);
+    await h.service.settled();
+    // Only the unrelated command reached the model.
+    expect(h.net.sent).toHaveLength(1);
   });
 
   test('a configured catalog leaves goal runs with exactly the three native tools under both providers', async () => {
