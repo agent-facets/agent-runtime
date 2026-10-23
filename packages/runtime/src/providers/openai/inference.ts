@@ -19,6 +19,12 @@ export const OPENAI_INFERENCE_POLICY: EndpointPolicy = Object.freeze({
   routes: Object.freeze([Object.freeze({ method: 'POST' as const, path: '/backend-api/codex/responses' })]),
 });
 
+/**
+ * Function names this integration sends: the pinned SDK's documented function-name form (letters, digits, `_` and
+ * `-`, at most 64). Other tool names travel under aliases (../tool-names.ts).
+ */
+export const OPENAI_TOOL_NAME = /^[A-Za-z0-9_-]{1,64}$/;
+
 /** Identifies this application to the backend; it does not claim to be a Codex client. */
 export const OPENAI_ORIGINATOR = 'agent_runtime';
 

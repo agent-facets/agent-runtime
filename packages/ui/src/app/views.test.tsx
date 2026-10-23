@@ -177,7 +177,7 @@ describe('run views', () => {
         kind: 'tool.operation',
         payload: {
           operationId: QUESTION,
-          toolName: 'mcp_ext_x',
+          toolName: 'mcp_github_list_issues',
           disposition,
           binding: { kind: 'mcp', serverId: 'github', toolName: 'list_issues', definitionDigest: QUESTION },
         },

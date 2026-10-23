@@ -50,6 +50,32 @@ export function createMcpPreflight(deps: PreflightDeps) {
       bound.tools.push(...result.tools);
       bound.authority.push(result.authority);
     }
+    // Canonical names of different servers' tools can coincide (`a_b`/`c` and `a`/`b_c`). Such tools are not bound
+    // under either name, and a command that requires one is refused; unrelated tools stay bound.
+    const uses = new Map<string, number>();
+    for (const tool of bound.tools) uses.set(tool.adapted.name, (uses.get(tool.adapted.name) ?? 0) + 1);
+    const colliding = (tool: { adapted: { name: string } }) => (uses.get(tool.adapted.name) ?? 0) > 1;
+    const requiredCollision = bound.tools.find(
+      (tool) => colliding(tool) && required.get(tool.serverId)?.includes(tool.toolName) === true,
+    );
+    if (requiredCollision !== undefined) {
+      return {
+        ok: false,
+        code: 'capability_unavailable',
+        reason: 'name_collision',
+        subject: subjectOf(requiredCollision.serverId, requiredCollision.toolName),
+      };
+    }
+    if (bound.tools.some(colliding)) {
+      const removed = bound.tools.filter(colliding);
+      bound.tools = bound.tools.filter((tool) => !colliding(tool));
+      bound.authority = bound.authority.map((server) => ({
+        ...server,
+        tools: server.tools.filter(
+          (grant) => !removed.some((tool) => tool.serverId === server.serverId && tool.toolName === grant.name),
+        ),
+      }));
+    }
     if (bound.tools.length > CAPABILITY_LIMITS.boundTools) {
       return { ok: false, code: 'capability_unavailable', reason: 'too_many_tools' };
     }

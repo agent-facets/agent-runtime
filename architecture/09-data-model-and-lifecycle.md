@@ -160,6 +160,21 @@ Command acceptance and skill loads (`run-store.ts`):
 | Accept a command run | Run, normalized submission, content-addressed snapshot (stored once, shared by identical runs), root actor, initial invocation, `run.command` and status history. A retry with the same submission returns this run; a different one conflicts |
 | Complete a successful skill load | The load operation's outcome and, from the run's retained snapshot (never the tool output), the actor's `loaded_skills` row with the bound definition's digest; an existing membership is kept |
 
+MCP calls (`run-store.ts` and `execution/operations.ts`):
+
+| Step | Records that change together |
+|---|---|
+| Start | The operation, `started`, with its version-2 identity and `mcp` binding (server, tool, definition digest); an exact earlier binding is reused instead, and a completed one answers the call |
+| Admit | Under the run's dispatch gate, only while the run is working under this invocation and the actor is active: the operation becomes `dispatching` with its history event, and the request is handed to the transport before the gate is released. An existing intent is never a licence to send again; an ambiguous commit is resolved by same-owner readback |
+| Record | The sanitized outcome (`ok`, `refused`, `error` or `uncertain`) and its history event, read back exactly if the commit was ambiguous, before the model sees it; an outcome that cannot be shown stored is treated as unknown |
+
+Tool identities are canonical everywhere they are stored: operation and history tool names, retained snapshots and
+the tool calls in saved graph state use `mcp_<serverId>_<toolName>` (migration 5 widens stored call names from 128 to
+197 characters, forward only), and the operation's binding names the server and tool. A provider's wire alias exists
+only within one model call and is never an operation identity: the provider call ID and issuing message decide
+replay. Snapshots retained under the earlier derived `mcp_ext_…` names stay readable unchanged; runs saved under the
+earlier MCP protocol are refused continuation rather than rewritten.
+
 Continuation rebuilds a command run's agents from its retained snapshot; confirmed snapshot corruption refuses the
 answer as `continuation_unavailable` (`definition_changed`), while an installation change or removal, or a change of
 current grants, does not affect it.

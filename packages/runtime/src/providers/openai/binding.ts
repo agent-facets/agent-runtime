@@ -1,6 +1,6 @@
 // One invocation of a run bound to OpenAI subscription access: the stock model, its guarded terminal (with the run's
-// durable admission and tracked work), failure classification, the one renewal retry, the screening scope and the
-// parsed-response check the model boundary consumes. This is the OpenAI adapter's execution root: its closure is part
+// durable admission and tracked work), failure classification, the one renewal retry, the screening scope, the
+// parsed-response check and the tool-name translation the model boundary consumes. This is the OpenAI adapter's execution root: its closure is part
 // of the execution definition of runs bound to OpenAI.
 import type { CredentialCoordinator } from '../../credentials/coordinator.ts';
 import { type CredentialScreen, ScreenScope } from '../../credentials/screening.ts';
@@ -8,11 +8,13 @@ import { ModelCallReports } from '../../execution/failures.ts';
 import { createTerminal, type RequestAdmission } from '../../execution/terminal.ts';
 import type { ProviderBinding } from '../../records/schemas.ts';
 import type { WiredModel } from '../model.ts';
+import { toolNameTranslation } from '../tool-names.ts';
 import {
   classifyOpenAIError,
   createOpenAIModel,
   OPENAI_INFERENCE_POLICY,
   OPENAI_PROFILE_IDS,
+  OPENAI_TOOL_NAME,
   openaiCredentials,
   openaiRenewal,
   openaiResponseRefusal,
@@ -72,5 +74,6 @@ export function wireOpenAIInvocation(options: OpenAIInvocation): WiredModel | { 
     modelCallSettled: () => scope.release(),
     reports,
     responseRefusal: openaiResponseRefusal,
+    toolNames: toolNameTranslation((name) => OPENAI_TOOL_NAME.test(name)),
   };
 }

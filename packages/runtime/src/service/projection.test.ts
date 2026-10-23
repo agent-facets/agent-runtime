@@ -32,7 +32,7 @@ describe('history projection', () => {
         kind: 'tool.operation',
         payload: {
           operationId: D,
-          toolName: 'mcp_ext_x',
+          toolName: 'mcp_github_list_issues',
           disposition: { kind: 'dispatching' },
           actor: delegate,
           binding: { kind: 'mcp', serverId: 'github', toolName: 'list_issues', definitionDigest: D },

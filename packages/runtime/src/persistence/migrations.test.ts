@@ -71,6 +71,16 @@ describe('runtime migration journal', () => {
     });
   });
 
+  test('canonical tool names are a later forward migration: a build knowing only version 4 refuses it', () => {
+    expect(RUNTIME_MIGRATIONS[4]?.name).toBe('canonical_tool_names');
+    const shipped = RUNTIME_MIGRATIONS.map(row);
+    expect(classifyRuntimeJournal(shipped.slice(0, 4)).kind).toBe('upgradable');
+    expect(classifyRuntimeJournal(shipped.slice(0, 5), RUNTIME_MIGRATIONS.slice(0, 4))).toEqual({
+      kind: 'incompatible',
+      reason: 'runtime schema version 5 is newer than this build',
+    });
+  });
+
   test('applied migrations are unchanged', () => {
     // Journaled checksums of migrations 1–3 as applied by phase-1 databases; editing them strands every database.
     expect(RUNTIME_MIGRATIONS.slice(0, 3).map((migration) => migrationChecksum(migration))).toEqual(APPLIED);

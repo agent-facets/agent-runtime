@@ -20,6 +20,14 @@ export const contributionIdSchema = z.union([commandIdSchema, skillIdSchema, age
 /** An MCP server's effective declared name; also a private state-directory name, so deliberately narrow. */
 export const serverIdSchema = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/);
 export const mcpToolNameSchema = z.string().regex(/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/);
+/**
+ * An MCP tool's canonical agent-tool name: `mcp_<serverId>_<toolName>`, both components spelled exactly as given.
+ * It is a readable name, not an identity — underscores make the components ambiguous, so the server/tool pair is
+ * always kept alongside it. Built-in tools (`mcp_` then an uppercase letter) can never take this form.
+ */
+export const mcpCanonicalToolName = (serverId: string, toolName: string) => `mcp_${serverId}_${toolName}`;
+/** The longest tool name a call can be recorded under: a canonical MCP name with both components at their limits. */
+export const TOOL_CALL_NAME_MAX = 197;
 export const nativeToolSchema = z.enum(['mcp_Read', 'mcp_Search', 'mcp_AskUser']);
 export type NativeTool = z.infer<typeof nativeToolSchema>;
 

@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 import type { CapabilityConfig } from '../config/capabilities.ts';
-import { sha256Hex } from '../records/canonical.ts';
 import { authorizeMcpCall, effectiveAgents, effectiveSkills } from './authority.ts';
 import { type CapabilitySnapshot, sealSnapshot } from './records.ts';
 
@@ -23,7 +22,7 @@ const tool = (toolName: string, definitionDigest: string) => ({
   toolName,
   raw: { name: toolName, inputSchema: { type: 'object', properties: { repository: { type: 'string' } } } },
   definitionDigest,
-  adapted: { name: `mcp_ext_${sha256Hex(toolName).slice(0, 48)}`, description: `github / ${toolName}`, schema: {} },
+  adapted: { name: `mcp_github_${toolName}`, description: `github / ${toolName}`, schema: {} },
 });
 
 function snapshot(extra: { command?: Record<string, unknown>; agents?: unknown[] } = {}): CapabilitySnapshot {

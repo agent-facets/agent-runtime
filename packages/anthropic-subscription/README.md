@@ -19,6 +19,11 @@ It is a minimal, project-maintained derivative of `@ex-machina/opencode-anthropi
 - **Transport-reported delivery.** A transport throws `NotSentError` only when a request certainly never left. Any
   other failure after sending is `outcome_unknown`, because the issuer may already have consumed a refresh token.
 
+- **Profile tool names only.** `adaptInferenceRequest` refuses a tool definition or earlier call whose name is outside
+  the profile's convention, and nothing here aliases names or rewrites responses. The runtime's Anthropic integration
+  sends other names (such as `mcp_<serverId>_<toolName>`) under request-local aliases and restores them in the parsed
+  response before anything stores them (`packages/runtime/src/providers/tool-names.ts`).
+
 Only the public entry (`@agent-runtime/anthropic-subscription`) may be imported. The package depends on no other
 workspace package, OpenCode, LangChain or provider SDK, and the browser UI and API contracts must not import it.
 

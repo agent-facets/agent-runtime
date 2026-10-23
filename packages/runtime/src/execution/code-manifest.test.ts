@@ -175,6 +175,13 @@ describe('execution code manifest', () => {
       expect(names(manifest)).not.toContain('turbo');
       expect(names(manifest)).not.toContain('@biomejs/biome');
     }
+    // Tool-name translation is provider-owned: it joins each run's definition through that provider's adapter.
+    for (const manifest of [anthropic, openai]) expect(paths(manifest)).toContain('src/providers/tool-names.ts');
+    const common = computeCodeManifest({
+      packageRoot: PACKAGE_ROOT,
+      lockfile: resolve(PACKAGE_ROOT, '../../bun.lock'),
+    });
+    expect(paths(common)).not.toContain('src/providers/tool-names.ts');
     for (const root of PROVIDER_ROOTS.anthropic ?? []) expect(paths(anthropic)).toContain(root);
     // The internal subscription package's execution-used sources are part of Anthropic runs' definition.
     for (const file of ['index.ts', 'request.ts', 'billing.ts', 'profile.ts', 'response.ts', 'auth.ts']) {

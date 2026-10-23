@@ -53,7 +53,7 @@ const agent = (name: string, extra: Record<string, unknown> = {}) => ({
   restrict: { native: ['mcp_Read'], mcp: [] },
   ...extra,
 });
-const tool = (toolName: string, index = 0, extra: Record<string, unknown> = {}) => ({
+const tool = (toolName: string, extra: Record<string, unknown> = {}) => ({
   serverId: 'github',
   toolName,
   raw: {
@@ -63,7 +63,7 @@ const tool = (toolName: string, index = 0, extra: Record<string, unknown> = {}) 
   },
   definitionDigest: D,
   adapted: {
-    name: `mcp_ext_${sha256Hex(`${toolName}${index}`).slice(0, 48)}`,
+    name: `mcp_github_${toolName}`,
     description: 'github / list_issues: Lists issues.',
     schema: { type: 'object' },
   },
@@ -156,12 +156,12 @@ describe('capability snapshots', () => {
       snapshot({ grants: [] }),
       snapshot({ skills: [skill('review'), skill('review')] }),
       snapshot({ servers: [] }),
-      snapshot({ tools: [tool('list_issues'), tool('list_issues', 1)] }),
-      snapshot({ tools: [tool('a'), tool('b', 0, { adapted: tool('a').adapted })] }),
+      snapshot({ tools: [tool('list_issues'), tool('list_issues')] }),
+      snapshot({ tools: [tool('a'), tool('b', { adapted: tool('a').adapted })] }),
       snapshot({ skills: [skill('review', { id: 'skill:other' })] }),
       snapshot({ skills: [skill('review', { restrict: {} })] }),
       snapshot({ agents: [agent('helper', { id: 'skill:helper' })] }),
-      snapshot({ tools: [tool('list_issues', 0, { raw: { ...tool('x').raw, name: 'x' } })] }),
+      snapshot({ tools: [tool('list_issues', { raw: { ...tool('x').raw, name: 'x' } })] }),
       snapshot({ limits: { maxDelegations: 8, delegationDepth: 2 } }),
     ];
     for (const value of invalid) expect(parses(value)).toBe(false);
@@ -197,7 +197,7 @@ describe('capability snapshots', () => {
     const agents = (n: number) => Array.from({ length: n }, (_, i) => agent(`a${i}`));
     const servers = (n: number) =>
       Array.from({ length: n }, (_, i) => ({ ...snapshot().servers[0], serverId: i === 0 ? 'github' : `s${i}` }));
-    const tools = (n: number) => Array.from({ length: n }, (_, i) => tool(`t${i}`, i));
+    const tools = (n: number) => Array.from({ length: n }, (_, i) => tool(`t${i}`));
     expect(parses(snapshot({ skills: skills(32) }))).toBe(true);
     expect(parses(snapshot({ skills: skills(33) }))).toBe(false);
     expect(parses(snapshot({ agents: agents(16) }))).toBe(true);
@@ -238,7 +238,7 @@ describe('capability snapshots', () => {
   test('bounds advertised tool definitions by size, schema depth and property count', () => {
     const nested = (depth: number): Record<string, unknown> =>
       depth === 1 ? { type: 'string' } : { type: 'object', properties: { next: nested(depth - 1) } };
-    const withSchema = (inputSchema: unknown) => tool('x', 0, { raw: { name: 'x', inputSchema } });
+    const withSchema = (inputSchema: unknown) => tool('x', { raw: { name: 'x', inputSchema } });
     expect(mcpToolDefinitionSchema.safeParse(withSchema(nested(8))).success).toBe(true);
     expect(mcpToolDefinitionSchema.safeParse(withSchema(nested(9))).success).toBe(false);
     const properties = (n: number) => ({
@@ -247,7 +247,7 @@ describe('capability snapshots', () => {
     });
     expect(mcpToolDefinitionSchema.safeParse(withSchema(properties(256))).success).toBe(true);
     expect(mcpToolDefinitionSchema.safeParse(withSchema(properties(257))).success).toBe(false);
-    const large = tool('x', 0, { raw: { name: 'x', description: 'd'.repeat(CAPABILITY_LIMITS.toolDefinitionBytes) } });
+    const large = tool('x', { raw: { name: 'x', description: 'd'.repeat(CAPABILITY_LIMITS.toolDefinitionBytes) } });
     expect(mcpToolDefinitionSchema.safeParse(large).success).toBe(false);
   });
 

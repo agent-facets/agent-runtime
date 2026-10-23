@@ -12,6 +12,7 @@ import {
   providerSchema,
   questionInputSchema,
   questionPromptSchema,
+  TOOL_CALL_NAME_MAX,
   toolBindingSchema,
   withinQuestionText,
 } from '@agent-runtime/contracts';
@@ -212,7 +213,7 @@ export const eventSchema = z.discriminatedUnion('kind', [
     kind: z.literal('tool.operation'),
     payload: z.strictObject({
       operationId: digest,
-      toolName: nonEmpty(128),
+      toolName: nonEmpty(TOOL_CALL_NAME_MAX),
       disposition: toolDispositionSchema,
       actor: actorRefSchema.optional(),
       binding: toolBindingSchema.optional(),

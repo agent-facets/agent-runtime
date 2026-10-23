@@ -7,6 +7,7 @@ import {
   commandEventSchema,
   delegationFinishedSchema,
   delegationStartedSchema,
+  TOOL_CALL_NAME_MAX,
   toolBindingSchema,
 } from './capabilities.ts';
 import {
@@ -203,7 +204,7 @@ export const runEventSchema = z.discriminatedUnion('kind', [
     'tool.operation',
     z.strictObject({
       operationId: digestSchema,
-      toolName: z.string().min(1).max(128),
+      toolName: z.string().min(1).max(TOOL_CALL_NAME_MAX),
       disposition: toolDispositionSchema,
       actor: actorRefSchema.optional(),
       binding: toolBindingSchema.optional(),

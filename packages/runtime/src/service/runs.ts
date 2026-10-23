@@ -959,6 +959,7 @@ export class RunService {
       modelCallSettled: wired.modelCallSettled,
       reports: wired.reports,
       ...(wired.responseRefusal === undefined ? {} : { responseRefusal: wired.responseRefusal }),
+      toolNames: wired.toolNames,
     };
   }
 
