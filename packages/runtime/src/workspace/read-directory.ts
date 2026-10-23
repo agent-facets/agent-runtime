@@ -10,9 +10,18 @@
 import { lstat, opendir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isStorableText, utf8Bytes } from '../domain/text.ts';
-import { confirmUnchanged, parseToolPath, refuse, resolvePath, ToolProblem, throwIfAborted } from './filesystem.ts';
+import {
+  confirmUnchanged,
+  nextEntry,
+  parseToolPath,
+  refuse,
+  resolvePath,
+  ToolProblem,
+  throwIfAborted,
+} from './filesystem.ts';
 import { identityKey, isExcluded, type WorkspacePolicy } from './policy.ts';
-import { positiveInteger, type TextFilter } from './read-file.ts';
+import type { ContentScreen } from './projection.ts';
+import { positiveInteger } from './read-file.ts';
 import { ENVELOPE_RESERVE_BYTES, ResultBudget, type ToolOutcome, toolOutcome } from './results.ts';
 
 export interface DirectoryReadRequest {
@@ -68,7 +77,7 @@ function parseAfterName(value: unknown): string | undefined {
 export function readDirectory(
   policy: WorkspacePolicy,
   request: DirectoryReadRequest,
-  options: { signal?: AbortSignal; filter?: TextFilter } = {},
+  options: { signal?: AbortSignal; screen?: ContentScreen } = {},
 ): Promise<ToolOutcome<DirectoryReadResult>> {
   const { limits } = policy;
   return toolOutcome(limits.resultBytes, async () => {
@@ -87,15 +96,15 @@ export function readDirectory(
     try {
       for (;;) {
         throwIfAborted(options.signal);
-        const entry = await directory.read();
+        const entry = await nextEntry(directory);
         if (entry === null) break;
         if (++examined > limits.rawEntries) {
           return { mode: 'directory', path, entries: [], complete: false, limitedBy: 'directory_too_large' };
         }
         const name = entry.name;
         if (!isListableName(name) || isExcluded(policy, [...parts, name])) continue;
-        // A name the secret filter would alter is omitted, never returned rewritten.
-        if (options.filter !== undefined && options.filter(name) !== name) continue;
+        // A name containing protected material is omitted, never returned rewritten.
+        if (options.screen !== undefined && options.screen.spans(name).length > 0) continue;
         if (afterName !== undefined && compareNames(name, afterName) <= 0) continue;
         candidates.push(name);
       }

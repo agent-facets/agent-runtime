@@ -15,7 +15,7 @@ const issuer: CredentialIssuer = {
     return {
       kind: 'refreshed',
       credential: {
-        accessToken: `access-${process.pid}-${current.generation + 1}`,
+        accessToken: `synthetic-access-${process.pid}-${current.generation + 1}`,
         expiresAtMs: Date.now() + 3_600_000,
       },
     };
@@ -42,8 +42,8 @@ if (action === 'current') {
           appendFileSync(witness, `authorize ${process.pid}\n`);
           await Bun.sleep(Number(issuerDelayMs));
           return {
-            accessToken: `login-access-${process.pid}`,
-            refreshToken: `login-refresh-${process.pid}`,
+            accessToken: `login-access-token-${process.pid}`,
+            refreshToken: `login-refresh-token-${process.pid}`,
             expiresAtMs: Date.now() + 3_600_000,
             account: { accountId: 'acct_login' },
           };

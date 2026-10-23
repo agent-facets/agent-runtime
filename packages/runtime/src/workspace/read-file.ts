@@ -10,8 +10,9 @@ import {
   throwIfAborted,
 } from './filesystem.ts';
 import type { WorkspacePolicy } from './policy.ts';
-import { ENVELOPE_RESERVE_BYTES, ResultBudget, type ToolOutcome, toolOutcome } from './results.ts';
-import { clipToBytes, decodeText, lineSpans } from './text.ts';
+import { type ContentScreen, NO_SCREEN, projectLines } from './projection.ts';
+import { ENVELOPE_RESERVE_BYTES, largestFitting, ResultBudget, type ToolOutcome, toolOutcome } from './results.ts';
+import { decodeText } from './text.ts';
 
 export interface FileReadRequest {
   path: unknown;
@@ -39,9 +40,6 @@ export interface FileReadResult {
   limitedBy?: 'line_limit' | 'result_size';
 }
 
-/** Applied to each line before it is measured and returned (secret-safe projection). */
-export type TextFilter = (text: string) => string;
-
 export function positiveInteger(value: unknown, fallback: number, max: number, name: string): number {
   if (value === undefined) return fallback;
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1 || value > max) {
@@ -53,7 +51,7 @@ export function positiveInteger(value: unknown, fallback: number, max: number, n
 export function readFile(
   policy: WorkspacePolicy,
   request: FileReadRequest,
-  options: { signal?: AbortSignal; filter?: TextFilter } = {},
+  options: { signal?: AbortSignal; screen?: ContentScreen } = {},
 ): Promise<ToolOutcome<FileReadResult>> {
   const { limits } = policy;
   return toolOutcome(limits.resultBytes, async () => {
@@ -73,7 +71,7 @@ export function readFile(
       if (stat.size > BigInt(limits.fileBytes)) {
         throw refuse('file_too_large', `Files larger than ${limits.fileBytes} bytes are not read.`);
       }
-      bytes = await readWholeFile(handle, stat, options.signal);
+      bytes = await readWholeFile(handle, stat, { signal: options.signal });
     } finally {
       await handle.close();
     }
@@ -83,13 +81,15 @@ export function readFile(
     const text = decodeText(bytes);
     if (text === undefined) throw refuse('not_text', 'This file is not UTF-8 text.');
 
-    const filter = options.filter ?? ((line: string) => line);
+    // Protected material is located in the whole file before any line is selected or clipped.
+    const screen = options.screen ?? NO_SCREEN;
+    const spans = screen.spans(text);
     const budget = new ResultBudget(limits.resultBytes - ENVELOPE_RESERVE_BYTES);
     const lines: FileLine[] = [];
     let totalLines = 0;
     let nextStartLine: number | undefined;
     let limitedBy: FileReadResult['limitedBy'];
-    for (const [start, end] of lineSpans(text)) {
+    for (const projected of projectLines(text, spans, screen.marker)) {
       totalLines++;
       if (totalLines < startLine || nextStartLine !== undefined) continue;
       if (lines.length === lineLimit) {
@@ -97,17 +97,21 @@ export function readFile(
         limitedBy = 'line_limit';
         continue;
       }
-      const entry: FileLine = { line: totalLines, text: filter(text.slice(start, end)) };
+      const entry: FileLine = { line: totalLines, text: projected.text };
       if (budget.tryAdd(entry)) {
         lines.push(entry);
         continue;
       }
       if (lines.length === 0) {
-        // A single line larger than the whole budget: return a marked prefix of it and continue after it.
-        const clipped: FileLine = { line: totalLines, text: '', clipped: true };
-        clipped.text = clipToBytes(entry.text, budget.remaining - ResultBudget.costOf(clipped) - 16);
-        budget.tryAdd(clipped);
-        lines.push(clipped);
+        // A single line larger than the whole budget: return the longest prefix whose serialized entry fits
+        // (escaping included), marked as clipped, and continue after it.
+        const remaining = budget.remaining;
+        const prefix = largestFitting(
+          entry.text,
+          (candidate) => ResultBudget.costOf({ line: totalLines, text: candidate, clipped: true }) <= remaining,
+        );
+        const clipped: FileLine = { line: totalLines, text: prefix, clipped: true };
+        if (budget.tryAdd(clipped)) lines.push(clipped);
         nextStartLine = totalLines + 1;
       } else {
         nextStartLine = totalLines;

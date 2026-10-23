@@ -171,7 +171,10 @@ endpoint, API key or other unsupported option can never be silently ignored:
   `authMode: "subscription"` exists — there is no API-key mode and no billed fallback. A configured provider
   reports `integration_unavailable` until its integration is delivered (later blocks).
 - The workspace root must be a normalized absolute path that neither contains nor lies inside the runtime state
-  directory, and does not contain the configuration file.
+  directory, and does not contain the configuration file. Before the tools may use it, the root must also be its
+  own canonical path (no symlink at any level), and the state directory and configuration file must resolve
+  outside it. The state directory must exist and every private entry beneath it must be inspectable; if the
+  private locations cannot be protected completely, workspace access stays unavailable.
 - `stepBudget` defaults to 50 model requests per run; `modelRequestDeadlineSeconds` to 300.
 - The Compose file does not mount a configuration file yet; that wiring arrives with agent execution.
 
@@ -198,38 +201,59 @@ These components are implemented and tested, and are connected to the agent in t
   credential stores (`.ssh`, `.aws`, `.netrc`, `.npmrc`, `.docker`, `credentials.json`, `auth.json` …) and
   Terraform state, plus the configured `excludeNames`/`excludePaths`. Excluded paths are refused identically
   whether or not they exist, and never appear in listings or search.
-- Only UTF-8 text without NUL is read, and the whole file is checked, not just the lines returned.
+- Only UTF-8 text without NUL is read, and the whole file is checked, not just the lines returned. Each file is
+  also screened for credentials as a whole before any line is paged, clipped or excerpted (see below), so line
+  numbers always refer to the original file.
 - Limits: 1 MiB per file; 200 lines by default and 2,000 at most; 200 directory entries by default and 2,000 at
   most; search stops at 100 matching lines, 2,000 examined files or 16 MiB read; one call examines at most 20,000
-  directory entries, 2,000 directories and 64 levels. Every result, serialized, is at most 64 KiB. A bound that is
-  reached is reported; a search that skipped a readable file (too large, unreadable, changed) is reported as
-  incomplete, never as "no matches".
+  directory entries, 2,000 directories and 64 levels. Every complete tool outcome — envelope, escaping and
+  redaction included — is at most 64 KiB; a single longer line is returned as a marked prefix sized by its
+  serialized length, and an outcome that would still exceed the bound is replaced by a `result_too_large`
+  refusal. A bound that is reached is reported; a search that skipped an eligible file (too large, unreadable,
+  changed or vanished during the search) is reported as incomplete, never as "no matches". The size a file is
+  read at is rechecked on the opened file, and bytes read before a change was noticed still count toward the
+  16-MiB bound.
 - Directory pages are in Unicode code-point order and continue after the last returned name. Pagination is not a
   snapshot: edits between calls can change later pages. A directory with more than 20,000 entries returns no page
   rather than one that could skip names.
 - Search is case-sensitive literal matching (no regular expressions or globs), one result per matching line, with
-  long lines clipped around the match.
+  long lines clipped around the match. It matches the original file text outside credential material, never the
+  `[redacted credential]` markers; an occurrence that touches credential material is withheld and makes the
+  search incomplete. A query that itself contains credential material is refused.
 
 These checks detect escapes and observed changes on **owner-controlled** volumes. They are not protection against a
 hostile process changing the tree concurrently, and the read-only mount is not a sandbox.
 
 **Credentials** live only under `RUNTIME_STATE_DIR/credentials/<provider>/<slot>.json`: versioned, strictly
 decoded records with a generation number and millisecond expiry, in `0700` directories and `0600`, single-linked
-files owned by the runtime user. Anything else (loose permissions, symlinks, hard links, FIFOs, invalid records)
+files owned by the runtime user. Access and refresh tokens must be 16 to 16,384 printable, non-space ASCII
+characters. The 16-character minimum is this runtime's safety floor, not a provider format: exact-match screening
+cannot safely recognize shorter values, so a stored record with a shorter token is treated as invalid (and left
+as it is), and a shorter issued token is never written. Anything else (loose permissions, symlinks, hard links, FIFOs, invalid records)
 fails closed. Records are replaced atomically and durably (exclusive temporary file, fsync, rename, directory
 fsync). Refresh begins five minutes before expiry; one process refreshes while others wait for, or adopt, its
-result. A provider-scoped kernel lock (via the image's `/usr/bin/flock`) is shared by the runtime and operator
+result. A caller that is already cancelled starts no refresh and launches no lock helper; a caller that stops
+waiting for a refresh already in progress does not cancel it, and that refresh keeps the lock until the issuer
+and the write have settled. A provider-scoped kernel lock (via the image's `/usr/bin/flock`) is shared by the runtime and operator
 login, so a stale refresh can never overwrite a newer login. A definitive rejection records
 "reauthorization required" and keeps no token material. Provider login and refresh protocols are not implemented
 yet; the lifecycle is tested with synthetic credentials.
 
 **Secret-safe projections.** Goals and answers containing credential material are refused, not rewritten.
-Credential values in tool output and model text are replaced by `[redacted credential]`; a credential in a tool
-call's arguments or in a result's non-text field withholds that call or result instead. Model output is assembled
-completely (at most 1 MiB, and only after the provider's successful end-of-response) before any of it is used, so
-a credential split across stream fragments is still caught. Detection combines exact matches of this runtime's live
-credentials with a small set of unambiguous formats (vendor-prefixed keys, private-key blocks, literal bearer
-tokens); it is not general secret scanning, and ordinary identifiers, hashes and example JWTs pass through.
+Credential material is located over the complete text — a whole file, or a whole assembled model message — and
+each occurrence is replaced by `[redacted credential]`, keeping line breaks so line numbers are unchanged. A
+private-key block is masked whole, delimiters and body; one without its matching `END` line (or with another
+`BEGIN` first) is withheld through the end of the file. A credential in a tool call's arguments, or in a result's
+non-text field such as a path or cursor, withholds that call or result instead; refusals and errors from any
+source are checked the same way. If a redacted result would still contain recognizable material, it is withheld
+rather than redacted again. Model output is assembled completely (only after the provider's successful
+end-of-response) before any of it is used, so a credential split across stream fragments is still caught; both
+the buffered input and the redacted, serialized message are limited to 1 MiB. Detection combines exact matches of
+this runtime's live credentials — through an opaque matcher from the credential boundary, which consumers cannot
+enumerate and which execution code must be given explicitly — with a small set of unambiguous formats
+(vendor-prefixed keys, private-key blocks, literal bearer tokens); it is not general secret scanning, and ordinary
+identifiers, hashes and example JWTs pass through. Keeping the matcher current as credentials rotate is part of
+connecting these components to the agent (not yet done).
 Diagnostics are flat allowlisted fields only — no free text, errors, requests, headers or bodies.
 
 ## Deployment

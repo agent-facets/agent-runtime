@@ -5,10 +5,16 @@
 // checked whole before its matches are kept. The search stops at the first bound it reaches and says so; a
 // search that skipped something it should have examined (too large, unreadable, changed) is reported as
 // incomplete, so "no matches" is only ever claimed for a complete search.
+//
+// Protected material (credentials) is located over each complete file before any excerpt is made. Matching runs
+// against the original text outside protected spans, never against redaction markers; an occurrence that touches
+// protected material is withheld and makes the search incomplete rather than silently absent.
+import type { Dirent } from 'node:fs';
 import { opendir } from 'node:fs/promises';
 import { isStorableText, utf8Bytes } from '../domain/text.ts';
 import {
   confirmUnchanged,
+  nextEntry,
   openResolvedFile,
   parseToolPath,
   readWholeFile,
@@ -18,10 +24,11 @@ import {
   throwIfAborted,
 } from './filesystem.ts';
 import { isExcluded, type WorkspacePolicy } from './policy.ts';
+import { type ContentScreen, intersects, NO_SCREEN, projectLines, renderedOffset } from './projection.ts';
 import { compareNames, isListableName } from './read-directory.ts';
-import { positiveInteger, type TextFilter } from './read-file.ts';
+import { positiveInteger } from './read-file.ts';
 import { ENVELOPE_RESERVE_BYTES, ResultBudget, type ToolOutcome, toolOutcome } from './results.ts';
-import { clipToBytes, decodeText, lineSpans } from './text.ts';
+import { clipToBytes, decodeText } from './text.ts';
 
 export interface SearchRequest {
   query: unknown;
@@ -48,8 +55,18 @@ export interface SearchResult {
   /** True only when every eligible text file in scope was searched. */
   complete: boolean;
   limitedBy?: SearchLimit;
-  /** Files in scope that could not be searched; any of the first three makes the search incomplete. */
-  skipped: { tooLarge: number; unreadable: number; changed: number; notText: number };
+  /**
+   * What could not be searched. Everything except `notText` makes the search incomplete: `withheld` counts lines
+   * whose only occurrences touch protected material.
+   */
+  skipped: { tooLarge: number; unreadable: number; changed: number; notText: number; withheld: number };
+}
+
+/** Test instrumentation: deterministic points at which a test may change the tree. */
+export interface SearchBarriers {
+  beforeOpen?: (path: string) => void | Promise<void>;
+  afterOpen?: (path: string) => void | Promise<void>;
+  beforeEntry?: (path: string) => void | Promise<void>;
 }
 
 const EXCERPT_BYTES = 512;
@@ -62,17 +79,28 @@ class Stop extends Error {
   }
 }
 
-function excerpt(line: string, index: number, query: string): Pick<SearchMatch, 'text' | 'clipped'> {
+/** An excerpt of a rendered (already screened) line around the match at `index` of length `length`. */
+function excerpt(line: string, index: number, length: number): Pick<SearchMatch, 'text' | 'clipped'> {
   if (utf8Bytes(line) <= EXCERPT_BYTES) return { text: line };
   const before = clipToBytes([...line.slice(0, index)].reverse().join(''), EXCERPT_CONTEXT_BYTES);
-  const after = clipToBytes(line.slice(index + query.length), EXCERPT_CONTEXT_BYTES);
-  return { text: `${[...before].reverse().join('')}${query}${after}`, clipped: true };
+  const after = clipToBytes(line.slice(index + length), EXCERPT_CONTEXT_BYTES);
+  return { text: `${[...before].reverse().join('')}${line.slice(index, index + length)}${after}`, clipped: true };
+}
+
+type Skipped = SearchResult['skipped'];
+
+/** Policy refusals are intentional exclusions; anything else means an eligible file went unsearched. */
+function recordProblem(skipped: Skipped, problem: ToolProblem): void {
+  if (['excluded', 'symlink', 'special_file', 'multiply_linked'].includes(problem.code)) return;
+  if (problem.code === 'unreadable') skipped.unreadable++;
+  else if (problem.code === 'file_too_large') skipped.tooLarge++;
+  else skipped.changed++;
 }
 
 export function searchWorkspace(
   policy: WorkspacePolicy,
   args: unknown,
-  options: { signal?: AbortSignal; filter?: TextFilter } = {},
+  options: { signal?: AbortSignal; screen?: ContentScreen; barriers?: SearchBarriers } = {},
 ): Promise<ToolOutcome<SearchResult>> {
   const { limits } = policy;
   return toolOutcome(limits.resultBytes, async () => {
@@ -98,12 +126,14 @@ export function searchWorkspace(
     }
     const scope = parseToolPath(request.path ?? '.', limits.pathBytes);
     const maxMatches = positiveInteger(request.maxMatches, limits.searchMatches, limits.searchMatches, 'maxMatches');
-    const filter = options.filter ?? ((text: string) => text);
+    const screen = options.screen ?? NO_SCREEN;
+    if (screen.spans(query).length > 0) throw refuse('invalid_argument', 'The query contains protected material.');
+    const barriers = options.barriers ?? {};
 
     const start = await resolvePath(policy, scope, options.signal);
     const budget = new ResultBudget(limits.resultBytes - ENVELOPE_RESERVE_BYTES);
     const matches: SearchMatch[] = [];
-    const skipped = { tooLarge: 0, unreadable: 0, changed: 0, notText: 0 };
+    const skipped: Skipped = { tooLarge: 0, unreadable: 0, changed: 0, notText: 0, withheld: 0 };
     let examinedFiles = 0;
     let scannedBytes = 0;
     let rawEntries = 0;
@@ -113,49 +143,73 @@ export function searchWorkspace(
       throwIfAborted(options.signal);
       if (examinedFiles >= limits.searchFiles) throw new Stop('file_limit');
       examinedFiles++;
+      const path = parts.join('/');
       let text: string | undefined;
       try {
         const resolved = await resolvePath(policy, parts, options.signal);
-        if (!resolved.leaf.isFile() || resolved.leaf.nlink > 1n) return;
-        const size = Number(resolved.leaf.size);
-        if (size > limits.fileBytes) {
+        if (!resolved.leaf.isFile()) {
+          skipped.changed++;
+          return;
+        }
+        if (resolved.leaf.nlink > 1n) return;
+        if (Number(resolved.leaf.size) > limits.fileBytes) {
           skipped.tooLarge++;
           return;
         }
-        if (scannedBytes + size > limits.searchBytes) {
-          examinedFiles--;
-          throw new Stop('scan_byte_limit');
-        }
+        await barriers.beforeOpen?.(path);
         const { handle, stat } = await openResolvedFile(policy, resolved);
         let bytes: Uint8Array;
         try {
-          bytes = await readWholeFile(handle, stat, options.signal);
+          await barriers.afterOpen?.(path);
+          // The descriptor's size is what will be read; the earlier path check may be stale.
+          const size = Number(stat.size);
+          if (size > limits.fileBytes) {
+            skipped.tooLarge++;
+            return;
+          }
+          const remaining = limits.searchBytes - scannedBytes;
+          if (size > remaining) {
+            examinedFiles--;
+            throw new Stop('scan_byte_limit');
+          }
+          bytes = await readWholeFile(handle, stat, {
+            signal: options.signal,
+            maxBytes: Math.min(size + 1, remaining),
+            onRead: (count) => {
+              scannedBytes += count;
+            },
+          });
         } finally {
           await handle.close();
         }
-        scannedBytes += bytes.byteLength;
         await confirmUnchanged(policy, resolved);
         text = decodeText(bytes);
       } catch (error) {
         if (!(error instanceof ToolProblem)) throw error;
-        if (error.code === 'target_changed') skipped.changed++;
-        else if (error.outcome === 'error') skipped.unreadable++;
+        recordProblem(skipped, error);
         return;
       }
       if (text === undefined) {
         skipped.notText++;
         return;
       }
-      const path = parts.join('/');
-      let lineNumber = 0;
-      for (const [begin, end] of lineSpans(text)) {
-        lineNumber++;
-        const line = text.slice(begin, end);
-        const index = line.indexOf(query);
-        if (index < 0) continue;
+      for (const line of projectLines(text, screen.spans(text), screen.marker)) {
+        let clean = -1;
+        let touched = false;
+        for (let index = line.original.indexOf(query); index >= 0; index = line.original.indexOf(query, index + 1)) {
+          if (intersects(index, index + query.length, line.protectedRanges)) touched = true;
+          else {
+            clean = index;
+            break;
+          }
+        }
+        if (clean < 0) {
+          if (touched) skipped.withheld++;
+          continue;
+        }
         if (matches.length === maxMatches) throw new Stop('match_limit');
-        const match: SearchMatch = { path, line: lineNumber, ...excerpt(line, index, query) };
-        match.text = filter(match.text);
+        const at = renderedOffset(clean, line.protectedRanges, screen.marker);
+        const match: SearchMatch = { path, line: line.number, ...excerpt(line.text, at, query.length) };
         if (!budget.tryAdd(match)) throw new Stop('result_size');
         matches.push(match);
       }
@@ -165,10 +219,12 @@ export function searchWorkspace(
       throwIfAborted(options.signal);
       if (depth > limits.depth || ++directories > limits.directories) throw new Stop('traversal_limit');
       const resolved = await resolvePath(policy, parts, options.signal).catch((error: unknown) => {
-        if (error instanceof ToolProblem) return undefined;
-        throw error;
+        if (!(error instanceof ToolProblem)) throw error;
+        recordProblem(skipped, error);
+        return null;
       });
-      if (resolved === undefined || !resolved.leaf.isDirectory()) {
+      if (resolved === null) return;
+      if (!resolved.leaf.isDirectory()) {
         skipped.changed++;
         return;
       }
@@ -183,12 +239,19 @@ export function searchWorkspace(
       try {
         for (;;) {
           throwIfAborted(options.signal);
-          const entry = await directory.read();
+          let entry: Dirent | null;
+          try {
+            entry = await nextEntry(directory);
+          } catch (error) {
+            if (!(error instanceof ToolProblem)) throw error;
+            skipped.unreadable++;
+            return;
+          }
           if (entry === null) break;
           if (++rawEntries > limits.rawEntries) throw new Stop('traversal_limit');
           const name = entry.name;
           if (!isListableName(name) || isExcluded(policy, [...parts, name])) continue;
-          if (filter(name) !== name) continue;
+          if (screen.spans(name).length > 0) continue;
           if (entry.isSymbolicLink() || !(entry.isFile() || entry.isDirectory())) continue;
           names.push(name);
         }
@@ -202,10 +265,13 @@ export function searchWorkspace(
       names.sort(compareNames);
       for (const name of names) {
         const child = [...parts, name];
-        // The walker re-examines each entry through the common path checks before descending or reading.
+        await barriers.beforeEntry?.(child.join('/'));
+        // The walker re-examines each entry through the common path checks before descending or reading. An entry
+        // that disappeared or became unreadable was eligible, so it makes the search incomplete.
         const stat = await resolvePath(policy, child, options.signal).catch((error: unknown) => {
-          if (error instanceof ToolProblem) return undefined;
-          throw error;
+          if (!(error instanceof ToolProblem)) throw error;
+          recordProblem(skipped, error);
+          return undefined;
         });
         if (stat === undefined) continue;
         if (stat.leaf.isDirectory()) await searchDirectory(child, depth + 1);
@@ -227,7 +293,8 @@ export function searchWorkspace(
       matches,
       examinedFiles,
       scannedBytes,
-      complete: limitedBy === undefined && skipped.tooLarge + skipped.unreadable + skipped.changed === 0,
+      complete:
+        limitedBy === undefined && skipped.tooLarge + skipped.unreadable + skipped.changed + skipped.withheld === 0,
       ...(limitedBy === undefined ? {} : { limitedBy }),
       skipped,
     };
