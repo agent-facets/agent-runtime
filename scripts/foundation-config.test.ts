@@ -11,15 +11,20 @@ interface TurboTask {
   dependsOn?: string[];
   inputs?: string[];
   outputs?: string[];
+  env?: string[];
+  passThroughEnv?: string[];
   cache?: boolean;
   persistent?: boolean;
 }
 
 interface TurboConfig {
-  remoteCache?: { enabled?: boolean };
+  remoteCache?: { enabled?: boolean; teamSlug?: string };
   globalDependencies?: string[];
+  globalEnv?: string[];
   tasks: Record<string, TurboTask>;
 }
+
+const FIXTURE_SUITES = ['//#test:facets', '//#test:integration', '//#test:browser', '//#test:container'];
 
 const root = await readJson<RootManifest>(join(repoRoot, 'package.json'));
 const turbo = await readJson<TurboConfig>(join(repoRoot, 'turbo.json'));
@@ -69,21 +74,22 @@ describe('task graph and cache policy', () => {
     expect(root.workspaces).toEqual(['packages/*']);
   });
 
-  test('Turbo caching is local-only and telemetry is disabled for every Turbo command', () => {
-    expect(turbo.remoteCache?.enabled).toBe(false);
+  test('Turbo shares the team remote cache, keyed by platform, and every Turbo command goes through the runner', () => {
+    expect(turbo.remoteCache).toEqual({ teamSlug: 'agent-facets' });
+    expect(turbo.globalEnv).toEqual(['CHECK_PLATFORM']);
     const turboScripts = Object.entries(root.scripts ?? {}).filter(([, command]) => /\bturbo\b/.test(command));
-    expect(turboScripts.length).toBeGreaterThan(0);
+    expect(turboScripts.map(([name]) => name).sort()).toEqual(['build', 'check', 'check:verify', 'test', 'typecheck']);
     for (const [, command] of turboScripts) {
-      expect(command).toStartWith('TURBO_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 turbo run ');
+      expect(command).toStartWith('bun --no-env-file scripts/run-turbo.ts ');
     }
   });
 
-  test('check aggregates lint, typechecks, tests and the application build', () => {
+  test('check aggregates lint, typechecks, unit tests, the build and every fixture suite', () => {
     expect(new Set(turbo.tasks.check?.dependsOn)).toEqual(
-      new Set(['//#lint', '//#typecheck:scripts', '//#test:scripts', 'typecheck', 'test', 'build']),
+      new Set(['//#lint', '//#typecheck:scripts', '//#test:scripts', 'typecheck', 'test', 'build', ...FIXTURE_SUITES]),
     );
-    expect(root.scripts?.check).toEndWith('turbo run check');
-    expect(root.scripts?.['check:verify']).toEndWith('turbo run check --force');
+    expect(root.scripts?.check).toBe('bun --no-env-file scripts/run-turbo.ts check');
+    expect(root.scripts?.['check:verify']).toBe('bun --no-env-file scripts/run-turbo.ts check --force');
   });
 
   test('consumer tasks are invalidated by dependency sources and shared configuration', () => {
@@ -109,11 +115,25 @@ describe('task graph and cache policy', () => {
     }
   });
 
-  test('integration and container suites stay outside Turbo and ordinary checks', () => {
-    const turboTasks = JSON.stringify(turbo.tasks);
-    expect(turboTasks).not.toContain('integration');
-    expect(turboTasks).not.toContain('container');
-    expect(root.scripts?.['test:integration']).toStartWith('bun --no-env-file ');
-    expect(root.scripts?.['test:container']).toStartWith('bun --no-env-file ');
+  test('fixture suites run one at a time, keyed by the fixture toolchain, and restore no files', () => {
+    expect(turbo.tasks['//#test:facets']?.dependsOn).toEqual(['@agent-runtime/facet-adapter#build']);
+    for (const [previous, suite] of FIXTURE_SUITES.slice(1).map((suite, i) => [FIXTURE_SUITES[i], suite])) {
+      expect(turbo.tasks[suite as string]?.dependsOn).toEqual([previous as string]);
+    }
+    for (const suite of FIXTURE_SUITES) {
+      const task = turbo.tasks[suite];
+      expect(task?.env).toEqual(['CHECK_FIXTURE_TOOLCHAIN']);
+      expect(task?.outputs).toBeUndefined();
+      expect(task?.cache).toBeUndefined();
+      expect(task?.inputs).toEqual(
+        expect.arrayContaining([
+          '$TURBO_DEFAULT$',
+          'packages/**',
+          '!packages/*/dist/**',
+          '!packages/*/node_modules/**',
+        ]),
+      );
+      expect(root.scripts?.[suite.slice(3)]).toStartWith('bun --no-env-file scripts/');
+    }
   });
 });
