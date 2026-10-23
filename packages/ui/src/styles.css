@@ -152,7 +152,20 @@ table.runs td {
 
 table.runs td.goal {
   max-width: 24rem;
-  overflow-wrap: anywhere;
+  min-width: 9rem;
+  /* Long unbroken text wraps; ordinary words are not split. */
+  overflow-wrap: break-word;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+/* On a phone, the run list keeps the goal, status and last activity; the run page shows the rest. */
+@media (max-width: 640px) {
+  .wide-only {
+    display: none;
+  }
 }
 
 .id,

@@ -125,11 +125,22 @@ describe('the console journey', () => {
         'Two steps in the plan; stopping as you asked.',
       );
       expect(await returned.locator('.event-question-answered strong').textContent()).toBe('false');
-      // History is complete and each event appears once.
+      // History is complete and each event appears once; only model turns without text are not listed.
       const seqs = await returned
         .locator('.history > li')
         .evaluateAll((items) => items.map((item) => item.getAttribute('data-seq')));
-      expect(seqs).toEqual(seqs.map((_, index) => String(index + 1)));
+      const runId = returned.url().split('/').at(-1) as string;
+      const recorded = (await (await fetch(`${server.url}/api/v1/runs/${runId}/events?after=0`)).json()) as {
+        events: { seq: string; kind: string; payload: { text?: string } }[];
+      };
+      expect(seqs).toEqual(
+        recorded.events
+          .filter((event) => event.kind !== 'assistant.message' || event.payload.text !== '')
+          .map((event) => event.seq),
+      );
+      expect(recorded.events.some((event) => event.kind === 'assistant.message' && event.payload.text === '')).toBe(
+        true,
+      );
 
       await server.service.settled();
       expect(server.net.sent).toHaveLength(3);

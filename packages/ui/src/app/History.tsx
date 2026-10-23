@@ -4,9 +4,13 @@ import { FAILURE_LABELS, formatTime, formatValue, providerLabel, STATE_LABELS } 
 
 export function History({ events, state }: { events: readonly RunEvent[]; state: RunState }) {
   const resultSeq = state.kind === 'succeeded' ? state.resultSeq : undefined;
+  // A model turn that only called a tool has no text; its tool events say what happened. A result is always shown.
+  const shown = events.filter(
+    (event) => event.kind !== 'assistant.message' || event.payload.text.trim() !== '' || event.seq === resultSeq,
+  );
   return (
     <ol className="history">
-      {events.map((event) => (
+      {shown.map((event) => (
         <li key={event.seq} className={`event event-${event.kind.replace('.', '-')}`} data-seq={event.seq}>
           <time dateTime={event.recordedAt} title={event.recordedAt}>
             {formatTime(event.recordedAt)}

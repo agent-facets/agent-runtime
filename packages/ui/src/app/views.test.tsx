@@ -90,6 +90,15 @@ describe('run views', () => {
     expect((html.match(/<time /g) ?? []).length).toBe(5);
   });
 
+  test('a model turn with no text is not listed as an empty entry, but an empty result still is', () => {
+    const working = page({ kind: 'working' }, [message(1, ''), message(2, 'Reading.')]);
+    expect((working.match(/<li /g) ?? []).length).toBe(1);
+    expect(working).not.toContain('data-seq="1"');
+    const finished = page({ kind: 'succeeded', finishedAt: AT, resultSeq: '1' }, [message(1, '')], 'complete', {}, '1');
+    expect(finished).toContain('data-seq="1"');
+    expect(finished).toContain('class="message final"');
+  });
+
   test('model and workspace text is rendered as text, never as markup', () => {
     const hostile = '<script>alert(1)</script><img src=x onerror=alert(2)>[link](javascript:alert(3))';
     const html = page({ kind: 'working' }, [message(1, hostile)], 'live', { goal: hostile });
