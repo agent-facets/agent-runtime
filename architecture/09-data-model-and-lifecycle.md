@@ -33,9 +33,71 @@ option order and duplicates are refused. Run creation is
 idempotent per request ID, and an uncertain commit is resolved by same-owner readback before anything is dispatched.
 
 Not in Phase 1: tasks, approvals as a separate entity, schedules, artifacts, memory records, ULIDs, the general
-idempotency ledger and automatic recovery of active work. The run lifecycle, question publication, compatibility and
-crash-window behavior are documented with the controller (later blocks). The sections below are historical design
-intent.
+idempotency ledger and automatic recovery of active work.
+
+## Phase 1 lifecycle (as built)
+
+Implemented in `packages/runtime/src/execution/` and `packages/runtime/src/records/run-store.ts`; verified with
+scripted, provider-free models (provider bindings arrive later).
+
+**Two stores, separate commits.** Graph state is written by the official checkpointer; run records by Bun SQL. No
+transaction spans both, so the application records are the authority: a graph interrupt is not a question until
+publication commits, and a finished graph is not a success until finalization commits.
+
+**States.** A run is created `working` with its initial invocation.
+
+| From | To | When (one transaction each) |
+|---|---|---|
+| `working` | `waiting` | After the invocation settled and inspection confirmed the saved interrupt: question recorded, tool call paused, invocation settled |
+| `waiting` | `working` | An answer is accepted: question answered, a new `answer` invocation |
+| `waiting` | `failed` | Continuation confirmed impossible: question closed, `continuation_unavailable` |
+| `waiting` | `cancelled` | Cancellation accepted: question closed (nothing is running) |
+| `working` | `cancelling` | Cancellation accepted while work is running |
+| `cancelling` | `cancelled` | All local work (request bodies, tool calls, checkpoint writes) settled |
+| `working` | `succeeded` | A new final assistant message recorded in history, referenced by the state |
+| `working` | `failed` | A classified failure |
+| `working` | `interrupted` | Startup found it working (process death) |
+| `cancelling` | `cancelled` | Startup found it cancelling |
+
+Only the current working invocation can publish, admit, finish or fail a run; whatever reaches the gate second
+finds the state changed and records nothing.
+
+**Crash windows** (each exercised by killing a child process at that point; see the
+[G3 evidence, 2026-09-30](integration-evidence/mvp-01/g3-dispatch-lifecycle.md)):
+
+| Last committed | After restart |
+|---|---|
+| Working, no saved question | `interrupted`, progress kept |
+| Graph interrupt saved, question uncommitted | `interrupted`; the orphan interrupt is never answerable |
+| Waiting, question committed | `waiting`; an answer is verified afresh, then continues |
+| Answer committed, resume not dispatched | `interrupted`; the answer stays recorded and is never redispatched |
+| Graph finished, final outcome uncommitted | `interrupted`; success is not reconstructed |
+| Cancellation accepted | `cancelled` |
+| Terminal outcome committed | unchanged |
+
+**Counters.** `consumed` counts attempts confirmed as dispatched; `unconfirmed` counts reservations not (yet)
+confirmed, including those whose dispatch can never be known. Both occupy the budget; the database checks they
+match the attempt rows. Attempt states: `reserved → dispatched → completed`, `reserved → abandoned` (known unsent),
+`reserved → unconfirmed`.
+
+**Questions.** A question's identity is its tool operation's identity. Its saved-state binding records thread,
+checkpoint namespace and ID, task, interrupt, ordinal, payload digest, required-state digest (saved channel values
+and versions, pending writes and tasks, in a canonical form that keeps message replay metadata) and the execution
+definition digest. Answer precedence: existence → recorded disposition (duplicates acknowledged, conflicts refused)
+→ answerability → answer constraints → continuation verification → conditional acceptance with readback.
+
+**Compatibility.** The execution definition is rebuilt for the run's stored binding and compared by exact digest:
+Bun version, package versions and integrity values used by the execution code, digests of that code (its own
+import closure, line endings normalized), graph nodes and edges, middleware, tool schemas, prompt, protocol
+versions, and the stored provider binding with workspace policy digest. The code manifest is generated at build
+time and shipped with the bundle.
+
+**Failure categories** are built from the application's catalogue (`src/domain/failures.ts`), never from
+exception text: `authorization`, `rate_or_quota_limit`, `provider_failure`, `step_limit`,
+`continuation_unavailable`, `tool_failure`, `runtime_failure`. Cancellation and lost ownership are not failures:
+the former has its own outcome, and the latter stops the service, leaving the run to startup reconciliation.
+
+The sections below are historical design intent.
 
 ## Entities
 

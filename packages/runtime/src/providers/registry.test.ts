@@ -49,6 +49,28 @@ describe('provider registry', () => {
     expect(Object.isFrozen(resolution.binding)).toBe(true);
   });
 
+  test('a stored binding is reconstructed as stored, never replaced by current defaults', () => {
+    const stored = {
+      provider: 'anthropic',
+      authMode: 'subscription',
+      model: 'model-the-run-started-with',
+      profileId: 'anthropic-sub',
+      credentialSlot: 'default',
+    } as const;
+    const registry = new ProviderRegistry(config, [integration()]);
+    expect(registry.reconstruct(stored)).toEqual({ ok: true, binding: stored });
+    expect(registry.resolve('anthropic')).toMatchObject({ ok: true, binding: { model: 'owner-model' } });
+    expect(registry.reconstruct({ ...stored, profileId: 'retired-profile' })).toEqual({
+      ok: false,
+      code: 'profile_unsupported',
+    });
+    expect(new ProviderRegistry(config).reconstruct(stored)).toEqual({ ok: false, code: 'integration_unavailable' });
+    expect(registry.reconstruct({ ...stored, provider: 'openai' })).toEqual({
+      ok: false,
+      code: 'integration_unavailable',
+    });
+  });
+
   test('refuses a profile the integration does not implement before any dispatch', () => {
     const registry = new ProviderRegistry(config, [integration({ profiles: new Set(['other']) })]);
     expect(registry.resolve('anthropic')).toEqual({ ok: false, code: 'profile_unsupported' });

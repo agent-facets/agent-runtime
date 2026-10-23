@@ -169,9 +169,11 @@ describe('application database access', () => {
   });
 });
 
-// The agent's workspace tools only read. Their source may not reach process execution, dynamic evaluation or any
-// filesystem mutation; the tool tests separately prove behavior with independent witnesses.
+// The agent's workspace tools only read, and the execution layer that runs the agent dispatches nothing but its
+// three tools and guarded model requests. Neither may reach process execution, dynamic evaluation or any
+// filesystem mutation; the tool and execution tests separately prove behavior with independent witnesses.
 const workspaceToolsDir = join(runtimeDir, 'src', 'workspace');
+const executionDir = join(runtimeDir, 'src', 'execution');
 const forbiddenInWorkspaceTools: [string, RegExp][] = [
   ['process execution', /\bBun\s*\.\s*(?:spawn|spawnSync|\$)\b|child_process|\bexecSync\b|\bexecFile\b|\bspawn\s*\(/],
   ['dynamic evaluation', /\beval\s*\(|\bnew\s+Function\s*\(/],
@@ -200,9 +202,9 @@ describe('workspace tools cannot execute or mutate', () => {
     ).toBe(false);
   });
 
-  test('workspace tool source contains none of them', async () => {
+  test('workspace tool and execution source contains none of them', async () => {
     const violations: string[] = [];
-    for (const file of listSourceFiles(workspaceToolsDir)) {
+    for (const file of [...listSourceFiles(workspaceToolsDir), ...listSourceFiles(executionDir)]) {
       if (/\.test\.ts$/.test(file)) continue;
       const source = await Bun.file(file).text();
       for (const [label, pattern] of forbiddenInWorkspaceTools) {
