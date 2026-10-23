@@ -916,27 +916,27 @@ Require configured and stored OpenAI cases to refuse before auth/inference/tool 
 Present the verified source/image, removed code, retained capabilities, tests, safe failure records and remaining OpenAI block. Read current deployment status and unfinished-run metadata without auth or model I/O. If active work would be interrupted or a waiting question would become incompatible, stop for the owner's explicit disposition; do not answer, cancel or rewrite it. Obtain separate approval to recreate only the runtime service of the named deployment with its current persistent volumes and private ingress. Preserve operator configuration and defaults unless an explicit, separately described adjustment is approved. Approval grants no model request, credential refresh, sign-in, revocation or old-token conversion.
 
 ### Step 151 - Implement: Deploy the approved removal image; preserve storage and private topology
-- [ ] 21.8 Implement: Deploy the approved removal image; preserve storage and private topology
+- [x] 21.8 Implement: Deploy the approved removal image; preserve storage and private topology
 
 After 21.7 approval, recheck the approved unfinished-run conditions immediately before rollout and stop if they changed. Select/build only the approved tested source and image; if implementation inputs changed, return to offline verification and approval rather than deploying an unverified variant. Update only the authorized image selection and recreate the runtime service, retaining PostgreSQL/Tailscale/runtime-state volumes, configuration, workspace and service topology. No published application/database ports, volume deletion, historical-data/credential rollback, old host-trial changes or provider request is permitted. If startup fails, stop and report; any rollback must be explicit and must not silently re-enable the retired OpenAI path.
 
 ### Step 152 - Verify: Check deployed removal behavior; require private access and preserved history
-- [ ] 21.9 Verify: Check deployed removal behavior; require private access and preserved history
+- [x] 21.9 Verify: Check deployed removal behavior; require private access and preserved history
 
 Read safe health/readiness and options from the actual deployment and inspect the console over its approved tailnet HTTPS address. Verify the intended image, no published ports, preserved volume bindings and non-root/read-only runtime. Anthropic stored readiness must remain inspectable without refreshing; configured OpenAI must be unavailable with no Connect action, and historical runs must retain their recorded states/history. Test an OpenAI start refusal only through an explicitly approved safe check with an independent zero-provider-I/O witness; no accepted run, model dispatch or auth request is allowed. Otherwise rely on the verified offline refusal test and deployed read-only state, documenting the distinction. Stop on a failure; do not repair and retry or exercise Anthropic inference under this no-provider allowance.
 
 ### Step 153 - Implement: Record removal evidence; verify provenance and observed outcomes
-- [ ] 21.10 Implement: Record removal evidence; verify provenance and observed outcomes
+- [x] 21.10 Implement: Record removal evidence; verify provenance and observed outcomes
 
 Write `architecture/integration-evidence/mvp-01/openai-removal.md` from 21.6 and 21.9 observations and the owner's rollout approval, and add a dated index pointer. Record source/image identity, exact commands/results, deletion scope, configured-unavailable/no-I/O evidence, preserved data and credential boundaries, unfinished-run disposition, rollout checks and remaining replacement/G5 blocks. Distinguish new regression/rollout results from older Anthropic acceptance and failed OpenAI attempts. Do not contact providers or claim a supported replacement was tested.
 
 ### Step 154 - Verify: Check removal evidence; require accurate and credential-safe records
-- [ ] 21.11 Verify: Check removal evidence; require accurate and credential-safe records
+- [x] 21.11 Verify: Check removal evidence; require accurate and credential-safe records
 
 Check the removal record, failed-live record, README/current status and index links against observed source/build/test/rollout facts. Require preservation of historical evidence and no unsupported root-cause, replacement-readiness or G5-pass claims. Check for sensitive credential/auth material, strict OpenSpec validity and whitespace errors without fixing files in this step. This records-only check makes no new provider request. Stop on any failure.
 
 ### Step 155 - Review: Accept the removal milestone; stop before replacement work
-- [ ] 21.12 Review: Accept the removal milestone; stop before replacement work
+- [x] 21.12 Review: Accept the removal milestone; stop before replacement work
 
 Present the smaller deployed application: Anthropic retained, OpenAI clearly unavailable, legacy auth/inference implementation absent, private credentials and run history preserved, and checks/evidence reviewed. Obtain owner acceptance or a correction request. Then STOP. This milestone does not complete 14.7, G5, dual-provider acceptance or phase exit, and authorizes no replacement prototype or provider traffic. A separately approved replacement plan must resolve browser-only auth and supported-library capabilities and insert its own gated tasks before the remaining OpenAI verification can resume.
 
