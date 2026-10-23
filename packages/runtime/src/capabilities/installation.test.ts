@@ -63,17 +63,26 @@ const agent = (name: string) => ({
   state: { kind: 'ready', definition: { ...common('agent', name), instructions: 'Investigate.' } },
 });
 
+const server = (serverId: string, extra: Record<string, unknown> = {}) => ({
+  serverId,
+  fingerprint: `sha256:${'9'.repeat(64)}`,
+  declaration: { type: 'stdio', command: './server', args: ['--fixture'], env: { MODE: 'synthetic' } },
+  origins: [{ ...origin, authoredName: serverId }],
+  ...extra,
+});
+
 const bundle = (items: unknown[], extra: Record<string, unknown> = {}) => ({
-  format: 1,
+  format: 2,
   profile: 1,
   toolchain: {
-    cli: { version: '0.35.0', platform: 'linux-x64', sha256: 'c'.repeat(64) },
+    cli: { version: '0.36.0', platform: 'linux-x64', sha256: 'c'.repeat(64) },
     adapter: { name: 'agent-runtime', apiVersion: '0.3', sdkVersion: '0.30.0', sha256: 'a'.repeat(64) },
   },
-  inputs: { manifestVersion: 0.2, lockfileVersion: 0.3, manifestSha256: D, lockSha256: D },
+  inputs: { manifestVersion: 0.2, lockfileVersion: 0.4, manifestSha256: D, lockSha256: D },
   facets: [{ facet: 'workflows', version: '1.2.0', source: { kind: 'local', path: './facets/workflows' }, integrity }],
   items,
   servers: [],
+  omittedServers: [],
   ...extra,
 });
 const encode = (value: unknown) => new TextEncoder().encode(`${canonicalJson(value)}\n`);
@@ -114,7 +123,7 @@ describe('sealed installation verification', () => {
       kind: 'unavailable',
       reason: 'installation_unreadable',
     });
-    expect(open(bundle([command('triage')], { format: 2 }))).toEqual({
+    expect(open(bundle([command('triage')], { format: 1 }))).toEqual({
       kind: 'unavailable',
       reason: 'installation_invalid',
     });
@@ -132,10 +141,66 @@ describe('sealed installation verification', () => {
     foreignOrigin.state.definition.origins = [{ ...origin, version: '9.9.9' }];
     expect(open(bundle([foreignOrigin])).kind).toBe('unavailable');
     expect(open(bundle([command('triage'), command('triage')])).kind).toBe('unavailable');
-    // TODO UPSTREAM-SERVER-PROVENANCE: revisit 9.1; complete 10.1; verify 10.2 (server-bearing bundles).
-    expect(open(bundle([], { servers: [{ serverId: 'repo' }] }))).toEqual({
-      kind: 'unavailable',
-      reason: 'installation_invalid',
+    for (const servers of [
+      [{ serverId: 'repo' }],
+      [server('repo'), server('repo')],
+      [server('repo', { origins: [{ ...origin, version: '9.9.9', authoredName: 'repo' }] })],
+      [server('repo', { origins: [{ ...origin, facet: 'absent', authoredName: 'repo' }] })],
+      [server('repo', { declaration: { type: 'stdio', command: 'x', args: [], env: {}, cwd: '/' } })],
+    ]) {
+      expect(open(bundle([], { servers }))).toEqual({ kind: 'unavailable', reason: 'installation_invalid' });
+    }
+    // One authored server is either selected (once) or omitted, never both.
+    expect(
+      open(
+        bundle([], {
+          servers: [server('repo')],
+          omittedServers: [{ facet: 'workflows', authoredName: 'repo', fingerprint: `sha256:${'9'.repeat(64)}` }],
+        }),
+      ),
+    ).toEqual({ kind: 'unavailable', reason: 'installation_invalid' });
+  });
+
+  test('keeps every origin of a server and judges required tools by their installed server', () => {
+    const shared = server('repo', {
+      origins: [
+        { ...origin, authoredName: 'repo' },
+        { ...origin, facet: 'other', authoredName: 'tools' },
+      ],
+    });
+    const load = open(
+      bundle(
+        [
+          command('uses-repo', [{ kind: 'mcp', serverId: 'repo', toolName: 'list_prs' }]),
+          command('uses-docs', [{ kind: 'mcp', serverId: 'docs', toolName: 'search' }]),
+          command('uses-missing', [{ kind: 'mcp', serverId: 'absent', toolName: 'x' }]),
+        ],
+        {
+          facets: [
+            { facet: 'other', version: '1.2.0', source: { kind: 'local', path: './facets/other' }, integrity },
+            { facet: 'workflows', version: '1.2.0', source: { kind: 'local', path: './facets/workflows' }, integrity },
+          ],
+          servers: [server('docs', { declaration: { type: 'http', url: 'https://mcp.example.test/' } }), shared],
+          omittedServers: [{ facet: 'other', authoredName: 'unused', fingerprint: `sha256:${'8'.repeat(64)}` }],
+        },
+      ),
+    );
+    expect(
+      ready(load)
+        .installation.servers.find((s) => s.serverId === 'repo')
+        ?.origins.map((o) => o.facet),
+    ).toEqual(['workflows', 'other']);
+    expect(availability(load, 'command:uses-repo')?.kind).toBe('ready');
+    expect(availability(load, 'command:uses-docs')).toEqual({
+      kind: 'refused',
+      reason: 'server_transport_unsupported',
+      subject: 'mcp:docs/search',
+      fields: ['requires'],
+    });
+    expect(availability(load, 'command:uses-missing')).toMatchObject({
+      kind: 'refused',
+      reason: 'prerequisite_missing',
+      subject: 'mcp:absent/x',
     });
   });
 

@@ -21,7 +21,12 @@ import {
   type RunList,
   type RunSnapshot as RunSnapshotView,
   type StartRunCommand,
+  type StartRunRequest,
 } from '@agent-runtime/contracts';
+import { type CommandStart, prepareCommandStart } from '../capabilities/command.ts';
+import { type CatalogLoad, readInstallation } from '../capabilities/installation.ts';
+import { type CommandRunInput, normalizeRunInput, type RunInput } from '../capabilities/records.ts';
+import { assembleSnapshot, type BoundTools, NO_BOUND_TOOLS, type SnapshotAssembly } from '../capabilities/snapshot.ts';
 import { type OperatorConfig, providerSettingsFor } from '../config/operator.ts';
 import { type FailureReason, failureFor } from '../domain/failures.ts';
 import { runAdmission } from '../execution/admission.ts';
@@ -70,6 +75,7 @@ const STATUS: Record<ErrorCode, number> = {
   goal_required: 400,
   goal_too_long: 400,
   goal_not_storable: 400,
+  command_arguments_invalid: 400,
   answer_invalid: 400,
   credential_in_input: 400,
   invalid_cursor: 400,
@@ -85,17 +91,29 @@ const STATUS: Record<ErrorCode, number> = {
   cancellation_conflict: 409,
   run_finished: 409,
   cursor_ahead: 409,
+  capability_selection_changed: 409,
+  capability_unavailable: 409,
   cannot_verify: 503,
   screening_unavailable: 503,
   storage_unavailable: 503,
   acceptance_unknown: 503,
+  capabilities_unavailable: 503,
+  mcp_server_unavailable: 503,
   service_unavailable: 503,
 };
 
 export function refusal(
   code: ErrorCode,
   message: string,
-  details: { acceptance?: Acceptance; retryable?: boolean; runId?: string; questionId?: string; status?: number } = {},
+  details: {
+    acceptance?: Acceptance;
+    retryable?: boolean;
+    runId?: string;
+    questionId?: string;
+    /** A safe public reference to the affected contribution or tool. */
+    subject?: string;
+    status?: number;
+  } = {},
 ): { status: number; body: ErrorEnvelope } {
   const status = details.status ?? STATUS[code];
   return {
@@ -106,6 +124,7 @@ export function refusal(
         message,
         ...(details.runId === undefined ? {} : { runId: details.runId }),
         ...(details.questionId === undefined ? {} : { questionId: details.questionId }),
+        ...(details.subject === undefined ? {} : { subject: details.subject }),
         retryable: details.retryable ?? status === 503,
         acceptance: details.acceptance ?? 'not_accepted',
       },
@@ -153,7 +172,70 @@ export interface RunServiceOptions {
   store?: RunStore;
   admit?: (workspace: OperatorConfig['workspace'], locations: PrivateLocations) => Promise<WorkspaceAdmission>;
   code?: (provider: Provider) => Promise<CodeManifest>;
+  /** The current runtime facet catalog, read for each new command start; by default the configured bundle. */
+  catalog?: () => Promise<CatalogLoad | { kind: 'unconfigured' }>;
+  /** Binds a new command's approved required MCP tools (by bounded discovery); never runs for a retried request. */
+  preflight?: McpPreflight;
 }
+
+export type McpPreflight = (input: {
+  command: Extract<CommandStart, { ok: true }>['command'];
+  grants: NonNullable<OperatorConfig['capabilities']>;
+  catalog: Extract<CatalogLoad, { kind: 'ready' }>['catalog'];
+  policy: ContentPolicy;
+}) => Promise<
+  | { ok: true; bound: BoundTools }
+  | { ok: false; code: 'capability_unavailable' | 'mcp_server_unavailable'; reason: string; subject?: string }
+>;
+
+/** Until a preflight is supplied, a command that needs an MCP tool cannot start; others bind nothing. */
+export const NO_MCP_PREFLIGHT: McpPreflight = async ({ command }) => {
+  const required = command.requires.find((requirement) => requirement.kind === 'mcp');
+  return required === undefined
+    ? { ok: true, bound: NO_BOUND_TOOLS }
+    : {
+        ok: false,
+        code: 'capability_unavailable',
+        reason: 'tool_unavailable',
+        subject: `mcp:${required.serverId}/${required.toolName}`,
+      };
+};
+
+/** A command start that passed its owner checks and renders to a goal. */
+interface SelectedCommand {
+  goal: string;
+  command: Extract<CommandStart, { ok: true }>['command'];
+  catalog: Extract<CatalogLoad, { kind: 'ready' }>['catalog'];
+  policy: ContentPolicy;
+}
+
+const COMMAND_REFUSALS: Record<Exclude<CommandStart, { ok: true }>['code'], { code: ErrorCode; message: string }> = {
+  credential_in_input: {
+    code: 'credential_in_input',
+    message: 'The command arguments contain credential material and were not accepted.',
+  },
+  capability_selection_changed: {
+    code: 'capability_selection_changed',
+    message: 'The installed commands changed since this one was offered. Review it again before starting.',
+  },
+  capability_unavailable: {
+    code: 'capability_unavailable',
+    message: 'This command, or something it requires, is not available to new runs.',
+  },
+  command_arguments_invalid: {
+    code: 'command_arguments_invalid',
+    message: 'The command arguments are missing, or the resulting task would be blank, too long or not storable.',
+  },
+};
+
+const ASSEMBLY_MESSAGES: Record<Exclude<SnapshotAssembly, { ok: true }>['reason'], string> = {
+  prerequisite_not_granted: 'Something this command requires is not allowed by the current configuration.',
+  prerequisite_restricted: 'This command requires a tool its own restriction excludes.',
+  tool_unavailable: 'A tool this command requires is not available.',
+  credential_in_definition: 'An installed definition this command uses contains credential material.',
+  snapshot_too_large: 'The definitions this command would retain exceed the supported size.',
+  snapshot_invalid: 'The definitions this command would retain are not valid.',
+};
 
 interface InvocationContext {
   policy: WorkspacePolicy;
@@ -184,6 +266,8 @@ export class RunService {
   readonly #background = new Set<Promise<unknown>>();
   readonly #admit: NonNullable<RunServiceOptions['admit']>;
   readonly #code: NonNullable<RunServiceOptions['code']>;
+  readonly #catalog: NonNullable<RunServiceOptions['catalog']>;
+  readonly #preflight: McpPreflight;
   readonly #log: (line: string) => void;
 
   readonly #deps: RunServiceOptions;
@@ -199,6 +283,14 @@ export class RunService {
       });
     this.#admit = options.admit ?? admitWorkspace;
     this.#code = options.code ?? currentCodeManifest;
+    const installation = options.operator.capabilities?.installation;
+    this.#catalog =
+      options.catalog ??
+      (async () =>
+        installation === undefined
+          ? { kind: 'unconfigured' as const }
+          : readInstallation(installation.path, installation.sha256));
+    this.#preflight = options.preflight ?? NO_MCP_PREFLIGHT;
     this.#log = options.log ?? (() => {});
     this.login = new AnthropicLogin({
       slot: providerSettingsFor(options.operator, 'anthropic')?.credentialSlot,
@@ -359,20 +451,23 @@ export class RunService {
   // --- Start -------------------------------------------------------------------------------------------------
 
   /**
-   * Starts a run for a request ID, at most once. The same request ID with the same goal and provider returns the
-   * original run — before any prerequisite is rechecked — and starts nothing; different content is a conflict.
+   * Starts a run for a request ID, at most once. The same request ID with the same normalized submission (a goal
+   * and provider, or a command, its selection revision, raw arguments and provider) returns the original run —
+   * before anything current (screening, the installation, providers, the workspace or MCP servers) is consulted —
+   * and starts nothing; a different submission is a conflict.
    */
-  createRun(command: StartRunCommand): Promise<ApiResult<RunSnapshotView>> {
+  createRun(command: StartRunCommand | StartRunRequest): Promise<ApiResult<RunSnapshotView>> {
+    const request: StartRunRequest = 'kind' in command ? command : { kind: 'goal', ...command };
     // One creation per request ID at a time in this process (the only owner): a duplicate waits and then finds the
     // run, so the run is dispatched exactly once, by the request that created it.
-    return this.#creations.run(command.requestId, () => this.#createRun(command));
+    return this.#creations.run(request.requestId, () => this.#createRun(request.requestId, normalizeRunInput(request)));
   }
 
-  async #createRun(command: StartRunCommand): Promise<ApiResult<RunSnapshotView>> {
+  async #createRun(requestId: string, input: RunInput): Promise<ApiResult<RunSnapshotView>> {
     const { operator, assembly, locations } = this.#deps;
-    const inputDigest = creationInputDigest(command);
+    const inputDigest = creationInputDigest(input);
     try {
-      const existing = await this.store.findCreation(command.requestId);
+      const existing = await this.store.findCreation(requestId);
       if (existing !== undefined) {
         if (existing.inputDigest !== inputDigest) {
           return refusal('request_conflict', 'This request ID was already used to start a different run.');
@@ -383,15 +478,23 @@ export class RunService {
       return refusal('storage_unavailable', UNAVAILABLE_STORAGE);
     }
 
-    const screened = await this.#screen(command.goal, []);
-    if (screened !== undefined) return screened;
+    let command: SelectedCommand | undefined;
+    if (input.kind === 'goal') {
+      const screened = await this.#screen(input.goal, []);
+      if (screened !== undefined) return screened;
+    } else {
+      const selected = await this.#selectCommand(input);
+      if ('status' in selected) return selected;
+      command = selected;
+    }
+    const goal = command === undefined ? (input as Extract<RunInput, { kind: 'goal' }>).goal : command.goal;
 
-    const resolved = assembly.registry.resolve(command.provider);
+    const resolved = assembly.registry.resolve(input.provider);
     if (!resolved.ok) {
       const readiness = resolved.code === 'provider_unconfigured' ? 'unconfigured' : 'integration_unavailable';
       return refusal('provider_unavailable', READINESS_MESSAGES[readiness]);
     }
-    const readiness = await assembly.registry.readiness(command.provider);
+    const readiness = await assembly.registry.readiness(input.provider);
     if (readiness !== 'ready') {
       return refusal('provider_unavailable', READINESS_MESSAGES[readiness], {
         ...(readiness === 'temporarily_unavailable' ? { status: 503, retryable: true } : {}),
@@ -413,9 +516,17 @@ export class RunService {
     const policy = admission.policy;
     const binding = resolved.binding;
 
+    // A command's definitions are retained only once every current prerequisite holds, MCP tools last.
+    let capabilities: RunCapabilities | undefined;
+    if (command !== undefined) {
+      const retained = await this.#retainDefinitions(input as CommandRunInput, command);
+      if ('status' in retained) return retained;
+      capabilities = retained;
+    }
+
     let definition: Awaited<ReturnType<typeof executionDefinition>>;
     try {
-      const { agent, params } = this.#inspection(crypto.randomUUID(), binding, policy);
+      const { agent, params } = this.#inspection(crypto.randomUUID(), binding, policy, capabilities);
       definition = await executionDefinition({
         code: await this.#code(binding.provider),
         agent,
@@ -432,9 +543,9 @@ export class RunService {
       outcome = await this.store.withCommitCertainty(
         () =>
           this.store.createRun({
-            requestId: command.requestId,
-            goal: command.goal,
-            provider: command.provider,
+            requestId,
+            goal,
+            provider: input.provider,
             workspace: {
               id: operator.workspace.id,
               label: policy.label,
@@ -444,9 +555,12 @@ export class RunService {
             binding,
             definition,
             budgetMax: operator.stepBudget,
+            ...(capabilities === undefined
+              ? {}
+              : { capability: { input: capabilities.input, snapshot: capabilities.snapshot } }),
           }),
         async () => {
-          const found = await this.store.findCreation(command.requestId);
+          const found = await this.store.findCreation(requestId);
           return found === undefined
             ? undefined
             : { created: true as const, snapshot: await this.store.snapshot(found.runId) };
@@ -465,9 +579,96 @@ export class RunService {
 
     const { created, snapshot } = outcome.value as Awaited<ReturnType<RunStore['createRun']>>;
     if (created && snapshot.state.kind === 'working') {
-      this.#dispatch(snapshot.runId, snapshot.state.invocationId, { policy }, { kind: 'initial', goal: command.goal });
+      this.#dispatch(snapshot.runId, snapshot.state.invocationId, { policy }, { kind: 'initial', goal });
     }
     return { status: created ? 202 : 200, body: snapshotView(snapshot) };
+  }
+
+  /**
+   * A new command start's owner checks: screening, the current catalog and selection, and the rendered goal. A
+   * refused selection is never turned into a free-form goal or another command.
+   */
+  async #selectCommand(input: CommandRunInput): Promise<{ status: number; body: ErrorEnvelope } | SelectedCommand> {
+    if (this.#deps.operator.capabilities === undefined) {
+      return refusal('capability_unavailable', 'Command runs are not configured for this deployment.', {
+        subject: input.commandId,
+      });
+    }
+    let policy: ContentPolicy | undefined;
+    try {
+      policy = await this.#deps.assembly.ownerInputPolicy([]);
+    } catch {
+      policy = undefined;
+    }
+    if (policy === undefined) {
+      return refusal('screening_unavailable', 'Input cannot be checked for credentials right now.');
+    }
+    let load: CatalogLoad | { kind: 'unconfigured' };
+    try {
+      load = await this.#catalog();
+    } catch {
+      load = { kind: 'unavailable', reason: 'installation_unreadable' };
+    }
+    if (load.kind !== 'ready') {
+      return refusal('capabilities_unavailable', 'The installed commands cannot be read right now.');
+    }
+    const prepared = prepareCommandStart(load.catalog, input, policy);
+    if (!prepared.ok) {
+      const { code, message } = COMMAND_REFUSALS[prepared.code];
+      return refusal(code, message, prepared.subject === undefined ? {} : { subject: prepared.subject });
+    }
+    return { goal: prepared.goal, command: prepared.command, catalog: load.catalog, policy };
+  }
+
+  /** Binds the required MCP tools, then assembles the definitions the new run retains. */
+  async #retainDefinitions(
+    input: CommandRunInput,
+    selected: SelectedCommand,
+  ): Promise<{ status: number; body: ErrorEnvelope } | RunCapabilities> {
+    const grants = this.#deps.operator.capabilities as NonNullable<OperatorConfig['capabilities']>;
+    let bound: BoundTools;
+    try {
+      const preflight = await this.#preflight({
+        command: selected.command,
+        grants,
+        catalog: selected.catalog,
+        policy: selected.policy,
+      });
+      if (!preflight.ok) {
+        return refusal(
+          preflight.code,
+          preflight.code === 'mcp_server_unavailable'
+            ? 'An approved server this command requires could not be reached. Nothing was started.'
+            : 'A tool this command requires is not approved or not available.',
+          preflight.subject === undefined ? {} : { subject: preflight.subject },
+        );
+      }
+      bound = preflight.bound;
+    } catch {
+      return refusal('mcp_server_unavailable', 'An approved server this command requires could not be checked.');
+    }
+    const assembled = assembleSnapshot({
+      catalog: selected.catalog,
+      command: selected.command,
+      submission: input,
+      renderedGoal: selected.goal,
+      grants,
+      bound,
+      policy: selected.policy,
+    });
+    if (!assembled.ok) {
+      return refusal(
+        'capability_unavailable',
+        ASSEMBLY_MESSAGES[assembled.reason],
+        assembled.subject === undefined ? {} : { subject: assembled.subject },
+      );
+    }
+    return {
+      input,
+      snapshotDigest: assembled.digest,
+      maxDelegations: assembled.snapshot.limits.maxDelegations,
+      snapshot: assembled.snapshot,
+    };
   }
 
   // --- Answer ------------------------------------------------------------------------------------------------
@@ -695,15 +896,25 @@ export class RunService {
     });
     if ('unavailable' in wired) throw new WiringUnavailable(wired.unavailable);
     const { capabilities } = wiring;
+    // Skill tools are advertised from the retained definitions; current grants narrow only new loads and reads.
+    const skills = {
+      current: this.#deps.operator.capabilities,
+      loaded: async (actorKey: string) =>
+        (await this.store.readLoadedSkills(runId, actorKey)).map((loaded) => loaded.skillId),
+    };
     const scope =
       capabilities === undefined
         ? {}
         : actor !== undefined
-          ? { scope: { actor, capabilities }, recordMessage: delegateMessageRecorder(this.store, runId, actor) }
+          ? {
+              scope: { actor, capabilities, skills },
+              recordMessage: delegateMessageRecorder(this.store, runId, actor),
+            }
           : {
               scope: {
                 actor: { kind: 'root' as const },
                 capabilities,
+                skills,
                 delegation: runDelegationPort({
                   store: this.store,
                   gates: this.gates,

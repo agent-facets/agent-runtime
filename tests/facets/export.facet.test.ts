@@ -1,10 +1,11 @@
-// Interim public-export gate (tasks 6.6–6.7): the pinned facet CLI and the runtime adapter install CLI-authored
+// Public-export gate (design Decision 11, gate 1): the pinned facet CLI and the runtime adapter install CLI-authored
 // synthetic facets into isolated homes, and the sealer and runtime loader accept exactly what was recorded. Server
-// declarations are exported but not sealed while public server provenance is unavailable; the provenance-dependent
-// witnesses are listed as explicit TODOs at the end and are not part of this interim gate.
+// declarations are joined to every facet that declares them through the lockfile's public server inventory. No
+// model, tool or declared server is ever run.
 import { beforeAll, describe, expect, test } from 'bun:test';
-import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { canonicalJson } from '../../packages/facet-adapter/src/canonical.ts';
 import { foreignAdapters, runtimeFacetDir, UsageError } from '../../packages/facet-adapter/src/cli.ts';
 import {
   exportAssetPath,
@@ -68,6 +69,24 @@ const sealRefusal = (project: string, home: string) => {
   }
   return 'sealed';
 };
+const lockOf = (project: string) =>
+  JSON.parse(readFileSync(join(project, 'facets.lock'), 'utf8')) as {
+    lockfileVersion: number;
+    facets: Record<string, { integrity: string; servers: unknown[] }>;
+  };
+const serverOrigin = (project: string, facet: string, authoredName = 'repo-tools') => ({
+  facet,
+  version: '1.0.0',
+  source: `local:./facets/${facet}`,
+  integrity: lockOf(project).facets[facet]?.integrity as string,
+  authoredName,
+});
+const repoTools = {
+  type: 'stdio' as const,
+  command: './never-run.sh',
+  args: ['--fixture'],
+  env: { FIXTURE_MODE: 'synthetic' },
+};
 const ids = (load: ReturnType<typeof loadInstallation>) => {
   if (load.kind !== 'ready') throw new Error(`catalog unavailable: ${load.reason}`);
   return Object.fromEntries(
@@ -77,7 +96,7 @@ const ids = (load: ReturnType<typeof loadInstallation>) => {
 
 describe('fixture facets', () => {
   test('every fixture manifest passes facet build --verify', async () => {
-    for (const facet of ['rt-workflows', 'rt-collide', 'rt-servers']) {
+    for (const facet of ['rt-workflows', 'rt-collide', 'rt-servers', 'rt-servers-twin', 'rt-servers-conflict']) {
       const result = await sandbox.expectFacet(['build', '--verify', '--json'], {
         cwd: join(fixtureFacets, facet),
         home: sandbox.dir('verify-home'),
@@ -116,10 +135,12 @@ describe('runtime installation and sealing', () => {
 
     const sealed = seal(project, home);
     expect(sealed.installation.toolchain.cli).toEqual({
-      version: '0.35.0',
+      version: '0.36.0',
       platform: 'linux-x64',
-      sha256: 'd6590bb2c1af0119e2bdfcafbfc0dbafe98e6e9ef015ae524926e983fa9a2a46',
+      sha256: 'c7b781b1a7cac5ce459cccb41da4ad12d0e6545d5cc6381a18a90706feb8451a',
     });
+    expect(lockOf(project).lockfileVersion).toBe(0.4);
+    expect(sealed.installation.inputs.lockfileVersion).toBe(0.4);
     expect(sealed.installation.toolchain.adapter.sha256).toBe(
       new Bun.CryptoHasher('sha256').update(readFileSync(join(runtimeAdapterDir, 'index.mjs'))).digest('hex'),
     );
@@ -221,42 +242,175 @@ describe('runtime installation and sealing', () => {
   });
 });
 
-describe('server declarations while provenance is unavailable', () => {
-  test('raw declarations are exported, never launched, and a server-bearing installation is not sealed', async () => {
-    const home = await runtimeHome('servers');
-    const project = sandbox.project('servers', ['rt-workflows', 'rt-servers']);
+describe('server declarations joined through the public server inventory', () => {
+  const installServers = async (label: string, facets: string[], materialization: Record<string, unknown> = {}) => {
+    const home = await runtimeHome(label);
+    const project = sandbox.project(label, facets, materialization);
+    await install(project, home, ['--accept-mcp']);
+    return { home, project };
+  };
+
+  test('seals a server-only facet with its declaration joined to its originating facet', async () => {
+    const home = await runtimeHome('server-only');
+    const project = sandbox.project('server-only', ['rt-servers-twin']);
     const unapproved = await sandbox.facet(['install'], { cwd: project, home });
     expect(unapproved.code).not.toBe(0);
     expect(existsSync(exportServersPath(project))).toBe(false);
 
     await install(project, home, ['--accept-mcp']);
-    expect(JSON.parse(readFileSync(exportServersPath(project), 'utf8'))).toEqual({
-      format: 1,
-      servers: {
-        'repo-tools': {
-          type: 'stdio',
-          command: './never-run.sh',
-          args: ['--fixture'],
-          env: { FIXTURE_MODE: 'synthetic' },
-        },
+    expect(lockOf(project).facets['rt-servers-twin']?.servers).toEqual([
+      {
+        name: 'repo-tools',
+        fingerprint: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+        materialization: { kind: 'authored' },
       },
-    });
-    expect(sealRefusal(project, home)).toBe('server_provenance_unavailable');
-    expect(existsSync(join(project, 'installation.json'))).toBe(false);
+    ]);
+    const sealed = seal(project, home);
+    expect(sealed.installation.items).toEqual([]);
+    expect(sealed.installation.servers).toEqual([
+      {
+        serverId: 'repo-tools',
+        fingerprint: (lockOf(project).facets['rt-servers-twin']?.servers[0] as { fingerprint: string }).fingerprint,
+        declaration: repoTools,
+        origins: [serverOrigin(project, 'rt-servers-twin')],
+      },
+    ]);
+    const load = loadInstallation(sealed.bytes, sealed.sha256);
+    expect(load.kind === 'ready' && load.catalog.installation.servers.map((server) => server.serverId)).toEqual([
+      'repo-tools',
+    ]);
     expect(existsSync(join(project, 'server-was-run'))).toBe(false);
   });
 
-  test('omitting the server leaves a sealable installation whose MCP reference stays refused', async () => {
-    const home = await runtimeHome('servers-omitted');
-    const project = sandbox.project('servers-omitted', ['rt-servers'], {
+  test('retains every contributing origin of an identical deduplicated server declaration', async () => {
+    const { home, project } = await installServers('dedup', ['rt-servers', 'rt-servers-twin']);
+    expect(JSON.parse(readFileSync(exportServersPath(project), 'utf8'))).toEqual({
+      format: 1,
+      servers: { 'repo-tools': repoTools },
+    });
+    const sealed = seal(project, home);
+    expect(sealed.installation.servers.map((server) => [server.serverId, server.origins])).toEqual([
+      ['repo-tools', [serverOrigin(project, 'rt-servers'), serverOrigin(project, 'rt-servers-twin')]],
+    ]);
+    expect(ids(loadInstallation(sealed.bytes, sealed.sha256))).toEqual({ 'command:sync': 'ready' });
+    expect(existsSync(join(project, 'server-was-run'))).toBe(false);
+  });
+
+  test('joins aliased and omitted server choices to their authored declarations', async () => {
+    const home = await runtimeHome('server-choices');
+    const project = sandbox.project('server-choices', ['rt-servers', 'rt-servers-conflict']);
+    const before = tree(project);
+    const collision = await sandbox.facet(['install', '--accept-mcp'], { cwd: project, home });
+    expect(collision.code).not.toBe(0);
+    expect(`${collision.stderr}${collision.stdout}`).toContain('MATERIALIZATION_COLLISION');
+    expect(tree(project)).toEqual(before);
+
+    writeManifest(project, ['rt-servers', 'rt-servers-conflict'], {
+      'rt-servers-conflict': { servers: { 'repo-tools': { kind: 'aliased', as: 'other-tools' } } },
+    });
+    await install(project, home, ['--accept-mcp']);
+    const aliased = seal(project, home);
+    expect(aliased.installation.servers.map((server) => [server.serverId, server.origins])).toEqual([
+      ['other-tools', [serverOrigin(project, 'rt-servers-conflict')]],
+      ['repo-tools', [serverOrigin(project, 'rt-servers')]],
+    ]);
+    expect(aliased.installation.servers[0]?.declaration).toEqual({ ...repoTools, args: ['--other'] });
+
+    writeManifest(project, ['rt-servers', 'rt-servers-conflict'], {
       'rt-servers': { servers: { 'repo-tools': { kind: 'omitted' } } },
     });
-    await install(project, home);
-    const sealed = seal(project, home);
-    expect(sealed.installation.servers).toEqual([]);
-    expect(ids(loadInstallation(sealed.bytes, sealed.sha256))).toEqual({
-      'command:sync': 'server_provenance_unavailable',
+    await install(project, home, ['--accept-mcp']);
+    expect(Object.keys(JSON.parse(readFileSync(exportServersPath(project), 'utf8')).servers)).toEqual(['repo-tools']);
+    const omitted = seal(project, home);
+    expect(omitted.installation.servers.map((server) => [server.serverId, server.origins])).toEqual([
+      ['repo-tools', [serverOrigin(project, 'rt-servers-conflict')]],
+    ]);
+    expect(omitted.installation.omittedServers).toEqual([
+      {
+        facet: 'rt-servers',
+        authoredName: 'repo-tools',
+        fingerprint: (lockOf(project).facets['rt-servers']?.servers[0] as { fingerprint: string }).fingerprint,
+      },
+    ]);
+    // The omitted declaration is not the one `sync` refers to, even though another facet's server now has its name.
+    expect(ids(loadInstallation(omitted.bytes, omitted.sha256))).toEqual({ 'command:sync': 'prerequisite_omitted' });
+  });
+
+  test('refuses missing, extra or conflicting server records against the recorded installation', async () => {
+    const { home, project } = await installServers('server-records', ['rt-servers']);
+    const path = exportServersPath(project);
+    const exported = readFileSync(path);
+    const write = (servers: Record<string, unknown>) =>
+      // Canonical bytes, so each tampered record reaches the record check rather than the encoding check.
+      writeFileSync(path, `${canonicalJson({ format: 1, servers })}\n`);
+
+    rmSync(path);
+    expect(sealRefusal(project, home)).toBe('server_export_missing');
+    write({ 'extra-tools': repoTools, 'repo-tools': repoTools });
+    expect(sealRefusal(project, home)).toBe('server_export_unexpected');
+    write({ 'repo-tools': { ...repoTools, args: ['--write'] } });
+    expect(sealRefusal(project, home)).toBe('server_export_mismatch');
+    writeFileSync(path, exported);
+
+    // A server choice edited without reinstalling disagrees with what the lockfile recorded.
+    writeManifest(project, ['rt-servers'], { 'rt-servers': { servers: { 'repo-tools': { kind: 'omitted' } } } });
+    expect(sealRefusal(project, home)).toBe('inputs_disagree');
+    writeManifest(project, ['rt-servers']);
+    expect(sealRefusal(project, home)).toBe('sealed');
+    expect(existsSync(join(project, 'server-was-run'))).toBe(false);
+  });
+
+  test('resolves authored MCP references through the verified server mapping', async () => {
+    const { home, project } = await installServers('server-refs', ['rt-servers'], {
+      'rt-servers': { servers: { 'repo-tools': { kind: 'aliased', as: 'fixture-tools' } } },
     });
+    const sealed = seal(project, home);
+    const sync = sealed.installation.items.find((item) => item.authoredName === 'sync');
+    expect(sync?.state.kind === 'ready' && sync.state.definition.requires).toEqual([
+      { kind: 'mcp', serverId: 'fixture-tools', toolName: 'list_items' },
+    ]);
+    expect(sealed.installation.servers.map((server) => server.serverId)).toEqual(['fixture-tools']);
+    expect(ids(loadInstallation(sealed.bytes, sealed.sha256))).toEqual({ 'command:sync': 'ready' });
+  });
+
+  test('reproduces identical bytes and refuses an altered bundle for a server-bearing installation', async () => {
+    const sealedIn = async (label: string, frozenFrom?: string) => {
+      const home = await runtimeHome(label);
+      const project = sandbox.project(label, ['rt-servers', 'rt-servers-twin']);
+      if (frozenFrom !== undefined) cpSync(join(frozenFrom, 'facets.lock'), join(project, 'facets.lock'));
+      await install(project, home, ['--accept-mcp', ...(frozenFrom === undefined ? [] : ['--frozen-lockfile'])]);
+      return { project, sealed: seal(project, home) };
+    };
+    const first = await sealedIn('server-reproduce-a');
+    const second = await sealedIn('server-reproduce-b');
+    const frozen = await sealedIn('server-reproduce-frozen', first.project);
+    expect(Buffer.from(second.sealed.bytes).equals(Buffer.from(first.sealed.bytes))).toBe(true);
+    expect(Buffer.from(frozen.sealed.bytes).equals(Buffer.from(first.sealed.bytes))).toBe(true);
+
+    const altered = Buffer.from(first.sealed.bytes);
+    altered[altered.indexOf('--fixture')] = '+'.charCodeAt(0);
+    expect(loadInstallation(altered, first.sealed.sha256)).toEqual({
+      kind: 'unavailable',
+      reason: 'installation_digest_mismatch',
+    });
+  });
+
+  test('removing and reinstalling a declaring facet changes only its origin', async () => {
+    const { home, project } = await installServers('server-removal', ['rt-servers', 'rt-servers-twin']);
+    await sandbox.expectFacet(['remove', 'rt-servers-twin', '--accept-mcp'], { cwd: project, home });
+    const removed = seal(project, home);
+    expect(removed.installation.servers.map((server) => [server.serverId, server.origins])).toEqual([
+      ['repo-tools', [serverOrigin(project, 'rt-servers')]],
+    ]);
+    expect(Object.keys(JSON.parse(readFileSync(exportServersPath(project), 'utf8')).servers)).toEqual(['repo-tools']);
+
+    writeManifest(project, ['rt-servers', 'rt-servers-twin']);
+    await install(project, home, ['--accept-mcp']);
+    expect(seal(project, home).installation.servers[0]?.origins).toEqual([
+      serverOrigin(project, 'rt-servers'),
+      serverOrigin(project, 'rt-servers-twin'),
+    ]);
+    expect(existsSync(join(project, 'server-was-run'))).toBe(false);
   });
 });
 
@@ -264,7 +418,7 @@ describe('runtime and editor installations stay separate', () => {
   test('neither installation writes into the other, in either direction', async () => {
     const runtime = {
       home: await runtimeHome('iso-runtime'),
-      project: sandbox.project('iso-runtime', ['rt-workflows']),
+      project: sandbox.project('iso-runtime', ['rt-workflows', 'rt-servers']),
     };
     const editor = {
       home: await sandbox.home('iso-editor', [editorAdapterDir]),
@@ -274,7 +428,7 @@ describe('runtime and editor installations stay separate', () => {
     const snapshot = () => sides.map((dir) => tree(dir));
 
     const beforeRuntime = snapshot();
-    await install(runtime.project, runtime.home);
+    await install(runtime.project, runtime.home, ['--accept-mcp']);
     const afterRuntime = snapshot();
     expect(afterRuntime[2]).toEqual(beforeRuntime[2]);
     expect(afterRuntime[3]).toEqual(beforeRuntime[3]);
@@ -286,6 +440,7 @@ describe('runtime and editor installations stay separate', () => {
 
     expect(existsSync(join(runtime.project, '.editor-test'))).toBe(false);
     expect(existsSync(join(editor.project, '.agent-runtime-export'))).toBe(false);
+    expect(existsSync(exportServersPath(runtime.project))).toBe(true);
     expect(existsSync(join(editor.project, '.editor-test', 'commands', 'triage.md'))).toBe(true);
     // Identical companion content in two legitimate installations is not a cross-write.
     const review = readExport(runtime.project, 'skill', 'review');
@@ -320,15 +475,4 @@ describe('runtime and editor installations stay separate', () => {
     expect(existsSync(join(project, '.editor-test'))).toBe(true);
     expect(sealRefusal(project, home)).toBe('facet_home_contaminated');
   });
-});
-
-describe('deferred until public server provenance exists', () => {
-  // TODO UPSTREAM-SERVER-PROVENANCE: revisit 9.1; complete 10.1; verify 10.2. Each needs the lockfile to record which
-  // facets contributed each server declaration; none may remain skipped at final verification.
-  test.skip('seals a server-only facet with its declaration joined to its originating facet', () => {});
-  test.skip('retains every contributing origin of an identical deduplicated server declaration', () => {});
-  test.skip('joins aliased and omitted server choices to their authored declarations', () => {});
-  test.skip('refuses missing, extra or conflicting server records against the recorded installation', () => {});
-  test.skip('resolves authored MCP references through the verified server mapping', () => {});
-  test.skip('reproduces identical bytes and refuses an altered bundle for a server-bearing installation', () => {});
 });

@@ -105,7 +105,7 @@ describe('launcher environment policy', () => {
     const fakeFacetDir = join(scratch, 'fake-facet');
     const facetWitness = join(scratch, 'facet-invocations');
     mkdirSync(fakeFacetDir);
-    writeFileSync(join(fakeFacetDir, 'facet'), `#!/bin/sh\necho "$@" >> '${facetWitness}'\necho 0.35.0\n`);
+    writeFileSync(join(fakeFacetDir, 'facet'), `#!/bin/sh\necho "$@" >> '${facetWitness}'\necho 0.36.0\n`);
     chmodSync(join(fakeFacetDir, 'facet'), 0o755);
     const proc = Bun.spawn([process.execPath, '--no-env-file', 'scripts/run-facets.ts'], {
       cwd: repoRoot,

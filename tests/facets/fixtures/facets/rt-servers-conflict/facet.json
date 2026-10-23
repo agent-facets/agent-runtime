@@ -1,0 +1,13 @@
+{
+  "name": "rt-servers-conflict",
+  "version": "1.0.0",
+  "description": "Synthetic server-only fixture declaring a different server under the same name",
+  "servers": {
+    "repo-tools": {
+      "type": "stdio",
+      "command": "./never-run.sh",
+      "args": ["--other"],
+      "env": { "FIXTURE_MODE": "synthetic" }
+    }
+  }
+}

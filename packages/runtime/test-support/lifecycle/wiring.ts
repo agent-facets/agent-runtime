@@ -2,7 +2,9 @@
 // durable tool ledger, tracked saver and continuation verification — with a scripted model and a fake transport in
 // place of a provider. Command runs get the production delegation wiring: one model handle per actor on the same
 // invocation, admission, signal and tracked work. Used by the crash-matrix and delegate witnesses. Test-only.
+
 import { sealSnapshot } from '../../src/capabilities/records.ts';
+import type { CapabilityConfig } from '../../src/config/capabilities.ts';
 import { exactSecretMatcher } from '../../src/credentials/matcher.ts';
 import { runAdmission } from '../../src/execution/admission.ts';
 import { createExecutionAgent, type ExecutionAgentOptions, executionAgentParams } from '../../src/execution/agent.ts';
@@ -72,6 +74,8 @@ export interface WiringOptions {
   renewal?: CredentialRenewal;
   failStop?: () => void;
   barriers?: ControllerDeps['barriers'];
+  /** Current grants for command-run skill tools; without it actors get no skill tools. */
+  skills?: { current: CapabilityConfig | undefined };
 }
 
 const ORIGIN = {
@@ -192,10 +196,20 @@ export function createWiring(persistence: Persistence, options: WiringOptions) {
     };
     const { capabilities } = wired;
     if (capabilities === undefined) return base;
+    const skills =
+      options.skills === undefined
+        ? {}
+        : {
+            skills: {
+              current: options.skills.current,
+              loaded: async (actorKey: string) =>
+                (await store.readLoadedSkills(wired.runId, actorKey)).map((loaded) => loaded.skillId),
+            },
+          };
     if (actor !== undefined) {
       return {
         ...base,
-        scope: { actor, capabilities },
+        scope: { actor, capabilities, ...skills },
         recordMessage: delegateMessageRecorder(store, wired.runId, actor),
       };
     }
@@ -204,6 +218,7 @@ export function createWiring(persistence: Persistence, options: WiringOptions) {
       scope: {
         actor: { kind: 'root' },
         capabilities,
+        ...skills,
         delegation: runDelegationPort({
           store,
           gates,

@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { PlanAssetInstallRequest } from '@agent-facets/adapter';
+import { computeMcpServerFingerprint } from '@agent-facets/protocol';
 import { assets } from './adapter.ts';
 import { canonicalJson, sha256Hex } from './canonical.ts';
 import { exportAssetPath, exportServersPath } from './export-record.ts';
@@ -12,7 +13,7 @@ const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
-const cli = { version: '0.35.0', platform: 'linux-x64', sha256: 'a'.repeat(64) };
+const cli = { version: '0.36.0', platform: 'linux-x64', sha256: 'a'.repeat(64) };
 const fileHash = (text: string | Uint8Array) => `sha256:${sha256Hex(text)}`;
 
 interface Asset {
@@ -24,11 +25,27 @@ interface Asset {
   companions?: Record<string, Uint8Array>;
 }
 
+type Declaration =
+  | { type: 'stdio'; command: string; args: string[]; env: Record<string, string> }
+  | { type: 'http'; url: string };
+
+interface Server {
+  name: string;
+  declaration: Declaration;
+  materialization?: { kind: 'aliased'; as: string } | { kind: 'omitted' };
+}
+
+const stdio = (command: string, args: string[] = []): Declaration => ({ type: 'stdio', command, args, env: {} });
+
 const primaryPath = (asset: Asset) =>
   asset.type === 'skill' ? `skills/${asset.name}/SKILL.md` : `${asset.type}s/${asset.name}.md`;
 
 /** A recorded installation as the CLI leaves it: manifest, lockfile, adapter home and the adapter's exports. */
-async function installation(facets: Record<string, Asset[]>, adapters = ['agent-runtime']) {
+async function installation(
+  facets: Record<string, Asset[]>,
+  adapters = ['agent-runtime'],
+  servers: Record<string, Server[]> = {},
+) {
   const root = mkdtempSync(join(tmpdir(), 'facet-seal-test-'));
   roots.push(root);
   const project = join(root, 'project');
@@ -47,6 +64,8 @@ async function installation(facets: Record<string, Asset[]>, adapters = ['agent-
   }
   const manifest: Record<string, unknown> = {};
   const lock: Record<string, unknown> = {};
+  const exportedServers: Record<string, Declaration> = {};
+  for (const facet of Object.keys(servers)) facets[facet] ??= [];
   for (const [facet, entries] of Object.entries(facets)) {
     const overrides: Record<string, Record<string, unknown>> = {};
     for (const asset of entries) {
@@ -54,6 +73,15 @@ async function installation(facets: Record<string, Asset[]>, adapters = ['agent-
         const group = `${asset.type}s`;
         overrides[group] = { ...overrides[group], [asset.name]: asset.materialization };
       }
+    }
+    const declared = [...(servers[facet] ?? [])].sort((a, b) => (a.name < b.name ? -1 : 1));
+    for (const server of declared) {
+      if (server.materialization !== undefined) {
+        overrides.servers = { ...overrides.servers, [server.name]: server.materialization };
+      }
+      if (server.materialization?.kind === 'omitted') continue;
+      exportedServers[server.materialization?.kind === 'aliased' ? server.materialization.as : server.name] =
+        server.declaration;
     }
     manifest[facet] =
       Object.keys(overrides).length === 0
@@ -75,6 +103,11 @@ async function installation(facets: Record<string, Asset[]>, adapters = ['agent-
             integrity: fileHash(bytes),
           })),
         ].sort((a, b) => (a.path < b.path ? -1 : 1)),
+      })),
+      servers: declared.map((server) => ({
+        name: server.name,
+        fingerprint: computeMcpServerFingerprint(server.declaration),
+        materialization: server.materialization ?? { kind: 'authored' },
       })),
     };
     for (const asset of entries) {
@@ -103,7 +136,11 @@ async function installation(facets: Record<string, Asset[]>, adapters = ['agent-
     join(project, 'facets.json'),
     `${JSON.stringify({ manifestVersion: 0.2, facets: manifest }, null, 2)}\n`,
   );
-  writeFileSync(join(project, 'facets.lock'), `${JSON.stringify({ lockfileVersion: 0.3, facets: lock }, null, 2)}\n`);
+  writeFileSync(join(project, 'facets.lock'), `${JSON.stringify({ lockfileVersion: 0.4, facets: lock }, null, 2)}\n`);
+  if (Object.keys(exportedServers).length > 0) {
+    mkdirSync(dirname(exportServersPath(project)), { recursive: true });
+    writeFileSync(exportServersPath(project), `${canonicalJson({ format: 1, servers: exportedServers })}\n`);
+  }
   return { project, facetDir, seal: () => sealInstallation({ projectDir: project, facetDir, cli }) };
 }
 
@@ -151,7 +188,10 @@ describe('text-asset sealing', () => {
       sha256: sha256Hex('export default "agent-runtime";\n'),
     });
     expect(bundle.inputs.lockSha256).toBe(sha256Hex(readFileSync(join(fixture.project, 'facets.lock'))));
+    expect(bundle.format).toBe(2);
+    expect(bundle.inputs.lockfileVersion).toBe(0.4);
     expect(bundle.servers).toEqual([]);
+    expect(bundle.omittedServers).toEqual([]);
     expect(stateOf(sealed, 'skill', 'unused')).toEqual({ kind: 'omitted' });
 
     const run = bundle.items.find((item) => item.authoredName === 'run');
@@ -254,7 +294,23 @@ describe('text-asset sealing', () => {
 
     const old = await installation(demo());
     const lockPath = join(old.project, 'facets.lock');
-    writeFileSync(lockPath, readFileSync(lockPath, 'utf8').replace('"lockfileVersion": 0.3', '"lockfileVersion": 0.2'));
+    for (const version of ['0.2', '0.3']) {
+      writeFileSync(
+        lockPath,
+        readFileSync(lockPath, 'utf8').replace(/"lockfileVersion": [0-9.]+/, `"lockfileVersion": ${version}`),
+      );
+      expect(refusal(old.seal)).toBe('lockfile_migration_required');
+    }
+    try {
+      old.seal();
+    } catch (error) {
+      expect((error as Error).message).toContain('facet install');
+      expect((error as Error).message).toContain('0.36.0');
+    }
+    writeFileSync(
+      lockPath,
+      readFileSync(lockPath, 'utf8').replace(/"lockfileVersion": [0-9.]+/, '"lockfileVersion": 0.5'),
+    );
     expect(refusal(old.seal)).toBe('input_version_unsupported');
 
     const commented = await installation(demo());
@@ -316,16 +372,207 @@ describe('text-asset sealing', () => {
       fields: ['requires'],
     });
   });
+});
 
-  test('refuses server-bearing installations without inventing origins or dropping servers', async () => {
-    // TODO UPSTREAM-SERVER-PROVENANCE: revisit 9.1; complete 10.1; verify 10.2 (the complete server join).
-    const fixture = await installation(demo());
-    writeFileSync(
-      exportServersPath(fixture.project),
-      `${canonicalJson({ format: 1, servers: { tools: { type: 'stdio', command: 'bun', args: [], env: {} } } })}\n`,
-    );
-    expect(refusal(fixture.seal)).toBe('server_provenance_unavailable');
-    writeFileSync(exportServersPath(fixture.project), `${canonicalJson({ format: 1, servers: {} })}\n`);
-    expect(fixture.seal().installation.servers).toEqual([]);
+describe('server sealing', () => {
+  const repo = stdio('./repo-server', ['--read']);
+  const withServers = (servers: Record<string, Server[]>, assetsByFacet: Record<string, Asset[]> = {}) =>
+    installation(assetsByFacet, ['agent-runtime'], servers);
+  const origin = (facet: string, authoredName: string) => ({
+    facet,
+    version: '1.0.0',
+    source: `local:./facets/${facet}`,
+    integrity: fileHash(facet),
+    authoredName,
+  });
+
+  test('joins each selected server to every facet that declares it, under its effective name', async () => {
+    const sealed = (
+      await withServers({
+        a: [{ name: 'repo', declaration: repo }],
+        b: [
+          { name: 'tools', declaration: repo },
+          {
+            name: 'docs',
+            declaration: { type: 'http', url: 'https://mcp.example.test/' },
+            materialization: { kind: 'omitted' },
+          },
+        ],
+        c: [{ name: 'repo', declaration: stdio('./other'), materialization: { kind: 'aliased', as: 'c-repo' } }],
+      })
+    ).seal();
+    expect(sealed.installation.servers).toEqual([
+      {
+        serverId: 'c-repo',
+        fingerprint: computeMcpServerFingerprint(stdio('./other')),
+        declaration: stdio('./other'),
+        origins: [origin('c', 'repo')],
+      },
+      {
+        serverId: 'repo',
+        fingerprint: computeMcpServerFingerprint(repo),
+        declaration: repo,
+        // Identical declarations compose: no origin is a winner.
+        origins: [origin('a', 'repo')],
+      },
+      {
+        serverId: 'tools',
+        fingerprint: computeMcpServerFingerprint(repo),
+        declaration: repo,
+        origins: [origin('b', 'tools')],
+      },
+    ]);
+    expect(sealed.installation.omittedServers).toEqual([
+      {
+        facet: 'b',
+        authoredName: 'docs',
+        fingerprint: computeMcpServerFingerprint({ type: 'http', url: 'https://mcp.example.test/' }),
+      },
+    ]);
+  });
+
+  test('an identical declaration claimed by several facets keeps all of their origins', async () => {
+    const sealed = (
+      await withServers({
+        a: [{ name: 'repo', declaration: repo }],
+        b: [{ name: 'repo', declaration: stdio('./repo-server', ['--read']) }],
+      })
+    ).seal();
+    expect(sealed.installation.servers.map((server) => [server.serverId, server.origins])).toEqual([
+      ['repo', [origin('a', 'repo'), origin('b', 'repo')]],
+    ]);
+  });
+
+  test('refuses missing, extra and changed server exports, including a deleted export file', async () => {
+    const deleted = await withServers({ a: [{ name: 'repo', declaration: repo }] });
+    rmSync(exportServersPath(deleted.project));
+    expect(refusal(deleted.seal)).toBe('server_export_missing');
+
+    const write = (project: string, servers: Record<string, unknown>) => {
+      mkdirSync(dirname(exportServersPath(project)), { recursive: true });
+      writeFileSync(exportServersPath(project), `${canonicalJson({ format: 1, servers })}\n`);
+    };
+    const extra = await withServers({ a: [{ name: 'repo', declaration: repo }] });
+    write(extra.project, { repo, stray: stdio('./stray') });
+    expect(refusal(extra.seal)).toBe('server_export_unexpected');
+
+    const changed = await withServers({ a: [{ name: 'repo', declaration: repo }] });
+    write(changed.project, { repo: { ...repo, args: ['--write'] } });
+    expect(refusal(changed.seal)).toBe('server_export_mismatch');
+
+    const reordered = await withServers({ a: [{ name: 'repo', declaration: stdio('./x', ['a', 'b']) }] });
+    write(reordered.project, { repo: stdio('./x', ['b', 'a']) });
+    expect(refusal(reordered.seal)).toBe('server_export_mismatch');
+
+    const pretty = await withServers({ a: [{ name: 'repo', declaration: repo }] });
+    writeFileSync(exportServersPath(pretty.project), JSON.stringify({ format: 1, servers: { repo } }, null, 2));
+    expect(refusal(pretty.seal)).toBe('export_invalid');
+
+    // An omitted server is not exported; exporting it anyway is an extra record.
+    const omitted = await withServers({
+      a: [{ name: 'repo', declaration: repo, materialization: { kind: 'omitted' } }],
+    });
+    write(omitted.project, { repo });
+    expect(refusal(omitted.seal)).toBe('server_export_unexpected');
+  });
+
+  test('refuses server choices that differ from the manifest, stale server overrides and recorded collisions', async () => {
+    const edited = await withServers({
+      a: [{ name: 'repo', declaration: repo, materialization: { kind: 'aliased', as: 'a-repo' } }],
+    });
+    const manifestPath = join(edited.project, 'facets.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    manifest.facets.a.materialization.servers.repo = { kind: 'omitted' };
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    expect(refusal(edited.seal)).toBe('inputs_disagree');
+    manifest.facets.a.materialization.servers = { repo: { kind: 'aliased', as: 'a-repo' }, gone: { kind: 'omitted' } };
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    expect(refusal(edited.seal)).toBe('inputs_disagree');
+
+    const collision = await withServers({
+      a: [{ name: 'repo', declaration: repo }],
+      b: [{ name: 'repo', declaration: stdio('./different') }],
+    });
+    expect(refusal(collision.seal)).toBe('server_collision');
+  });
+
+  test('resolves authored MCP references through the verified mapping', async () => {
+    const sealed = (
+      await withServers(
+        {
+          tools: [{ name: 'repo', declaration: repo, materialization: { kind: 'aliased', as: 'team-repo' } }],
+          dropped: [{ name: 'docs', declaration: stdio('./docs'), materialization: { kind: 'omitted' } }],
+        },
+        {
+          app: [
+            {
+              type: 'command',
+              name: 'sync',
+              primary: 'Sync.\n',
+              metadata: {
+                runtimeVersion: 1,
+                requires: [{ kind: 'mcp', facet: 'tools', server: 'repo', tool: 'list_prs' }],
+                restrict: {
+                  mcp: [
+                    { facet: 'tools', server: 'repo', tool: 'list_prs' },
+                    { facet: 'dropped', server: 'docs', tool: 'search' },
+                  ],
+                },
+              },
+            },
+            {
+              type: 'command',
+              name: 'docs',
+              primary: 'Docs.\n',
+              metadata: {
+                runtimeVersion: 1,
+                requires: [{ kind: 'mcp', facet: 'dropped', server: 'docs', tool: 'search' }],
+              },
+            },
+            {
+              type: 'command',
+              name: 'wrong-facet',
+              primary: 'X.\n',
+              // `team-repo` is an effective name, not something the app facet declares.
+              metadata: { runtimeVersion: 1, requires: [{ kind: 'mcp', server: 'team-repo', tool: 'list_prs' }] },
+            },
+          ],
+        },
+      )
+    ).seal();
+    const sync = stateOf(sealed, 'command', 'sync');
+    if (sync?.kind !== 'ready') throw new Error('expected a ready command');
+    expect(sync.definition.requires).toEqual([{ kind: 'mcp', serverId: 'team-repo', toolName: 'list_prs' }]);
+    expect((sync.definition as { restrict?: unknown }).restrict).toEqual({
+      mcp: [{ serverId: 'team-repo', toolName: 'list_prs' }],
+    });
+    expect(stateOf(sealed, 'command', 'docs')).toEqual({
+      kind: 'refused',
+      reason: 'prerequisite_omitted',
+      subject: 'mcp:dropped/docs/search',
+      fields: ['requires'],
+    });
+    expect(stateOf(sealed, 'command', 'wrong-facet')).toMatchObject({
+      kind: 'refused',
+      reason: 'prerequisite_missing',
+      subject: 'mcp:app/team-repo/list_prs',
+    });
+  });
+
+  test('the joined servers do not depend on the order facets are listed in', async () => {
+    const first = (
+      await withServers({ a: [{ name: 'repo', declaration: repo }], b: [{ name: 'repo', declaration: repo }] })
+    ).seal();
+    const second = (
+      await withServers({ b: [{ name: 'repo', declaration: repo }], a: [{ name: 'repo', declaration: repo }] })
+    ).seal();
+    // The hand-written lockfiles differ in key order (the CLI sorts them); the joined records must not.
+    expect(second.installation.servers).toEqual(first.installation.servers);
+    expect(first.installation.servers[0]?.origins.map((entry) => entry.facet)).toEqual(['a', 'b']);
+  });
+
+  test('refuses more selected servers than the runtime supports', async () => {
+    const many = Array.from({ length: 9 }, (_, index) => ({ name: `s${index}`, declaration: stdio(`./s${index}`) }));
+    expect(refusal((await withServers({ a: many })).seal)).toBe('installation_too_large');
   });
 });

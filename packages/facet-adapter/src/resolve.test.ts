@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { RuntimeMetadata } from './metadata.ts';
-import { type ResolvableItem, resolveReferences } from './resolve.ts';
+import { type ResolvableItem, resolveReferences, serverKey } from './resolve.ts';
 
 const runtime = (
   requires: RuntimeMetadata['requires'] = [],
@@ -147,22 +147,56 @@ describe('explicit reference resolution', () => {
     });
   });
 
-  test('MCP references are syntax-checked but refused until server provenance can be verified', () => {
-    // TODO UPSTREAM-SERVER-PROVENANCE: revisit 9.1; complete 10.1; verify 10.2 (verified server binding).
-    const results = resolve([
-      item('demo', 'command', 'calls-tool', { runtime: runtime([{ kind: 'mcp', server: 'repo', tool: 'list_prs' }]) }),
-      item('demo', 'agent', 'scoped', { runtime: runtime([], { mcp: [{ server: 'repo', tool: 'list_prs' }] }) }),
+  test("MCP references resolve through the declaring facet's recorded servers, never by effective name alone", () => {
+    const servers = new Map<string, string | null>([
+      [serverKey('demo', 'repo'), 'team-repo'],
+      [serverKey('demo', 'docs'), null],
+      [serverKey('other', 'repo'), 'repo'],
     ]);
-    expect(results['demo/command/calls-tool']).toEqual({
+    const results = resolveReferences(
+      [
+        item('demo', 'command', 'calls-tool', {
+          runtime: runtime([{ kind: 'mcp', server: 'repo', tool: 'list_prs' }]),
+        }),
+        item('demo', 'command', 'cross-facet', {
+          runtime: runtime([{ kind: 'mcp', facet: 'other', server: 'repo', tool: 'search' }]),
+        }),
+        item('demo', 'command', 'omitted', { runtime: runtime([{ kind: 'mcp', server: 'docs', tool: 'x' }]) }),
+        item('demo', 'command', 'by-effective-name', {
+          runtime: runtime([{ kind: 'mcp', server: 'team-repo', tool: 'list_prs' }]),
+        }),
+        item('demo', 'agent', 'scoped', {
+          runtime: runtime([], {
+            mcp: [
+              { server: 'repo', tool: 'list_prs' },
+              { server: 'repo', tool: 'list_prs' },
+              { server: 'docs', tool: 'x' },
+            ],
+          }),
+        }),
+        item('demo', 'agent', 'unknown', { runtime: runtime([], { mcp: [{ server: 'nope', tool: 'x' }] }) }),
+      ],
+      servers,
+    );
+    const at = (name: string, kind = 'command') => results.get(`demo\u0000${kind}\u0000${name}`);
+    expect(at('calls-tool')).toEqual({
+      ok: true,
+      requires: [{ kind: 'mcp', serverId: 'team-repo', toolName: 'list_prs' }],
+    });
+    expect(at('cross-facet')).toEqual({ ok: true, requires: [{ kind: 'mcp', serverId: 'repo', toolName: 'search' }] });
+    expect(at('omitted')).toEqual({
       ok: false,
-      reason: 'server_provenance_unavailable',
-      subject: 'mcp:repo/list_prs',
+      reason: 'prerequisite_omitted',
+      subject: 'mcp:demo/docs/x',
       fields: ['requires'],
     });
-    expect(results['demo/agent/scoped']).toMatchObject({
-      ok: false,
-      reason: 'server_provenance_unavailable',
-      fields: ['restrict'],
+    expect(at('by-effective-name')).toMatchObject({ ok: false, reason: 'prerequisite_missing' });
+    // Duplicates collapse and an omitted server's tool narrows to nothing rather than failing.
+    expect(at('scoped', 'agent')).toEqual({
+      ok: true,
+      requires: [],
+      restrict: { mcp: [{ serverId: 'team-repo', toolName: 'list_prs' }] },
     });
+    expect(at('unknown', 'agent')).toMatchObject({ ok: false, reason: 'reference_unresolved', fields: ['restrict'] });
   });
 });

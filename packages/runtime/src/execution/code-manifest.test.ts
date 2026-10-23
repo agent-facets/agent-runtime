@@ -150,6 +150,9 @@ describe('execution code manifest', () => {
         expect.arrayContaining([
           'src/capabilities/authority.ts',
           'src/config/capabilities.ts',
+          // On-demand skills are resume-critical: reached through the agent for both providers.
+          'src/execution/skills.ts',
+          'src/workspace/projection.ts',
           'src/mcp/call.ts',
           'src/mcp/schema.ts',
           'src/mcp/session.ts',

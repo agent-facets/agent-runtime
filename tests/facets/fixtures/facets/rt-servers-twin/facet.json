@@ -1,0 +1,13 @@
+{
+  "name": "rt-servers-twin",
+  "version": "1.0.0",
+  "description": "Synthetic server-only fixture declaring the same server as rt-servers",
+  "servers": {
+    "repo-tools": {
+      "type": "stdio",
+      "command": "./never-run.sh",
+      "args": ["--fixture"],
+      "env": { "FIXTURE_MODE": "synthetic" }
+    }
+  }
+}

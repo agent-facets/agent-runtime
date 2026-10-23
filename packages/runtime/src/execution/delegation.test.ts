@@ -129,7 +129,11 @@ describe('actor-aware agents', () => {
     expect(native.manifest.capabilities).toBeUndefined();
     const run = capabilities();
     const command = await definitionOf({ actor: { kind: 'root' }, capabilities: run, delegation: port });
-    expect(command.manifest.capabilities).toEqual({ snapshotDigest: run.snapshotDigest, delegationProtocol: 1 });
+    expect(command.manifest.capabilities).toEqual({
+      snapshotDigest: run.snapshotDigest,
+      delegationProtocol: 1,
+      skillProtocol: 1,
+    });
     const other = capabilities({ input: { arguments: 'owner/repo-b', renderedGoal: 'Triage owner/repo-b' } });
     expect((await definitionOf({ actor: { kind: 'root' }, capabilities: other, delegation: port })).digest).not.toBe(
       command.digest,

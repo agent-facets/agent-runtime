@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@agent-facets/adapter": "0.30.0",
+    "@agent-facets/protocol": "0.32.0",
     "zod": "4.6.5"
   }
 }

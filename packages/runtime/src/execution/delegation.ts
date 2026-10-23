@@ -20,6 +20,7 @@ import { AIMessage, type BaseMessage, HumanMessage } from '@langchain/core/messa
 import { tool } from 'langchain';
 import { z } from 'zod';
 import type { CapabilitySnapshot, DelegateOutcome, DelegateState, LoadedSkill } from '../capabilities/records.ts';
+import type { CapabilityConfig } from '../config/capabilities.ts';
 import type { KeyedSerializer } from '../persistence/keyed-serializer.ts';
 import { type RecordedToolOutcome, type RunCapabilities, type RunStore, RunStoreError } from '../records/run-store.ts';
 import { operationIdV2 } from '../records/schemas.ts';
@@ -62,6 +63,11 @@ export interface AgentScope {
   capabilities: RunCapabilities;
   /** The root's delegation port; delegates have none. */
   delegation?: DelegationPort;
+  /** Current grants and recorded skill membership, for the actor's skill tools; absent offers no skill tools. */
+  skills?: {
+    current: CapabilityConfig | undefined;
+    loaded(actorKey: string): Promise<string[]>;
+  };
 }
 
 /** The run's delegation records and delegate construction, for the root of one invocation (or its inspection). */

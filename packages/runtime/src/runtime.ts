@@ -1,3 +1,4 @@
+import { createMcpPreflight } from './capabilities/preflight.ts';
 import { configuredCredentialSlots } from './config/capabilities.ts';
 import type { RuntimeConfig } from './config.ts';
 import { type ConsoleFiles, loadConsole } from './console.ts';
@@ -174,6 +175,13 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
                   void stop(1);
                 },
                 log,
+                // Slots cannot change while this process owns the database (`auth mcp set` needs it stopped), so
+                // a slot read here holds the value screened at startup.
+                preflight: createMcpPreflight({
+                  stateDir: options.config.stateDir,
+                  bunPath: process.execPath,
+                  readCredential: (slot) => McpCredentialStore.forStateDir(options.config.stateDir).read(slot),
+                }),
               });
             }
             if (opened.ownership.lost === undefined) status = 'ready';

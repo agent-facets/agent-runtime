@@ -22,8 +22,9 @@ outside the repository and is never committed.
 
 | Tool | Pin |
 |---|---|
-| `facet` CLI | 0.35.0, Linux x86-64 binary SHA-256 `d6590bb2c1af0119e2bdfcafbfc0dbafe98e6e9ef015ae524926e983fa9a2a46` |
+| `facet` CLI | 0.36.0, Linux x86-64 binary SHA-256 `c7b781b1a7cac5ce459cccb41da4ad12d0e6545d5cc6381a18a90706feb8451a` |
 | Adapter SDK | `@agent-facets/adapter` 0.30.0 (adapter API 0.3), bundled into the `agent-runtime` adapter |
+| Protocol | `@agent-facets/protocol` 0.32.0, used by `seal` only to read the lockfile's server inventory and fingerprint declarations; not part of the adapter |
 
 The pins live in `packages/facet-adapter/src/toolchain.ts`. `check` and `seal` hash the CLI binary before running
 it and refuse any other binary or version, and any other platform. Nothing installs, upgrades or repairs the CLI;
@@ -59,15 +60,17 @@ continue in that case, and `seal` refuses to seal.
 
 `seal` refuses the whole installation if it cannot be verified: the manifest and lockfile disagree, an export is
 missing or unexpected, an export does not match its recorded files, names collide, or the inputs use an unsupported
-format. It accepts only strict JSON (no comments) with project manifest version 0.2 and lockfile version 0.3. Only
-project-scoped assets are supported. Re-sealing identical recorded inputs with the same toolchain gives identical
-bytes.
+format. It accepts only strict JSON (no comments) with project manifest version 0.2 and lockfile version 0.4. A
+lockfile 0.2 or 0.3 is refused with a request to migrate it: run a plain `facet install` with the pinned CLI and
+commit the rewritten `facets.lock`. Only project-scoped assets are supported. Re-sealing identical recorded inputs
+with the same toolchain gives identical bytes.
 
 The bundle's SHA-256 covers the whole file: source provenance, materialization choices, definitions, resources, and
 the installer and adapter identities. The digest is not stored inside the bundle. The runtime's installation loader
 refuses a bundle whose bytes do not match the owner-pinned digest or are not in canonical form, and it never
-rewrites or reseals the installation. The server does not read `installation.json`: operator configuration has no
-setting for it, and command runs are not offered.
+rewrites or reseals the installation. Operator configuration names the bundle and its digest
+(`capabilities.installation`); the runtime reads it afresh for each new command start, and an accepted run keeps
+the definitions it retained, so later updates or removal do not affect it.
 
 **Integrity.** Each facet's lockfile integrity and per-file hashes are the CLI's verified source provenance. Skill
 companion files are exported byte for byte and checked against those hashes. A command, skill or agent primary file
@@ -116,6 +119,12 @@ Runtime behavior comes only from an explicit `agent-runtime` adapter block in `f
   malformed field. Examples include a model or tool-selection setting, hooks, or `restrict` on a skill.
 - A contribution is also refused when a prerequisite is missing, omitted or refused, or is part of a requirement
   cycle. Unrelated contributions stay usable.
+- A command takes one raw text argument. The literal `$ARGUMENTS` in its body is replaced by that text (every
+  occurrence, with nothing expanded or executed); without the marker, non-blank text is appended under an
+  `## Owner input` heading. `arguments.required` refuses blank text. The resulting task is at most 8 KiB.
+- Skills are offered to agents by ID and description; full instructions are returned only when an agent loads one,
+  and its declared files are readable afterwards as UTF-8 text references from the retained bundle. Scripts are
+  never run.
 - Primary front matter and other tools' adapter settings are ignored, never interpreted as runtime behavior.
   Commands written for a coding tool usually need explicit runtime adaptation; parity with coding tools is not
   promised.
@@ -124,19 +133,27 @@ Runtime behavior comes only from an explicit `agent-runtime` adapter block in `f
 
 ## Server declarations
 
-The adapter exports raw MCP server declarations, but **an installation that declares a server cannot be sealed**.
-The public lockfile does not record which facets contributed each server, so the sealer cannot attribute a
-declaration to its origin. Instead of guessing an origin or silently dropping the server, it refuses the
-installation. To seal the remaining contributions, omit the server in `facets.json`:
+Lockfile 0.4 records every MCP server each facet declares: its authored name, the fingerprint of its declaration and
+its alias or omission. The adapter exports the selected declarations under their effective names. `seal` derives
+the selected set from the lockfile with the installer's public rules and fingerprints every exported declaration
+again; the two sets must agree exactly, so a missing, extra or edited server export (including a deleted
+`servers.json`) refuses the seal. Identical declarations from several facets become one server that keeps every
+contributing facet. Different declarations claiming one name must be resolved with an alias or omission before the
+CLI installs anything:
 
 ```json
 "facets": {
-  "some-facet": { "source": "1.*", "materialization": { "servers": { "repo-tools": { "kind": "omitted" } } } }
+  "some-facet": { "source": "1.*", "materialization": { "servers": { "repo-tools": { "kind": "aliased", "as": "some-tools" } } } }
 }
 ```
 
-Contributions that reference MCP tools are refused for the same reason. Exporting or installing a declaration never
-approves runtime access to a server.
+An omitted server is recorded in the bundle but is not selected. MCP references in `requires` and `restrict` name a
+facet's authored server (`{ "kind": "mcp", "server", "tool" }`, with `facet` for another facet's server) and
+resolve through these choices to the effective server; a reference to an omitted server refuses its contribution.
+The runtime refuses a required tool whose server is an HTTP declaration, since only stdio programs can run.
+
+The declaration fingerprint identifies the portable declaration only. Exporting, installing or sealing a server
+never approves runtime access to it, and the facet's `command` is never run.
 
 ## Server programs, approvals and credentials
 
@@ -152,5 +169,7 @@ with `auth mcp set` while the runtime is stopped. See
 
 `bun run test:facets` exercises this procedure with synthetic fixture facets (`tests/facets/fixtures/`). Each run
 uses its own disposable runtime and editor homes and refuses an unpinned CLI before installing anything. It covers
-export, aliasing, omission, removal, repeated and frozen installs, reproducible bytes, altered-bundle refusal,
-server-bearing sealing refusal, and isolation between runtime and editor installations in both directions.
+export, aliasing, omission, removal, repeated and frozen installs, reproducible bytes and altered-bundle refusal,
+for text assets and servers alike: server-only facets, deduplicated declarations with every origin, server aliases
+and omissions, missing, extra and edited server exports, MCP reference resolution, and isolation between runtime and
+editor installations in both directions.

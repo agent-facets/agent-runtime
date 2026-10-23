@@ -153,6 +153,17 @@ Delegate lifecycle (`run-store.ts`, each step one owner-fenced transaction under
 A delegate's binding records its own leaf saved state plus the root's checkpoint and task and the parent operation;
 its required-state digest covers both saved heads and the asker's loaded-skill membership.
 
+Command acceptance and skill loads (`run-store.ts`):
+
+| Step | Records that change together |
+|---|---|
+| Accept a command run | Run, normalized submission, content-addressed snapshot (stored once, shared by identical runs), root actor, initial invocation, `run.command` and status history. A retry with the same submission returns this run; a different one conflicts |
+| Complete a successful skill load | The load operation's outcome and, from the run's retained snapshot (never the tool output), the actor's `loaded_skills` row with the bound definition's digest; an existing membership is kept |
+
+Continuation rebuilds a command run's agents from its retained snapshot; confirmed snapshot corruption refuses the
+answer as `continuation_unavailable` (`definition_changed`), while an installation change or removal, or a change of
+current grants, does not affect it.
+
 Upgrades are forward only. A build that knows fewer migrations refuses the newer history before changing either
 schema; there is no down-migration, and snapshots, credentials and history are never deleted by an upgrade.
 
