@@ -2,7 +2,7 @@
 
 ## Phase 1 records as built (MVP 01)
 
-The [MVP 01 design](../openspec/changes/mvp-01-interactive-agent-execution/design.md) (Decisions 3–4) supersedes
+The MVP 01 design (Decisions 3–4) supersedes
 this document where they differ. The `runtime` schema holds:
 
 | Record | Identity and purpose |
@@ -109,7 +109,7 @@ the former has its own outcome, and the latter stops the service, leaving the ru
 
 ## Phase 2 capability records (MVP 02)
 
-The [MVP 02 design](../openspec/changes/archive/2026-10-20-mvp-02-facet-backed-capabilities/design.md) (Decisions 6–8) adds, in
+The MVP 02 design (Decisions 6–8) adds, in
 migration 4, without editing migrations 1–3 or rewriting existing rows:
 
 | Record | Identity and purpose |

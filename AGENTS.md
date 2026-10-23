@@ -37,6 +37,10 @@ What to test, and where:
 - Test UI as component and data-pattern unit tests. Real-browser tests are smoke checks only: a handful proving the built console works end to end, never the place to test behavior.
 - Keep tests fast. A slow test with little value is made fast (inject the slow dependency, shrink its bound) or removed; do not raise timeouts to tolerate it.
 
+## Documentation
+
+- Never link to an archived OpenSpec change (`openspec/changes/archive/`, or a change's path once it has been archived). Archives are local-only; name the change in plain text instead, or link to the main spec under `openspec/specs/`.
+
 ## Frontend
 
 Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, CSS, Tailwind.

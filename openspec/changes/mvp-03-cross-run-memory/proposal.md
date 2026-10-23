@@ -4,7 +4,7 @@
 
 Persistent conversations do not stop an agent from relearning the owner's preferences in every new run. Cross-run memory lets the framework reuse useful outcomes and explicit instructions while keeping remembered context separate from what the owner actually authorized.
 
-This is phase 3 of [the framework MVP roadmap](../../roadmaps/framework-mvp.md). It depends on [`mvp-01-interactive-agent-execution`](../mvp-01-interactive-agent-execution/proposal.md) and [`mvp-02-facet-backed-capabilities`](../mvp-02-facet-backed-capabilities/proposal.md); their proposals are reviewed, not implemented.
+This is phase 3 of [the framework MVP roadmap](../../roadmaps/framework-mvp.md). It depends on `mvp-01-interactive-agent-execution` and `mvp-02-facet-backed-capabilities`; their proposals are reviewed, not implemented.
 
 ## What Changes
 

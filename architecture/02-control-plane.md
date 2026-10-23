@@ -2,7 +2,7 @@
 
 ## Phase 1 as built (MVP 01)
 
-The [MVP 01 design](../openspec/changes/mvp-01-interactive-agent-execution/design.md) (Decisions 2, 4–8) supersedes
+The MVP 01 design (Decisions 2, 4–8) supersedes
 the sections below where they differ. There is no manager agent, subagent, scheduler or approval service: a run is
 one root-level `createAgent` graph, and a thin controller (`packages/runtime/src/execution/`) owns its invocation
 lifetime, state inspection, application transactions and history projection — not the choice of the next step.
@@ -35,7 +35,7 @@ lifetime, state inspection, application transactions and history projection — 
 
 ## Phase 2 delegation as built (MVP 02)
 
-The [MVP 02 design](../openspec/changes/archive/2026-10-20-mvp-02-facet-backed-capabilities/design.md) (Decisions 1, 7 and 8) adds
+The MVP 02 design (Decisions 1, 7 and 8) adds
 bounded named delegation to command runs without reviving the manager/scheduler design below. The root stays one
 stock `createAgent`; delegation is an ordinary tool of it (`packages/runtime/src/execution/delegation.ts`):
 
