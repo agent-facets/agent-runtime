@@ -15,7 +15,8 @@
     "@langchain/langgraph-checkpoint": "1.1.5",
     "@langchain/langgraph-checkpoint-postgres": "1.0.5",
     "langchain": "1.5.14",
-    "pg": "8.16.3"
+    "pg": "8.16.3",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/pg": "8.15.6"

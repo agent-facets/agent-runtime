@@ -1,5 +1,39 @@
 # Data Model and Lifecycle
 
+## Phase 1 records as built (MVP 01)
+
+The [MVP 01 design](../openspec/changes/mvp-01-interactive-agent-execution/design.md) (Decisions 3–4) supersedes
+this document where they differ. The `runtime` schema holds:
+
+| Record | Identity and purpose |
+|---|---|
+| `runs` | UUID; unique creation request ID; goal, workspace and provider-binding snapshots; execution-definition digest; budget maximum with confirmed and unconfirmed counts; state; revision; last event sequence |
+| `invocations` | `(run, invocation)`; owner epoch at start; `initial` or `answer` (with its question); `active`, `settled` or `interrupted` |
+| `questions` | `(run, question)`, where the question ID equals its tool-operation ID; exact prompt and input; saved-state binding; disposition `pending`, `answered` (the answer may be `false`, `null`, `0` or empty) or `closed` |
+| `model_attempts` | `(run, attempt)`; unique per-run ordinal; `reserved`, `dispatched`, `completed`, `abandoned` or `unconfirmed` |
+| `tool_operations` | `(run, operation)` with operation ID = SHA-256 of run, model-message and provider-call IDs; a provider call ID is unique per run |
+| `events` | `(run, seq)`; immutable; unique per-run source key |
+| `execution_definitions` | Immutable, content-addressed manifests |
+| `runtime_owner` | Singleton owner ID and epoch |
+
+Run state is one validated union — `working`, `waiting`, `cancelling`, `succeeded`, `failed`, `cancelled`,
+`interrupted` — each with exactly its own payload. Enforcement is in two places that mirror each other: strict
+runtime decoders (`packages/runtime/src/records/schemas.ts`) and database checks (exact keys, discriminators and
+primitive types, same-run composite foreign keys, and a deferred per-run consistency check at commit). The
+database also refuses a second pending question or active invocation, budget counts that exceed the maximum or
+disagree with recorded attempts, gaps in event history, changes to finished outcomes, events or accepted answers,
+and new invocations under a stale owner epoch.
+
+Mutations run in owner-fenced transactions (owner row share-locked, then the run row locked for update). Event
+sequences are allocated under the run lock, so sequence order is commit order, and are carried as decimal strings.
+Replaying a source key with the same event returns the original; different content is refused. Run creation is
+idempotent per request ID, and an uncertain commit is resolved by same-owner readback before anything is dispatched.
+
+Not in Phase 1: tasks, approvals as a separate entity, schedules, artifacts, memory records, ULIDs, the general
+idempotency ledger and automatic recovery of active work. The run lifecycle, question publication, compatibility and
+crash-window behavior are documented with the controller (later blocks). The sections below are historical design
+intent.
+
 ## Entities
 
 ```text

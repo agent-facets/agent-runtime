@@ -3,12 +3,12 @@
 A personal agent runtime: start a repository task from a browser, leave, return, answer the agent's
 questions, and collect the result using an existing Anthropic or OpenAI subscription.
 
-> **Status: development foundation only.** The workspace, toolchain, checks and container topology exist.
-> Agent execution, persistence, provider access and the browser console are **not implemented yet**; they
-> are delivered by the remaining tasks in
+> **Status: foundation and durable persistence.** The workspace, toolchain, checks, container topology and the
+> PostgreSQL persistence layer (runtime ownership, migrations, run records, the official checkpointer) exist.
+> Agent execution, provider access and the browser console are **not implemented yet**; they are delivered by the
+> remaining tasks in
 > [`openspec/changes/mvp-01-interactive-agent-execution`](openspec/changes/mvp-01-interactive-agent-execution/tasks.md).
-> The runtime currently serves only health and readiness endpoints, and readiness always reports
-> `ready: false`.
+> The runtime serves only health and readiness endpoints, and readiness always reports `ready: false`.
 
 Further reading:
 
@@ -34,7 +34,9 @@ Boundaries enforced by tests:
 
 - The UI never imports runtime internals or server-only modules; the runtime uses only the UI's public entry.
 - No package imports `spikes/**`.
-- node-postgres (`pg`) is imported only by the official checkpointer adapter; application SQL uses `Bun.sql`.
+- node-postgres (`pg`) is imported only by the official checkpointer adapter; application SQL uses Bun SQL.
+- Only the application database adapter opens Bun SQL connections, and it exposes transactions and reserved
+  sessions but no plain pool (see [Persistence](#persistence)).
 - Internal dependencies use `workspace:*`; root owns development tooling, packages own application dependencies.
 
 ## Setup
@@ -80,7 +82,7 @@ Run from the repository root (prefix with `mise exec --` if mise is not activate
 | `bun run test` / `typecheck` | Package and repository-script tests / typechecks through Turbo. |
 | `bun run lint` | Biome lint and format check (read-only). `bun run format` applies fixes. |
 | `bun test` | Direct Bun discovery of unit suites; excludes spikes, `tests/**`, generated output and `*.integration`/`*.live` suites. |
-| `bun run test:integration` | Starts a disposable PostgreSQL fixture and runs `tests/integration`. Requires Docker. |
+| `bun run test:integration` | Starts a disposable PostgreSQL fixture and runs `tests/integration` (persistence, ownership, run records and the G1 gate). Requires Docker. |
 | `bun run test:container` | Builds the image and smoke-tests the isolated Compose topology. Requires Docker. |
 
 Turbo caching is **local only** (remote caching and telemetry disabled). Package tasks are invalidated by
@@ -94,6 +96,36 @@ environment, and refuse to start if storage, Compose, credential or provider var
 Compose project with fresh storage and removes only what it created. The container smoke replaces the
 Tailscale daemon with an inert namespace holder, so it performs no tailnet login and proves Docker topology,
 not real Serve/HTTPS behavior.
+
+## Persistence
+
+PostgreSQL holds two schemas with separate owners: `runtime` for application records (Bun SQL) and `checkpoints`
+for the official LangGraph checkpointer (its own `pg` pool). Their writes are separate transactions.
+
+On startup the runtime:
+
+1. Takes a single-instance ownership lock on a dedicated database session. A second instance changes nothing and
+   reports `owned_elsewhere`.
+2. Checks both schema histories before changing either, then applies pending migrations and the checkpointer's
+   setup. Unknown, altered, newer or gapped histories are refused (`schema_incompatible`).
+3. Claims a new owner epoch. Record changes are fenced by that epoch, so a stale process cannot write.
+
+`/readyz` reports persistence as one of `unconfigured`, `starting`, `ready`, `unavailable`, `owned_elsewhere`,
+`schema_incompatible`, `ownership_lost` or `stopping`. If ownership is lost after startup (for example, the database
+session ends), the runtime stops and exits so its supervisor restarts it; it never silently reacquires ownership.
+An incompatible schema keeps the process up but unready for the operator. PostgreSQL is configured with short TCP
+keepalives so sessions orphaned by a replaced network namespace end in about 25 seconds and ownership can move to
+the replacement.
+
+**Bun SQL rule.** On Bun 1.3.14, a plain pool query can run inside another caller's transaction when the pool is
+busy. Application code therefore issues every statement in `transaction()`/`readOnly()` or on a reserved session;
+the adapter does not expose the pool, and a test forbids opening Bun SQL elsewhere.
+`tests/repro/bun-sql-pool-misrouting.ts` reproduces the defect; details are in
+[the G1 evidence](architecture/integration-evidence/mvp-01/g1-bun-persistence.md).
+
+Run records (runs, questions, invocations, model attempts, tool operations, events and execution definitions) are
+validated both by runtime decoders and by database constraints; see
+[`architecture/09-data-model-and-lifecycle.md`](architecture/09-data-model-and-lifecycle.md).
 
 ## Deployment
 
@@ -119,12 +151,12 @@ docker compose logs tailscale   # first start: open the printed login URL to joi
 The real tailnet login and Serve HTTPS path have not yet been exercised; they are verified during the
 Anthropic acceptance block. Restrict the machine to your own devices with your tailnet access policy.
 Health endpoints:
-`/healthz` (liveness) and `/readyz` (foundation readiness: database reachability; agent execution is reported
-as `not_implemented`).
+`/healthz` (liveness) and `/readyz` (persistence status; agent execution is reported as `not_implemented`).
 
 ## Limitations
 
-- No agent runs, provider authentication, persistence schema or console yet.
+- No agent runs, provider authentication or console yet. Run records exist, but nothing creates runs yet.
+- No backup, retention or restore tooling; ordinary restarts preserve the database volume, nothing more.
 - Read-only mounts and path checks are not a sandbox against hostile processes on the host; the workspace is
   assumed to be owner-controlled.
 - Ordinary restarts are in scope; host-reboot and disaster-recovery guarantees are not.

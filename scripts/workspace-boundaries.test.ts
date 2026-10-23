@@ -111,6 +111,53 @@ describe('workspace import boundaries', () => {
   });
 });
 
+// On Bun 1.3.14 a plain pool query can run inside another caller's transaction, so runtime code reaches PostgreSQL
+// only through the application database adapter, which exposes transactions and reserved sessions but no pool.
+const appDatabaseAdapter = join(runtimeDir, 'src', 'persistence', 'app-database.ts');
+
+function bunPoolAccess(source: string): string[] {
+  const found: string[] = [];
+  if (/\bnew\s+SQL\s*\(/.test(source)) found.push('new SQL(');
+  if (/\bBun\s*\.\s*(?:sql|SQL)\b/.test(source)) found.push('Bun.sql/Bun.SQL');
+  for (const match of source.matchAll(/import\s+(type\s+)?\{([^}]*)\}\s*from\s*['"]bun['"]/g)) {
+    if (match[1] !== undefined) continue;
+    const values = (match[2] ?? '')
+      .split(',')
+      .map((specifier) => specifier.trim())
+      .filter((specifier) => specifier !== '' && !specifier.startsWith('type '));
+    for (const specifier of values) {
+      if (/^(?:SQL|sql)(?:\s+as\s+\w+)?$/.test(specifier)) found.push(`import { ${specifier} } from 'bun'`);
+    }
+  }
+  if (/import\s+\w+\s+from\s*['"]bun['"]/.test(source)) found.push("default import from 'bun'");
+  return found;
+}
+
+describe('application database access', () => {
+  test('the detector recognizes every way to open a Bun SQL pool', () => {
+    expect(bunPoolAccess("import { SQL } from 'bun';\nconst db = new SQL(url);")).toEqual([
+      'new SQL(',
+      "import { SQL } from 'bun'",
+    ]);
+    expect(bunPoolAccess("import { sql } from 'bun';")).toEqual(["import { sql } from 'bun'"]);
+    expect(bunPoolAccess('await Bun.sql`select 1`;')).toEqual(['Bun.sql/Bun.SQL']);
+    expect(bunPoolAccess("import bun from 'bun';")).toEqual(["default import from 'bun'"]);
+    expect(bunPoolAccess("import type { SQL, TransactionSQL } from 'bun';")).toEqual([]);
+    expect(bunPoolAccess("import { type ReservedSQL, type TransactionSQL } from 'bun';")).toEqual([]);
+  });
+
+  test('only the application database adapter opens Bun SQL connections', async () => {
+    const violations: string[] = [];
+    for (const file of listSourceFiles(runtimeDir)) {
+      if (file === appDatabaseAdapter) continue;
+      for (const access of bunPoolAccess(await Bun.file(file).text())) {
+        violations.push(`${relative(repoRoot, file)}: ${access}`);
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+});
+
 describe('workspace dependency boundaries', () => {
   test('internal dependencies use workspace links and the UI never depends on the runtime', () => {
     const internal = new Set(packages.map((pkg) => pkg.manifest.name));

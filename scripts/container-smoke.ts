@@ -61,6 +61,42 @@ const netNamespace = async (serviceName: string) =>
 const fetchScript = (url: string) =>
   `fetch(${JSON.stringify(url)}).then(async (r) => { console.log(r.status, await r.text()); }, () => process.exit(1))`;
 
+interface ReadinessBody {
+  checks: { persistence: string; agentExecution: string };
+}
+
+/** Polls readiness until persistence is ready, tolerating restarts; persistence starts after the listener. */
+async function awaitPersistenceReady(timeoutMs: number): Promise<ReadinessBody> {
+  const deadline = Date.now() + timeoutMs;
+  let last = 'no response';
+  while (Date.now() < deadline) {
+    const ready = await exec('runtime', 'bun', '-e', fetchScript('http://127.0.0.1:3000/readyz'));
+    if (ready.stdout.startsWith('503 ')) {
+      const body = JSON.parse(ready.stdout.slice(4)) as ReadinessBody;
+      if (body.checks.persistence === 'ready') return body;
+      last = body.checks.persistence;
+    } else if (ready.stdout.startsWith('200 ')) {
+      throw new Error('readiness reported ready before agent execution exists');
+    }
+    await Bun.sleep(1_000);
+  }
+  throw new Error(`persistence did not become ready (last: ${last})`);
+}
+
+const ownerEpoch = async () =>
+  (
+    await exec(
+      'postgres',
+      'psql',
+      '-U',
+      'agent_runtime',
+      '-d',
+      'agent_runtime',
+      '-tAc',
+      'select epoch from runtime.runtime_owner',
+    )
+  ).stdout.trim();
+
 try {
   await check('rendered operational configuration publishes no ports', async () => {
     const rendered = JSON.parse((await run([...composeBase, 'config', '--format', 'json'])).stdout) as {
@@ -124,11 +160,9 @@ try {
   await check('loopback health and foundation readiness respond inside the namespace', async () => {
     const health = await exec('runtime', 'bun', '-e', fetchScript('http://127.0.0.1:3000/healthz'));
     assert(health.stdout.startsWith('200 '), `healthz: ${health.stdout || health.stderr}`);
-    const ready = await exec('runtime', 'bun', '-e', fetchScript('http://127.0.0.1:3000/readyz'));
-    assert(ready.stdout.startsWith('503 '), `readyz status: ${ready.stdout}`);
-    const body = JSON.parse(ready.stdout.slice(4)) as { checks: { database: string; agentExecution: string } };
-    assert(body.checks.database === 'reachable', `database: ${body.checks.database}`);
+    const body = await awaitPersistenceReady(60_000);
     assert(body.checks.agentExecution === 'not_implemented', 'readiness overstates agent execution');
+    assert((await ownerEpoch()) === '1', 'unexpected initial owner epoch');
   });
 
   await check('ordinary network peers cannot reach the runtime listener', async () => {
@@ -152,12 +186,15 @@ try {
   await check('runtime reattaches after the namespace holder is replaced', async () => {
     const before = await inspect('tailscale');
     await run([...composeSmoke, 'up', '--detach', '--force-recreate', '--wait', '--wait-timeout', '120', 'tailscale']);
-    await run([...composeSmoke, 'up', '--detach', '--wait', '--wait-timeout', '120']);
+    // The replaced runtime may restart a few times until PostgreSQL ends the orphaned ownership session, so
+    // readiness (not a single health probe) decides the outcome.
+    await run([...composeSmoke, 'up', '--detach'], true);
     const [holder, runtime] = await Promise.all([inspect('tailscale'), inspect('runtime')]);
     assert(holder.Id !== before.Id, 'namespace holder was not replaced');
     assert(runtime.HostConfig.NetworkMode === `container:${holder.Id}`, 'runtime still references the old holder');
-    const health = await exec('runtime', 'bun', '-e', fetchScript('http://127.0.0.1:3000/healthz'));
-    assert(health.stdout.startsWith('200 '), 'runtime unhealthy after reattachment');
+    await awaitPersistenceReady(120_000);
+    const epoch = Number(await ownerEpoch());
+    assert(epoch >= 2, `ownership did not move to the replacement runtime (epoch ${epoch})`);
   });
 } catch (error) {
   failures++;
