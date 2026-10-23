@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { authAttemptSchema } from '@agent-runtime/contracts';
 import { CredentialCoordinator } from '../credentials/coordinator.ts';
 import { acquireProviderLock } from '../credentials/lock.ts';
+import type { CredentialRecord } from '../credentials/record.ts';
 import { CredentialStore } from '../credentials/store.ts';
 import { createOpenAIAuthTransport, openaiIssuer } from '../providers/openai/credentials.ts';
 import type { LoginOutcome } from './auth.ts';
@@ -78,6 +79,8 @@ function pollGate() {
       new Promise<void>((resolve) => {
         release = resolve;
         waiting.resolve();
+        // Like the real sleep: a login stopped just before this wait does not wait.
+        if (signal.aborted) resolve();
         signal.addEventListener('abort', () => resolve(), { once: true });
       }),
     /** Waits until the poller is between polls. */
@@ -95,17 +98,19 @@ function pollGate() {
   };
 }
 
-function setup(network = issuer(), options: { slot?: string | null } = {}) {
-  const state = join(scratch, `state-${++counter}`);
-  mkdirSync(state, { mode: 0o700 });
+function setup(network = issuer(), options: { slot?: string | null; state?: string; now?: () => number } = {}) {
+  // Passing an earlier fixture's state directory stands in for a restarted runtime on the same private volume.
+  const state = options.state ?? join(scratch, `state-${++counter}`);
+  if (options.state === undefined) mkdirSync(state, { mode: 0o700 });
+  const now = options.now ?? (() => NOW);
   const store = new CredentialStore(join(state, 'credentials'));
   const transport = createOpenAIAuthTransport(network.fetchImpl);
   const coordinator = new CredentialCoordinator({
     store,
     provider: 'openai',
     slot: 'default',
-    issuer: openaiIssuer({ transport, now: () => NOW }),
-    now: () => NOW,
+    issuer: openaiIssuer({ transport, now }),
+    now,
     lockWaitMs: 200,
   });
   const gate = pollGate();
@@ -114,12 +119,34 @@ function setup(network = issuer(), options: { slot?: string | null } = {}) {
     slot: options.slot === null ? undefined : (options.slot ?? 'default'),
     coordinator: () => coordinator,
     transport,
-    now: () => NOW,
+    now,
     log: (line) => logs.push(line),
     sleep: gate.sleep,
   });
-  return { store, login, network, gate, logs };
+  return { state, store, login, network, gate, logs };
 }
+
+/** A saved, usable OpenAI authorization from an earlier login. */
+function usable(generation: number): CredentialRecord {
+  return {
+    version: 1,
+    provider: 'openai',
+    authMode: 'subscription',
+    slot: 'default',
+    generation,
+    updatedAtMs: NOW,
+    lifecycle: 'usable',
+    accessToken: `synthetic-openai-access-${generation}`,
+    refreshToken: `synthetic-openai-refresh-${generation}`,
+    expiresAtMs: NOW + 864_000_000,
+    account: { accountId: 'acct_saved' },
+  };
+}
+
+const generation = async (store: CredentialStore) => {
+  const read = await store.read('openai', 'default');
+  return read.kind === 'record' ? read.record.generation : undefined;
+};
 
 function attempt(outcome: LoginOutcome) {
   if (outcome.kind !== 'attempt') throw new Error(`expected an attempt, got ${outcome.kind}`);
@@ -243,6 +270,69 @@ describe('OpenAI console login', () => {
     expect(attempt(login.status(begun.attemptId)).failure?.reason).toBe('outcome_unknown');
     const lock = await acquireProviderLock(store, 'openai', { waitMs: 200 });
     await lock.release();
+  });
+
+  test('a restart forgets a waiting device login: nothing more is polled or exchanged and saved authorization is untouched', async () => {
+    const before = setup();
+    await before.store.replace(usable(4));
+    const record = before.store.pathFor('openai', 'default');
+    const saved = await Bun.file(record).bytes();
+    const begun = attempt(await before.login.start());
+    await before.gate.idle();
+    await before.login.stop();
+    const sentBeforeRestart = [...before.network.sent];
+    // The owner approving on OpenAI's page after the restart reaches nobody: no service is polling for it.
+    before.network.approve();
+
+    const after = setup(issuer(), { state: before.state });
+    expect(after.login.status(begun.attemptId).kind).toBe('not_found');
+    expect(after.login.cancel(begun.attemptId).kind).toBe('not_found');
+    expect(before.network.sent).toEqual(sentBeforeRestart);
+    expect(before.network.sent).not.toContain('/oauth/token');
+    expect(after.network.sent).toEqual([]);
+    expect(await Bun.file(record).bytes()).toEqual(saved);
+    expect(await generation(after.store)).toBe(4);
+
+    // Only an explicit new login starts again, as a different attempt with its own code request.
+    const next = attempt(await after.login.start());
+    expect(next.attemptId).not.toBe(begun.attemptId);
+    expect(next.state).toBe('awaiting_approval');
+    await after.gate.idle();
+    await after.login.stop();
+    expect(after.network.sent).not.toContain('/oauth/token');
+    expect(after.network.sent.filter((path) => path.endsWith('/usercode'))).toHaveLength(1);
+    expect(await Bun.file(record).bytes()).toEqual(saved);
+  });
+
+  test('an unapproved device login expires at its deadline: the code is cleared and nothing more is sent', async () => {
+    let now = NOW;
+    const { store, login, network, gate } = setup(issuer(), { now: () => now });
+    await store.replace(usable(2));
+    const record = store.pathFor('openai', 'default');
+    const saved = await Bun.file(record).bytes();
+    const begun = attempt(await login.start());
+    expect(begun.userCode).toBe('QRST-24680');
+    expect(begun.authorizationUrl).toBe('https://auth.openai.com/codex/device');
+    await gate.idle();
+    const sentBeforeDeadline = [...network.sent];
+
+    now = NOW + 15 * 60_000;
+    gate.release();
+    await until(() => attempt(login.status(begun.attemptId)).state === 'expired');
+    const expired = attempt(login.status(begun.attemptId));
+    expect(expired.userCode).toBeUndefined();
+    expect(expired.authorizationUrl).toBeUndefined();
+    expect(expired.failure).toBeUndefined();
+    expect(network.sent).toEqual(sentBeforeDeadline);
+    expect(await Bun.file(record).bytes()).toEqual(saved);
+    expect(await generation(store)).toBe(2);
+
+    // An expired attempt is never reused: beginning again asks OpenAI for a new code.
+    expect(attempt(await login.start()).attemptId).not.toBe(begun.attemptId);
+    await login.stop();
+    expect(network.sent.slice(sentBeforeDeadline.length)[0]).toBe('/api/accounts/deviceauth/usercode');
+    expect(network.sent).not.toContain('/oauth/token');
+    expect(await Bun.file(record).bytes()).toEqual(saved);
   });
 
   test('without OpenAI configured there is nothing to connect', async () => {

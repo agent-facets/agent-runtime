@@ -28,8 +28,10 @@ lifetime, state inspection, application transactions and history projection — 
   request; only the request that created a run, or had an answer accepted, dispatches; repeated starts and
   identical answers are acknowledged before fresh prerequisites; uncertain commits are read back before anything is
   acknowledged or dispatched. Wire shapes live in `packages/contracts`; records stay runtime-private.
-- **Not yet built:** an OpenAI integration (the earlier one was removed after its live journey failed; design
-  Decision 11) and the remaining acceptance work (later tasks of MVP 01).
+- **Providers.** Anthropic and OpenAI subscription integrations are both built and registered. OpenAI was restored
+  on the stock `ChatOpenAI` after the earlier adapter was removed (design Decision 11; its live trial was accepted
+  with documented exceptions, see [05](05-model-authentication.md#phase-1-as-built-mvp-01)).
+- **Not yet done:** the phase's final acceptance of both providers together (later tasks of MVP 01).
 
 The historical design follows.
 

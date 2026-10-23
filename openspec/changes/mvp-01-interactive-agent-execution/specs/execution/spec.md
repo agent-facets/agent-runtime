@@ -412,6 +412,40 @@ The owner SHALL be able to connect or reauthorize Anthropic subscription access 
 - **AND** it SHALL NOT appear in task inputs, agent context, run history, progress events, results, browser persistent storage, diagnostic logs or echoed responses
 - **AND** provider access and refresh tokens SHALL remain server-only
 
+### Requirement: OpenAI access can be connected from the console
+
+The owner SHALL be able to connect or reauthorize OpenAI subscription access from the console using a normal browser. The console SHALL display a short-lived device user code and the provider's verification page, with nothing pasted back into the console. It SHALL distinguish waiting for approval, completion in progress, safely stored authorization and unsuccessful or uncertain completion. Connecting SHALL NOT start an agent run or make a model request. Optional server-side operator commands MAY remain available.
+
+#### Scenario: Approve device login in the provider's browser page
+- **WHEN** the owner starts OpenAI connection from the console and approves its displayed device code on the provider's verification page
+- **THEN** the console SHALL notice completion without requiring a pasted code or a client-side helper
+- **AND** it SHALL show connected status and update run-start readiness only after usable authorization has been durably stored
+- **AND** no agent task or model request SHALL be started by connecting
+
+#### Scenario: Return to an active device login
+- **WHEN** the owner reloads the console or repeats its connect action while a device login is still awaiting approval
+- **THEN** the console SHALL recover the same active attempt and its available approval instructions rather than initiate concurrent logins
+- **AND** inspecting the attempt SHALL NOT repeat a credential exchange or start a model request
+
+#### Scenario: A waiting device login is cancelled, expires or is lost on restart
+- **WHEN** the owner cancels an attempt awaiting approval, its approval period expires, or the runtime restarts before completion can be confirmed
+- **THEN** that closed or lost attempt SHALL NOT be reused to exchange or store credentials
+- **AND** the console SHALL explain the disposition or uncertainty and require an explicit new login if needed
+- **AND** previously stored usable authorization SHALL remain available
+
+#### Scenario: Device approval cannot be completed or confirmed
+- **WHEN** the provider refuses completion, an exchange outcome is uncertain, or durable credential storage cannot be confirmed
+- **THEN** the console SHALL report the unsuccessful or uncertain attempt without claiming it connected the account
+- **AND** it SHALL NOT automatically repeat the exchange, start a run or erase previously stored authorization
+- **AND** failure explanations SHALL omit login secrets and raw provider error content
+
+#### Scenario: Device login material stays separate from agent work
+- **WHEN** a console-initiated device login is awaiting owner approval
+- **THEN** its user code and provider verification link MAY appear only in the dedicated authentication responses and connection panel
+- **AND** its user code SHALL be removed from that panel when the attempt ends or the panel is dismissed
+- **AND** user codes SHALL NOT enter task inputs, agent context, tool results, run history, progress events, results, browser persistent storage or diagnostic logs
+- **AND** provider tokens, private login verifiers and exchange secrets SHALL remain server-only
+
 ### Requirement: Usable subscription authorization survives ordinary restart
 
 Existing usable authorization, including successfully renewed credentials, SHALL be reused after an ordinary runtime restart with persistent storage preserved. Restarting alone SHALL NOT require reauthorization.
@@ -428,7 +462,7 @@ Existing usable authorization, including successfully renewed credentials, SHALL
 - **WHEN** a build removes a provider integration while private authorization for that provider is saved
 - **THEN** the removal SHALL leave the saved authorization unchanged in private storage
 - **AND** the removed integration SHALL NOT log in, renew authorization or send model requests
-- **AND** retained credentials SHALL NOT be treated as authorization for another integration or as evidence that the removed integration is available
+- **AND** retained credentials SHALL NOT be converted or assumed valid for a different provider, account or authorization scheme, or treated as evidence that an absent integration is available
 
 ### Requirement: Authorization failures explain how to restore access
 
@@ -496,7 +530,7 @@ The agent's permitted tools SHALL be limited to workspace reading, workspace sea
 
 ### Requirement: Provider credentials stay private
 
-The system SHALL keep its provider access and refresh credentials out of agent context and agent-accessible tool results, run histories, progress events, final results, browser-console data, and diagnostic logs. Provider failures and authentication guidance SHALL expose safe status information without credential values. A short-lived owner-supplied authorization code MAY pass transiently through the dedicated login form and authentication operation, subject to the separate login-material requirement above; it SHALL NOT enter any agent-work or diagnostic surface.
+The system SHALL keep its provider access and refresh credentials and private login secrets out of agent context and agent-accessible tool results, run histories, progress events, final results, browser-console data, and diagnostic logs. Provider failures and authentication guidance SHALL expose safe status information without credential values. A short-lived owner-supplied authorization code MAY pass transiently through the dedicated login form and authentication operation, and a short-lived device user code MAY be displayed through the dedicated connection panel and authentication responses. These limited exceptions SHALL obey the corresponding login-material requirements above; neither kind of code SHALL enter an agent-work or diagnostic surface or browser persistent storage. Device user codes SHALL NOT be confused with server-only tokens, private verifiers or exchange secrets.
 
 #### Scenario: A provider error contains sensitive request data
 - **WHEN** a provider or authentication operation fails with an error containing credential values or authorization headers
