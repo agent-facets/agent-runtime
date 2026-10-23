@@ -161,6 +161,52 @@
         }
       ]
     },
+    "chrome-devtools": {
+      "source": {
+        "kind": "registry",
+        "registry": "https://api.agentfacets.io"
+      },
+      "version": "1.7.3",
+      "integrity": "sha256:6808d18b7cf52d0b011a37fad393a76e4470073d191c4dcc562cc9f9f789660a",
+      "assets": [
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "using-chrome-devtools",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/using-chrome-devtools/SKILL.md",
+              "integrity": "sha256:7b1219a37d2cc904204d3febe99847064f0344d8683dab8cbb018f7c44428913"
+            },
+            {
+              "path": "skills/using-chrome-devtools/references/auto-connect-setup.md",
+              "integrity": "sha256:e0fe2724b9c7f60d6a88bf9dee9cf4ddd33bb16b282e5e568fa235a86eca6d9d"
+            },
+            {
+              "path": "skills/using-chrome-devtools/references/live-session-safety.md",
+              "integrity": "sha256:8a158551673498d28935fcebfc7a70d6169e6c2f8a3ee2e4278981aeb0d502a0"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "inspect-site",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/inspect-site.md",
+              "integrity": "sha256:1f1425449cbf936f3ac74a3c72e19e42627d82bbf4b912a48f1fdd40cacdc781"
+            }
+          ]
+        }
+      ]
+    },
     "facet-meta": {
       "source": {
         "kind": "registry",
