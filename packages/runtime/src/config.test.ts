@@ -28,6 +28,26 @@ describe('runtime configuration', () => {
     }
   });
 
+  test('accepts only an HTTPS origin as the public address of the console', () => {
+    expect(loadConfig({ RUNTIME_PUBLIC_ORIGIN: 'https://agent-runtime.example.ts.net' }).publicOrigin).toBe(
+      'https://agent-runtime.example.ts.net',
+    );
+    expect(loadConfig({ RUNTIME_PUBLIC_ORIGIN: 'https://agent-runtime.example.ts.net/' }).publicOrigin).toBe(
+      'https://agent-runtime.example.ts.net',
+    );
+    expect(loadConfig({ RUNTIME_PUBLIC_ORIGIN: '' }).publicOrigin).toBeUndefined();
+    for (const value of [
+      'http://agent-runtime.example.ts.net',
+      'https://agent-runtime.example.ts.net/console',
+      'https://user:pw@agent-runtime.example.ts.net',
+      'https://agent-runtime.example.ts.net?x=1',
+      'agent-runtime.example.ts.net',
+      '*',
+    ]) {
+      expect(() => loadConfig({ RUNTIME_PUBLIC_ORIGIN: value })).toThrow(ConfigError);
+    }
+  });
+
   test('requires absolute state and configuration paths', () => {
     expect(() => loadConfig({ RUNTIME_STATE_DIR: 'state' })).toThrow(ConfigError);
     expect(() => loadConfig({ RUNTIME_CONFIG_FILE: 'config.json' })).toThrow(ConfigError);

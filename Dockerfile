@@ -5,12 +5,14 @@ WORKDIR /repo
 # Workspace manifests first, so dependency installation is cached independently of source changes.
 COPY package.json bun.lock bunfig.toml ./
 COPY packages/anthropic-subscription/package.json packages/anthropic-subscription/package.json
+COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/runtime/package.json packages/runtime/package.json
 COPY packages/ui/package.json packages/ui/package.json
 RUN bun install --frozen-lockfile --ignore-scripts
 
 COPY tsconfig.base.json ./
 COPY packages/anthropic-subscription packages/anthropic-subscription
+COPY packages/contracts packages/contracts
 COPY packages/runtime packages/runtime
 COPY packages/ui packages/ui
 RUN bun run --cwd packages/runtime build

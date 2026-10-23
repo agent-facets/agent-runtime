@@ -40,10 +40,13 @@ services:
     environment:
       DATABASE_URL: postgres://agent_runtime:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/agent_runtime
       RUNTIME_STATE_DIR: /var/lib/agent-runtime
-      RUNTIME_WORKSPACE_ROOT: /workspace
+      RUNTIME_CONFIG_FILE: /etc/agent-runtime/config.json
+      # The address Serve publishes; browsers must use it (Host and Origin are checked against it).
+      RUNTIME_PUBLIC_ORIGIN: https://${AGENT_RUNTIME_PUBLIC_HOST:?set AGENT_RUNTIME_PUBLIC_HOST}
     volumes:
       - runtime-state:/var/lib/agent-runtime
       - ${AGENT_RUNTIME_WORKSPACE:?set AGENT_RUNTIME_WORKSPACE}:/workspace:ro
+      - ${AGENT_RUNTIME_CONFIG:?set AGENT_RUNTIME_CONFIG}:/etc/agent-runtime/config.json:ro
     restart: unless-stopped
 
   postgres:

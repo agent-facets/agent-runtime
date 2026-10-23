@@ -2,7 +2,7 @@ import type { TransactionSQL } from 'bun';
 import type { AppDatabase } from '../persistence/app-database.ts';
 import { sqlStateOf } from '../persistence/errors.ts';
 import { jsonText, parseJsonText } from '../persistence/json.ts';
-import { type OwnerFence, withOwnerFence } from '../persistence/ownership.ts';
+import { LOCK_NAMESPACE, type OwnerFence, REQUEST_CEILING_LOCK, withOwnerFence } from '../persistence/ownership.ts';
 import { canonicalJson, digestOf, parseSequence } from './canonical.ts';
 import {
   type Answer,
@@ -37,6 +37,7 @@ export type RunStoreErrorCode =
   | 'tool_call_conflict'
   | 'not_dispatchable'
   | 'budget_exhausted'
+  | 'ceiling_reached'
   | 'invariant_violation'
   | 'acceptance_unknown';
 
@@ -79,6 +80,25 @@ export interface RunSnapshot {
   /** Every committed event up to and including this sequence belongs to this snapshot. */
   throughSeq: string;
 }
+
+export interface RunSummary {
+  runId: string;
+  goal: string;
+  binding: ProviderBinding;
+  status: RunState['kind'];
+  createdAt: string;
+  lastActivityAt: string;
+}
+
+const RUN_STATE_KINDS: ReadonlySet<RunState['kind']> = new Set([
+  'working',
+  'waiting',
+  'cancelling',
+  'succeeded',
+  'failed',
+  'cancelled',
+  'interrupted',
+]);
 
 export interface CreateRunInput {
   requestId: string;
@@ -176,10 +196,19 @@ export function isAmbiguousCommitError(error: unknown): boolean {
   return state === undefined || state.startsWith('08') || state === '57P01' || state === '57P02' || state === '57P03';
 }
 
+export interface RunStoreOptions {
+  /**
+   * The most model requests this deployment may ever admit, across all runs (an operator safety limit, for example
+   * for a bounded acceptance trial). Unset, only each run's own budget applies.
+   */
+  modelRequestCeiling?: number;
+}
+
 export class RunStore {
   constructor(
     private readonly db: AppDatabase,
     private readonly owner: OwnerFence,
+    private readonly options: RunStoreOptions = {},
   ) {}
 
   /** Creates a run for a request ID, or returns the run that request already created. */
@@ -577,6 +606,17 @@ export class RunStore {
         select budget_max, consumed, unconfirmed, binding::text as binding from runtime.runs where run_id = ${runId}`;
       if (Number(budget.consumed) + Number(budget.unconfirmed) >= Number(budget.budget_max)) {
         throw new RunStoreError('budget_exhausted', 'another model request would exceed the step budget');
+      }
+      const ceiling = this.options.modelRequestCeiling;
+      if (ceiling !== undefined) {
+        // Every run's admissions take the same transaction lock, so two runs cannot both pass the last slot. An
+        // attempt known never to have been sent does not count; an unconfirmed one does.
+        await tx`select pg_advisory_xact_lock(${LOCK_NAMESPACE}, ${REQUEST_CEILING_LOCK})`;
+        const [admitted] = await tx`
+          select count(*)::int as count from runtime.model_attempts where state_kind <> 'abandoned'`;
+        if (Number(admitted.count) >= ceiling) {
+          throw new RunStoreError('ceiling_reached', 'the deployment-wide model-request ceiling has been reached');
+        }
       }
       const binding = providerBindingSchema.parse(parseJsonText(budget.binding));
       const [next] = await tx`
@@ -1036,6 +1076,49 @@ export class RunStore {
         throughSeq: run.last_seq,
       };
     }, 'repeatable read');
+  }
+
+  /**
+   * Run summaries, newest first, continuing strictly after `before` (the creation time and ID of the last run of the
+   * previous page). Ties in creation time are ordered by run ID, so pages neither repeat nor skip runs.
+   */
+  async listRuns(options: { limit: number; before?: { createdAt: string; runId: string } }): Promise<RunSummary[]> {
+    if (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 1_000) {
+      throw new RangeError('limit must be between 1 and 1000');
+    }
+    const at = options.before?.createdAt ?? null;
+    const id = options.before?.runId ?? null;
+    const rows = await this.db.readOnly(
+      (tx) => tx`
+      select run_id::text as run_id, goal, binding::text as binding, state ->> 'kind' as status,
+        to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as created_at,
+        to_char(last_activity_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as last_activity_at
+      from runtime.runs
+      where ${at}::timestamptz is null or (created_at, run_id) < (${at}::timestamptz, ${id}::uuid)
+      order by created_at desc, run_id desc limit ${options.limit}`,
+    );
+    return rows.map(
+      (row: {
+        run_id: string;
+        goal: string;
+        binding: string;
+        status: string;
+        created_at: string;
+        last_activity_at: string;
+      }) => {
+        if (!RUN_STATE_KINDS.has(row.status as RunState['kind'])) {
+          throw new RunStoreError('invariant_violation', 'a stored run state is not recognized');
+        }
+        return {
+          runId: row.run_id,
+          goal: row.goal,
+          binding: providerBindingSchema.parse(parseJsonText(row.binding)),
+          status: row.status as RunState['kind'],
+          createdAt: row.created_at,
+          lastActivityAt: row.last_activity_at,
+        };
+      },
+    );
   }
 
   /** Committed events strictly after a cursor, optionally up to a fixed bound, in sequence order. */

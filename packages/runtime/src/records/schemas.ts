@@ -1,8 +1,37 @@
 // Strict decoders for runtime-private run records. They mirror the database checks in
 // persistence/migrations/002-run-records.ts: exact keys, discriminators and primitive types. Unknown fields are
 // refused rather than stripped. These are server records, not browser wire contracts.
+import {
+  answerSchema,
+  failureSchema,
+  providerSchema,
+  questionInputSchema,
+  questionPromptSchema,
+  withinQuestionText,
+} from '@agent-runtime/contracts';
 import { z } from 'zod';
-import { codePoints, isStorableText, utf8Bytes } from '../domain/text.ts';
+
+// Shapes shared with the browser API come from the contracts package; everything else here is runtime-private.
+export {
+  type Answer,
+  answerSchema,
+  type Failure,
+  type FailureCategory,
+  failureCategorySchema,
+  failureSchema,
+  operationRefSchema,
+  type Provider,
+  providerSchema,
+  QUESTION_PROMPT_MAX_BYTES,
+  QUESTION_TEXT_MAX_BYTES,
+  type QuestionDefinition,
+  type QuestionInput,
+  questionDefinitionSchema,
+  questionInputSchema,
+  questionPromptSchema,
+  questionTextBytes,
+  TEXT_ANSWER_MAX_BYTES,
+} from '@agent-runtime/contracts';
 
 const uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 export const digest = z.string().regex(/^[0-9a-f]{64}$/);
@@ -14,22 +43,6 @@ const positiveDecimal = z.string().regex(/^[1-9][0-9]{0,17}$/);
 const code = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/);
 const nonEmpty = (max: number) => z.string().min(1).max(max);
 const int = (min: number, max: number) => z.number().int().min(min).max(max);
-const storable = z.string().refine(isStorableText, 'text must be well-formed Unicode without NUL');
-/** Nonempty text bounded in UTF-8 bytes. */
-const bytesUpTo = (max: number) =>
-  storable.refine((text) => text.length > 0 && utf8Bytes(text) <= max, `must be 1 to ${max} UTF-8 bytes`);
-/** Nonempty text bounded in code points. */
-const codePointsUpTo = (max: number) =>
-  storable.refine((text) => text.length > 0 && codePoints(text) <= max, `must be 1 to ${max} characters`);
-const scalar = z.union([storable, z.number().refine(Number.isFinite), z.boolean(), z.null()]);
-
-export const QUESTION_PROMPT_MAX_BYTES = 16_384;
-/** UTF-8 bytes of a question's text: prompt, option labels and string option values together. */
-export const QUESTION_TEXT_MAX_BYTES = 65_536;
-export const TEXT_ANSWER_MAX_BYTES = 8192;
-
-export const providerSchema = z.enum(['anthropic', 'openai']);
-export type Provider = z.infer<typeof providerSchema>;
 
 export const workspaceSchema = z.strictObject({
   id: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/),
@@ -47,33 +60,6 @@ export const providerBindingSchema = z.strictObject({
   credentialSlot: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/),
 });
 export type ProviderBinding = z.infer<typeof providerBindingSchema>;
-
-export const failureCategorySchema = z.enum([
-  'authorization',
-  'rate_or_quota_limit',
-  'provider_failure',
-  'step_limit',
-  'continuation_unavailable',
-  'tool_failure',
-  'runtime_failure',
-]);
-export type FailureCategory = z.infer<typeof failureCategorySchema>;
-
-export const operationRefSchema = z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('runtime') }),
-  z.strictObject({ kind: z.literal('model_attempt'), attemptId: uuid }),
-  z.strictObject({ kind: z.literal('tool_operation'), operationId: digest }),
-]);
-
-export const failureSchema = z.strictObject({
-  category: failureCategorySchema,
-  reason: code,
-  message: nonEmpty(2048),
-  operation: operationRefSchema,
-  remediation: nonEmpty(1024).optional(),
-  retryAfterSeconds: int(0, 604_800).optional(),
-});
-export type Failure = z.infer<typeof failureSchema>;
 
 export const runStateSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('working'), invocationId: uuid, ownerEpoch: positiveDecimal }),
@@ -93,59 +79,6 @@ export type RunState = z.infer<typeof runStateSchema>;
 export type RunStateKind = RunState['kind'];
 export const TERMINAL_STATES: ReadonlySet<RunStateKind> = new Set(['succeeded', 'failed', 'cancelled', 'interrupted']);
 
-const choiceOption = z.strictObject({ label: codePointsUpTo(256), value: scalar });
-const distinctValues = (options: { value: unknown }[]) =>
-  new Set(options.map((option) => JSON.stringify(option.value))).size === options.length;
-
-export const questionInputSchema = z.union([
-  z
-    .strictObject({ kind: z.literal('text'), minLength: int(0, 8192), maxLength: int(1, 8192) })
-    .refine((input) => input.minLength <= input.maxLength, 'minLength exceeds maxLength'),
-  z
-    .strictObject({
-      kind: z.literal('choice'),
-      multiple: z.literal(false),
-      options: z.array(choiceOption).min(1).max(50),
-    })
-    .refine((input) => distinctValues(input.options), 'option values must be distinct'),
-  z
-    .strictObject({
-      kind: z.literal('choice'),
-      multiple: z.literal(true),
-      options: z.array(choiceOption).min(1).max(50),
-      minSelections: int(0, 50),
-      maxSelections: int(1, 50),
-    })
-    .refine((input) => distinctValues(input.options), 'option values must be distinct')
-    .refine(
-      (input) => input.minSelections <= input.maxSelections && input.maxSelections <= input.options.length,
-      'invalid selection bounds',
-    ),
-]);
-export type QuestionInput = z.infer<typeof questionInputSchema>;
-
-export const questionPromptSchema = bytesUpTo(QUESTION_PROMPT_MAX_BYTES);
-
-/** Mirrors runtime.question_text_bytes (migration 3). */
-export function questionTextBytes(prompt: string, input: QuestionInput): number {
-  let bytes = utf8Bytes(prompt);
-  if (input.kind === 'choice') {
-    for (const option of input.options) {
-      bytes += utf8Bytes(option.label) + (typeof option.value === 'string' ? utf8Bytes(option.value) : 0);
-    }
-  }
-  return bytes;
-}
-
-const withinQuestionText = ({ prompt, input }: { prompt: string; input: QuestionInput }) =>
-  questionTextBytes(prompt, input) <= QUESTION_TEXT_MAX_BYTES;
-
-/** A complete question definition: its prompt and input variant, bounded together. */
-export const questionDefinitionSchema = z
-  .strictObject({ prompt: questionPromptSchema, input: questionInputSchema })
-  .refine(withinQuestionText, 'question text is too large');
-export type QuestionDefinition = z.infer<typeof questionDefinitionSchema>;
-
 export const questionBindingSchema = z.strictObject({
   threadId: uuid,
   checkpointNs: z.string().max(512),
@@ -159,9 +92,6 @@ export const questionBindingSchema = z.strictObject({
   definitionDigest: digest,
 });
 export type QuestionBinding = z.infer<typeof questionBindingSchema>;
-
-export const answerSchema = z.union([scalar, z.array(scalar)]);
-export type Answer = z.infer<typeof answerSchema>;
 
 /** Requires the answer property to be present; false, null, zero and empty text are valid answers. */
 const answeredDisposition = z

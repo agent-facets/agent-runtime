@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseAnswerSubmission, parseStartRun } from './commands.ts';
+import { parseAnswerSubmission, parseCancelRun, parseStartRun } from './commands.ts';
 
 const requestId = '00000000-0000-4000-8000-000000000001';
 
@@ -52,6 +52,15 @@ describe('start-run command', () => {
     expect(parseStartRun({ requestId, goal: 'a\u0000', provider: 'anthropic' })).toMatchObject({
       code: 'goal_not_storable',
     });
+  });
+});
+
+describe('cancel-run command', () => {
+  test('is exactly a request ID', () => {
+    expect(parseCancelRun({ requestId })).toEqual({ ok: true, value: { requestId } });
+    for (const body of [{}, { requestId: 'x' }, { requestId, runId: requestId }, null]) {
+      expect(parseCancelRun(body).ok).toBe(false);
+    }
   });
 });
 

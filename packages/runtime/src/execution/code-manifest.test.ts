@@ -163,6 +163,14 @@ describe('execution code manifest', () => {
       expect(paths(anthropic)).toContain(`../anthropic-subscription/src/${file}`);
     }
     expect(paths(anthropic).some((path) => path.includes('.test.') || path.includes('test-support'))).toBe(false);
+    // Shared contracts used by execution (record and answer validation) are part of it; the console is not.
+    for (const manifest of [anthropic, openai]) {
+      expect(paths(manifest)).toEqual(
+        expect.arrayContaining(['../contracts/src/questions.ts', '../contracts/src/text.ts']),
+      );
+      expect(paths(manifest).some((path) => path.startsWith('../ui/'))).toBe(false);
+      expect(paths(manifest).some((path) => path.startsWith('src/service/') || path === 'src/console.ts')).toBe(false);
+    }
     expect(names(anthropic)).toEqual(expect.arrayContaining(['@langchain/anthropic', '@anthropic-ai/sdk']));
     expect(names(anthropic)).not.toContain('@langchain/openai');
 

@@ -63,10 +63,19 @@ What Phase 1 enforces:
   subscription package performs no I/O of its own and reads no environment. Offline suites scan checkpoints for the
   synthetic tokens of every generation used, including across a renewal.
 
-Not yet covered: the complete protected-surface scan over the API, console and logs belongs to the console block,
-and registration of the provider adapters in the running service is still pending. The screening corrections were
-made on 2026-09-30, after the block-6 acceptance; the lease-based retention was added in the provider block. Earlier
-acceptance evidence did not cover either.
+- **Browser surface** (`packages/runtime/src/service/`, `request-policy.ts`, `packages/ui`, console block). Goals and
+  answers are screened before storage against live generations and the stored usable credentials of the configured
+  providers; unscreenable input is refused. The API sends explicit projections that omit credential slots, saved-graph
+  bindings, owner epochs and invocation identities, and validates them against the shared contracts before sending.
+  Only the console's bundled files are served — never workspace, state or application files. Requests must name the
+  configured private address or loopback; state changes must also come from that origin. Responses carry a
+  restrictive content security policy (`script-src 'self'`, no framing) and no cross-origin grants, and the console
+  renders run content as text only.
+
+Not yet covered: the complete protected-surface scan across API, stream, console and logs in one acceptance run is
+part of the console block's offline acceptance (task 12.10). The screening corrections were made on 2026-09-30,
+after the block-6 acceptance; the lease-based retention was added in the provider block. Earlier acceptance
+evidence did not cover either.
 
 ## Threat model
 

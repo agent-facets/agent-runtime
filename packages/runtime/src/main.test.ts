@@ -35,7 +35,8 @@ describe('startup guards', () => {
   test('no framework, provider or database module loads before the environment is checked', async () => {
     const closure = [...(await staticClosure(join(srcDir, 'main.ts')))];
     const external = closure.filter((specifier) => !specifier.startsWith('/'));
-    expect(external.sort()).toEqual(['zod']);
+    // The contracts package is pure validation (zod only); the workspace-boundary tests enforce that.
+    expect(external.sort()).toEqual(['@agent-runtime/contracts', 'zod']);
   });
 
   test('an enabled tracing setting stops the process before it listens', () => {

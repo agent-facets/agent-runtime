@@ -1,4 +1,5 @@
 import { ConfigError, type OperatorConfig, parseOperatorConfig } from './config/operator.ts';
+import { parsePublicOrigin } from './request-policy.ts';
 import { DEFAULT_PORT } from './server.ts';
 
 export const DEFAULT_STATE_DIR = '/var/lib/agent-runtime';
@@ -12,6 +13,8 @@ export interface RuntimeConfig {
   configFile: string | undefined;
   /** Parsed operator configuration; undefined leaves agent execution unconfigured. */
   operator?: OperatorConfig;
+  /** The console's browser-visible origin behind Tailscale Serve; undefined accepts loopback requests only. */
+  publicOrigin?: string;
 }
 
 export function parsePort(value: string | undefined): number {
@@ -30,11 +33,21 @@ function absoluteSetting(name: string, value: string | undefined): string | unde
 
 export function loadConfig(env: Record<string, string | undefined>): RuntimeConfig {
   const databaseUrl = env.DATABASE_URL === '' ? undefined : env.DATABASE_URL;
+  let publicOrigin: string | undefined;
+  if (env.RUNTIME_PUBLIC_ORIGIN !== undefined && env.RUNTIME_PUBLIC_ORIGIN !== '') {
+    publicOrigin = parsePublicOrigin(env.RUNTIME_PUBLIC_ORIGIN);
+    if (publicOrigin === undefined) {
+      throw new ConfigError(
+        'RUNTIME_PUBLIC_ORIGIN must be an HTTPS origin such as https://agent-runtime.example.ts.net',
+      );
+    }
+  }
   return {
     port: parsePort(env.RUNTIME_PORT),
     databaseUrl,
     stateDir: absoluteSetting('RUNTIME_STATE_DIR', env.RUNTIME_STATE_DIR) ?? DEFAULT_STATE_DIR,
     configFile: absoluteSetting('RUNTIME_CONFIG_FILE', env.RUNTIME_CONFIG_FILE),
+    ...(publicOrigin === undefined ? {} : { publicOrigin }),
   };
 }
 

@@ -12,6 +12,14 @@ import type { RunningInvocation } from './invocation.ts';
 
 export const CANCELLED = Object.freeze(new Error('The run was cancelled.'));
 
+/** Storing the cancellation failed, and readback confirmed it was not recorded: nothing was accepted. */
+export class CancellationNotRecorded extends Error {
+  override readonly name = 'CancellationNotRecorded';
+  constructor() {
+    super('the cancellation was not recorded');
+  }
+}
+
 /** The invocations this process is running, with their tracked local work. */
 export class ActiveInvocations {
   readonly #runs = new Map<string, { invocation: RunningInvocation; inflight: InFlight }>();
@@ -31,7 +39,10 @@ export class ActiveInvocations {
 }
 
 export interface CancellationDeps {
-  store: Pick<RunStore, 'acceptCancellation' | 'finishCancellation'>;
+  store: Pick<
+    RunStore,
+    'acceptCancellation' | 'finishCancellation' | 'findCancellation' | 'snapshot' | 'withCommitCertainty'
+  >;
   gates: KeyedSerializer;
   active: ActiveInvocations;
 }
@@ -39,13 +50,27 @@ export interface CancellationDeps {
 /**
  * Accepts cancellation and starts stopping the run. `result` is available once acceptance is durable; `settled`
  * resolves with the run's recorded state once local work has stopped and the outcome is recorded.
+ *
+ * If the acceptance commit's outcome is unknown, it is read back under the same ownership: a recorded cancellation
+ * of this request is reported as accepted, an unrecorded one raises CancellationNotRecorded, and if the readback is
+ * impossible the RunStoreError `acceptance_unknown` propagates. Neither of the last two acknowledges anything.
  */
 export async function cancelRun(
   deps: CancellationDeps,
   runId: string,
   requestId: string,
 ): Promise<{ result: CancellationResult; settled: Promise<RunState> }> {
-  const result = await deps.gates.run(runId, () => deps.store.acceptCancellation(runId, requestId));
+  const outcome = await deps.store.withCommitCertainty(
+    () => deps.gates.run(runId, () => deps.store.acceptCancellation(runId, requestId)),
+    async (): Promise<CancellationResult | undefined> => {
+      const recorded = await deps.store.findCancellation(runId);
+      if (recorded?.requestId !== requestId) return undefined;
+      const { state } = await deps.store.snapshot(runId);
+      return { kind: 'accepted', cancellationId: recorded.cancellationId, acceptedAt: recorded.acceptedAt, state };
+    },
+  );
+  if (!outcome.committed) throw new CancellationNotRecorded();
+  const result = outcome.value;
   const accepted = result.kind === 'accepted' || result.kind === 'repeated';
   if (!accepted || result.state.kind !== 'cancelling') return { result, settled: Promise.resolve(result.state) };
   const running = deps.active.get(runId);

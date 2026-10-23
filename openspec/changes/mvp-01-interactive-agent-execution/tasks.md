@@ -576,22 +576,22 @@ Review evidence that console work is unblocked while both live-provider journeys
 ## 11. Browser console and Anthropic usable slice — Research
 
 ### Step 77 - Pause: Switch model for exploration
-- [ ] 11.1 Pause: Switch model for exploration
+- [x] 11.1 Pause: Switch model for exploration
 
 ### Step 78 - Explore: Map browser and API behavior; verify route and fixture coverage
-- [ ] 11.2 Explore: Map browser and API behavior; verify route and fixture coverage
+- [x] 11.2 Explore: Map browser and API behavior; verify route and fixture coverage
 
 Inspect controller contracts and minimal React/HTML-import integration. Map validation ordering, state variants, exact answers, budget display and durable replay to routes/UI/fixtures without Agent Server or token-stream authority.
 
 Plan extraction of pure wire definitions into `packages/contracts`, their server/client consumers and package-local tests. Inspect UI public HTML-entry resolution and runtime-owned application bundling; identify forbidden server-only dependencies and the actual UI/contracts inputs needed to invalidate build/check caches.
 
 ### Step 79 - Explore: Assess private deployment and Anthropic acceptance; verify bounded trial scope
-- [ ] 11.3 Explore: Assess private deployment and Anthropic acceptance; verify bounded trial scope
+- [x] 11.3 Explore: Assess private deployment and Anthropic acceptance; verify bounded trial scope
 
 Inspect Compose Serve and the trial procedure. Report the private-origin/cross-device verification plan and proposed provider/model, auth operations and physical-request cap using only owner-approved fixture content.
 
 ### Step 80 - Propose: Present the browser slice; obtain implementation and bounded trial-plan approval
-- [ ] 11.4 Propose: Present the browser slice; obtain implementation and bounded trial-plan approval
+- [x] 11.4 Propose: Present the browser slice; obtain implementation and bounded trial-plan approval
 
 Present API/console/deployment changes and the bounded Anthropic trial plan. Obtain implementation and trial-plan approval, not advance authority for live operations. Fresh provider authorization SHALL be confirmed in the Review immediately before live verification; approval SHALL NOT be inferred from the task plan itself.
 
@@ -600,60 +600,60 @@ Include the contracts extraction, runtime route ownership, UI package implementa
 ## 12. Browser console and Anthropic usable slice — Implementation
 
 ### Step 81 - Pause: Switch model for implementation
-- [ ] 12.1 Pause: Switch model for implementation
+- [x] 12.1 Pause: Switch model for implementation
 
 ### Step 82 - Implement: Add versioned REST commands; verify validation and idempotency tests
-- [ ] 12.2 Implement: Add versioned REST commands; verify validation and idempotency tests
+- [x] 12.2 Implement: Add versioned REST commands; verify validation and idempotency tests
 
 Add `/api/v1` options/run/detail/history/answer/cancel routes with strict inputs, safe envelopes and disposition-first ordering. Test every documented response code, cross-run inputs, repeated requests, exhausted-budget answers and ambiguous commits without double invocation.
 
 Implement routes in `packages/runtime` and introduce `packages/contracts` by extracting the pure shared wire schemas/types, rather than copying internal record types or maintaining duplicate schemas. Retain runtime-only authorization, saved-state and transaction checks. Add contract/schema-parity fixtures and import guards rejecting dependencies from contracts to runtime/UI, Bun/Node APIs, database drivers or provider SDKs. Register package tests/typechecks and source-dependency invalidation in Turbo.
 
 ### Step 83 - Implement: Add durable SSE replay; verify race, outage and backpressure tests
-- [ ] 12.3 Implement: Add durable SSE replay; verify race, outage and backpressure tests
+- [x] 12.3 Implement: Add durable SSE replay; verify race, outage and backpressure tests
 
 Implement snapshot bounds, initial/reconnect cursor validation, decimal sequences, 15-second heartbeats, bounded buffers and unsequenced outages. Test snapshot/subscription races, lost wakeups, repeated reconnects, slow readers and database failures without lost recorded events or browser-induced run aborts.
 
 Use a fake clock to assert the 15-second heartbeat and explicitly test `409 cursor_ahead`, missed notifications and storage outage without durable cursor advancement.
 
 ### Step 84 - Implement: Add the browser client and event store; verify replay and retry fixtures
-- [ ] 12.4 Implement: Add the browser client and event store; verify replay and retry fixtures
+- [x] 12.4 Implement: Add the browser client and event store; verify replay and retry fixtures
 
 Implement typed endpoint access, snapshot/history/SSE merging, `(runId, seq)` deduplication, safe request-ID reuse and a connection-availability state separate from run status. Test reconnect races, retransmission, cursor handling and `acceptance_unknown` retries without duplicate starts.
 
 Place the browser client, event store and unit tests in `packages/ui`, consuming the public contracts package through `workspace:*`. Do not import runtime internals or server-only types to obtain API shapes. Include its implemented unit/typecheck tasks in the root check graph.
 
 ### Step 85 - Implement: Add run views; verify state, outcome and safe-rendering fixtures
-- [ ] 12.5 Implement: Add run views; verify state, outcome and safe-rendering fixtures
+- [x] 12.5 Implement: Add run views; verify state, outcome and safe-rendering fixtures
 
 Implement run listing/start/detail/history and budget/uncertainty/failure views. Cover all seven states, required timestamps, each failure category and unavailable overlays. Render text or sanitized Markdown without executable HTML or automatic external loading.
 
 Implement the React views and browser tests in `packages/ui`, with package-owned React/browser dependencies and an explicit public HTML entry. Connect that entry to `Bun.serve` in the runtime and extend the runtime-owned application build under `packages/runtime/dist/` to include the browser assets. Test cross-workspace resolution, absence of server-only browser dependencies, complete output restoration and operation without a separate UI server or Vite.
 
 ### Step 86 - Implement: Add question and cancellation controls; verify typed interactions end to end
-- [ ] 12.6 Implement: Add question and cancellation controls; verify typed interactions end to end
+- [x] 12.6 Implement: Add question and cancellation controls; verify typed interactions end to end
 
 Implement text/single-choice/multi-choice questions, negative/false/null answers, duplicate/conflict/closed responses and cancellation controls. A deterministic browser journey SHALL start a run, observe activity, answer false and obtain its result; repeated submission and socket closure SHALL not cause another invocation or fabricated completion.
 
 ### Step 87 - Implement: Complete private Serve exposure; verify Host, Origin and asset restrictions
-- [ ] 12.7 Implement: Complete private Serve exposure; verify Host, Origin and asset restrictions
+- [x] 12.7 Implement: Complete private Serve exposure; verify Host, Origin and asset restrictions
 
 Finish Host/Origin/JSON controls and Serve wiring. Tests SHALL show no public ports/Funnel, no exposed database/state directories, no permissive browser-origin mutation, and application assets served instead of workspace files.
 
 ### Step 88 - Implement: Add bounded Anthropic acceptance fixtures; verify the deterministic browser journey
-- [ ] 12.8 Implement: Add bounded Anthropic acceptance fixtures; verify the deterministic browser journey
+- [x] 12.8 Implement: Add bounded Anthropic acceptance fixtures; verify the deterministic browser journey
 
 Add the operator checklist and shared mock/live fixture without performing live requests. Cover close/reopen, question/restart/answer, result and cancellation; enforce the approved physical-request cap in live mode.
 
 ### Step 89 - Implement: Document the Anthropic browser slice; verify setup and current-status accuracy
-- [ ] 12.9 Implement: Document the Anthropic browser slice; verify setup and current-status accuracy
+- [x] 12.9 Implement: Document the Anthropic browser slice; verify setup and current-status accuracy
 
 Update README operation/troubleshooting, `architecture/07-network-and-protocols.md`, relevant control-plane/security sections, architecture status and dated acceptance-evidence pointers. Distinguish the Anthropic usable slice from unfinished OpenAI operational support; live success is not claimed before verification.
 
 Replace the foundation's UI-shell status with the actual runtime/UI/contracts ownership and test/build commands. Document the shared HTML-import application image and the distinction between deployment-cache invalidation and continuation fingerprints.
 
 ### Step 90 - Verify: Run offline console acceptance; require passing browser, replay and secrecy suites
-- [ ] 12.10 Verify: Run offline console acceptance; require passing browser, replay and secrecy suites
+- [x] 12.10 Verify: Run offline console acceptance; require passing browser, replay and secrecy suites
 
 Run block checks and complete offline API/browser/Serve suites with G1–G3 and offline G4/G5 regressions. Scan every protected surface for synthetic credentials. No live provider request is required for this gate.
 
