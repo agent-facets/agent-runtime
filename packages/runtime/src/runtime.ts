@@ -80,7 +80,7 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
   const providers =
     operator === undefined
       ? undefined
-      : createProviderAssembly({ config: operator, stateDir: options.config.stateDir });
+      : createProviderAssembly({ config: operator, stateDir: options.config.stateDir, log });
   const providersReported = (async () => {
     if (operator === undefined || providers === undefined) return;
     for (const provider of ['anthropic', 'openai'] as const) {

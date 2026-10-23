@@ -20,6 +20,18 @@ describe('safe diagnostics', () => {
     );
   });
 
+  test('a stream summary carries event names only', () => {
+    const streamEvents = 'response.created,response.output_text.delta*37,response.completed,codex.response.metadata';
+    expect(JSON.parse(formatDiagnostic({ event: 'model_stream_incomplete', streamEvents }))).toEqual({
+      event: 'model_stream_incomplete',
+      streamEvents,
+    });
+    expect(formatDiagnostic({ event: 'model_stream_incomplete', streamEvents: '' })).toContain('"streamEvents":""');
+    for (const unsafe of [`response.created,${SECRET}`, 'response.created, text with spaces', 'a'.repeat(5000)]) {
+      expect(formatDiagnostic({ event: 'model_stream_incomplete', streamEvents: unsafe })).toBe(REJECTED);
+    }
+  });
+
   test('rejects raw errors, requests, responses, headers and bodies without echoing them', () => {
     const error = new Error(`request failed: Authorization: Bearer ${SECRET}`);
     const withCause = new Error('outer', { cause: { headers: { authorization: SECRET } } });

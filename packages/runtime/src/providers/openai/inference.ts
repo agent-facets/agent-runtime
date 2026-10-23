@@ -53,13 +53,17 @@ export function openaiTerminalHooks(options: {
   profile: OpenAISubscriptionProfile;
   model: string;
   conversationId: string;
+  /** Receives the event-name summary of a response the terminal judged incomplete. */
+  onIncomplete?: (streamEvents: string) => void;
 }): Required<Pick<TerminalOptions, 'prepare' | 'completion'>> & {
   classify: NonNullable<TerminalOptions['failures']>['classify'];
 } {
   return {
     prepare(request, credential: AppliedCredential) {
       return adaptOpenAIRequest(request, {
-        ...options,
+        profile: options.profile,
+        model: options.model,
+        conversationId: options.conversationId,
         accessToken: credential.accessToken ?? '',
         accountId: credential.account?.accountId ?? '',
       });
@@ -68,7 +72,7 @@ export function openaiTerminalHooks(options: {
       const type = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
       // Streaming mode is always requested; any other successful body is not a complete response.
       return type === 'text/event-stream'
-        ? new ResponsesCompletion()
+        ? new ResponsesCompletion(options.onIncomplete)
         : { observe() {}, complete: false, failed: false };
     },
     classify(status, headers, body) {

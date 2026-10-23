@@ -27,6 +27,12 @@ const diagnosticSchema = z.strictObject({
   durationMs: z.number().int().min(0).max(86_400_000).optional(),
   count: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
   retryAfterSeconds: z.number().int().min(0).max(604_800).optional(),
+  /** A response stream's event names in order (`name` or `name*count`, comma-separated); never any content. */
+  streamEvents: z
+    .string()
+    .max(4096)
+    .regex(/^(?:[a-z][a-z0-9_.]{0,63}(?:\*\d{1,7})?(?:,[a-z][a-z0-9_.]{0,63}(?:\*\d{1,7})?)*)?$/)
+    .optional(),
 });
 
 export type SafeDiagnostic = z.infer<typeof diagnosticSchema>;

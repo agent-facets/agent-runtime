@@ -203,11 +203,13 @@ async function service(options: {
     provider === 'anthropic'
       ? operatorConfig(stateDir)
       : operatorConfig(stateDir, 'gpt-5.6-sol', 'codex-0.151.0', 'openai');
+  const logs: string[] = [];
   const assembly = createProviderAssembly({
     config,
     stateDir,
     inferenceTransport: net.fetchImpl,
     authTransport: tokens.fetchImpl,
+    log: (line) => logs.push(line),
   });
   const store = new RunStore(persistence.app, persistence.ownership);
   const gates = new KeyedSerializer();
@@ -353,6 +355,7 @@ async function service(options: {
     credentialFile,
     stateDir,
     config,
+    logs,
   };
 }
 
@@ -688,6 +691,36 @@ describe('production provider assembly with OpenAI', () => {
     // Anthropic is configured here but has no authorization stored: the failed OpenAI run used nothing of it.
     expect(await s.assembly.registry.readiness('anthropic')).toBe('reauthorization_required');
     expect(s.net.sent.every((sent) => sent.body.model === 'gpt-5.6-sol')).toBe(true);
+  });
+
+  test('a response ending at response.completed succeeds despite trailing events; an incomplete one is diagnosed by event names', async () => {
+    const complete = textTurn('c1', 'Done.');
+    const s = await service({
+      provider: 'openai',
+      replies: [
+        () => responsesStream(`${complete}data: {"type":"codex.response.metadata"}\n\ndata: [DONE]\n\n`),
+        () => responsesStream(complete.slice(0, complete.lastIndexOf('data:'))),
+      ],
+    });
+    const first = await s.createRun();
+    expect(
+      (await s.controller.run(first.runId, first.invocationId, { kind: 'initial', goal: 'Summarize the plan.' })).kind,
+    ).toBe('succeeded');
+    const second = await s.createRun();
+    expect(
+      await s.controller.run(second.runId, second.invocationId, { kind: 'initial', goal: 'Summarize the plan.' }),
+    ).toMatchObject({ kind: 'failed', failure: { reason: 'incomplete_response' } });
+    expect(s.logs.map((line) => JSON.parse(line))).toEqual([
+      {
+        event: 'model_stream_incomplete',
+        provider: 'openai',
+        operation: 'inference',
+        runId: second.runId,
+        streamEvents:
+          'response.created,response.output_item.added,response.content_part.added,response.output_text.delta,response.output_text.done,response.output_item.done',
+      },
+    ]);
+    expect(s.logs.join('\n')).not.toContain('Done.');
   });
 
   test('a run bound to an OpenAI profile this build does not implement is refused before dispatch', async () => {

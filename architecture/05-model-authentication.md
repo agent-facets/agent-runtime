@@ -84,7 +84,12 @@ operator command is `auth anthropic login|status`. A streamed response is used o
 stock `ChatOpenAI` in streaming Responses mode, headers rebuilt from an allowlist (no SDK fingerprint headers,
 organization or project), the reference's body settings completed, stateless replay of encrypted reasoning and
 function calls with matching IDs, token and account from one credential generation, and a response used only after
-`response.completed`. Retries are off in the constructor and absent from `configuration` (where the request path
+`response.completed`. As the Codex client does, the response ends with that event: the terminal passes the body on
+through the event's terminating blank line and reads nothing after it. (An earlier, stricter rule failed any event
+after completion; it was in force when the first live request was judged incomplete on 2026-10-03, a failure whose
+event sequence was not recorded.) `response.failed`, `response.incomplete`
+and `error` before completion still fail; a response judged incomplete produces a `model_stream_incomplete`
+diagnostic listing only the event names received. Retries are off in the constructor and absent from `configuration` (where the request path
 would honor them). The spike measured Node's `fetch` adding headers no caller can remove and chose `node:http`;
 Bun's `fetch` does not add them (a loopback capture test pins this), so the runtime uses Bun's `fetch` and the
 `node:http` path is not used.

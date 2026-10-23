@@ -104,6 +104,28 @@ const complete = (render: (type: string, payload?: Record<string, unknown>) => s
   render('response.function_call_arguments.done', { arguments: '{"a":1}' }) +
   render('response.completed', { response: { status: 'completed', output: [{ type: 'function_call' }] } });
 
+/** Observes like the terminal: stops at the end the check reports, returning the bytes passed on. */
+function observeUntilEnd(text: string, size: number) {
+  const completion = new ResponsesCompletion();
+  const bytes = new TextEncoder().encode(text);
+  const passed: Uint8Array[] = [];
+  let endAt: number | undefined;
+  for (let offset = 0; offset < bytes.length; offset += size) {
+    const chunk = bytes.slice(offset, offset + size);
+    completion.observe(chunk);
+    endAt = completion.endAt;
+    passed.push(endAt === undefined ? chunk : chunk.subarray(0, endAt));
+    if (endAt !== undefined) break;
+  }
+  const read = new Uint8Array(passed.reduce((total, part) => total + part.length, 0));
+  let at = 0;
+  for (const part of passed) {
+    read.set(part, at);
+    at += part.length;
+  }
+  return { completion, endAt, read };
+}
+
 function observe(text: string, size: number) {
   const completion = new ResponsesCompletion();
   const bytes = new TextEncoder().encode(text);
@@ -133,9 +155,59 @@ describe('ResponsesCompletion', () => {
         const failed = observe(render(type) + complete(render), 7);
         expect([failed.complete, failed.failed]).toEqual([false, true]);
       }
-      expect(observe(complete(render) + render('response.output_text.delta'), 5).failed).toBe(true);
+    });
+
+    test(`the response ends with the completed event: nothing after it is read (${name})`, () => {
+      const head = complete(render);
+      for (const trailer of [
+        render('response.output_text.delta'),
+        render('error'),
+        render('codex.response.metadata'),
+        'data: [DONE]\n\n',
+        'data: not json at all\n\n',
+      ]) {
+        for (const size of [1, 5, 64, 1 << 20]) {
+          const { completion, endAt, read } = observeUntilEnd(head + trailer, size);
+          expect([completion.complete, completion.failed]).toEqual([true, false]);
+          expect(endAt).toBeDefined();
+          // Exactly the completed event is passed on, through its terminating blank line.
+          expect(new TextDecoder().decode(read)).toBe(head);
+        }
+      }
     });
   }
+
+  test('CRLF line endings end the completed event at its blank line', () => {
+    const head = complete(dataOnly).replaceAll('\n', '\r\n');
+    const text = `${head}data: {"type":"error"}\r\n\r\n`;
+    const whole = observeUntilEnd(text, 1 << 20);
+    expect(whole.completion.complete).toBe(true);
+    expect(new TextDecoder().decode(whole.read)).toBe(head);
+    // Split between the CR and LF of the final blank line, the response ends at the CR (itself a line end).
+    const split = observeUntilEnd(text, 1);
+    expect(split.completion.complete).toBe(true);
+    expect(new TextDecoder().decode(split.read)).toBe(head.slice(0, -1));
+  });
+
+  test('keeps a bounded summary of event names only, for an incomplete stream', () => {
+    const reports: string[] = [];
+    const completion = new ResponsesCompletion((summary) => reports.push(summary));
+    const text =
+      dataOnly('response.created', { response: { instructions: 'secret-looking content' } }) +
+      dataOnly('response.output_text.delta', { delta: 'a' }) +
+      dataOnly('response.output_text.delta', { delta: 'b' }) +
+      dataOnly('Weird Type!') +
+      'data: [DONE]\n\n' +
+      'data: {"no":"type"}\n\n';
+    completion.observe(new TextEncoder().encode(text));
+    expect(completion.complete).toBe(false);
+    completion.onIncomplete();
+    expect(reports).toEqual(['response.created,response.output_text.delta*2,other,done_marker,untyped']);
+    const many = new ResponsesCompletion();
+    for (let index = 0; index < 100; index++) many.observe(new TextEncoder().encode(dataOnly(`t${index % 2}.x`)));
+    expect(many.summary().split(',')).toHaveLength(65);
+    expect(many.summary().endsWith(',more')).toBe(true);
+  });
 
   test('a nested type or an oversized leading field is never taken for completion', () => {
     expect(observe(data({ response: { type: 'response.completed' } }), 4).complete).toBe(false);

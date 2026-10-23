@@ -164,53 +164,89 @@ export function adaptOpenAIRequest(
   return { url: new URL(url), method: 'POST', headers, body: JSON.stringify(body) };
 }
 
+/** Event names a diagnostic may carry: lowercase dotted identifiers only; anything else is reported as `other`. */
+const EVENT_NAME = /^[a-z][a-z0-9_.]{0,63}$/;
+const SUMMARY_LIMIT = 64;
+
 /**
- * Observes a Responses event stream, unchanged: complete only after `response.completed`, and failed on
- * `response.failed`, `response.incomplete`, `error` or anything after completion. Event types are read from `event:`
- * lines or the leading `type` of each `data:` line; an event whose type cannot be read in the bounded prefix is not
- * counted as completion, so an unreadable stream fails closed.
+ * Observes a Responses event stream. Like the reference client, which stops reading once it has seen
+ * `response.completed`, the response is complete at the end of that event: `endAt` then gives the offset in the last
+ * observed chunk where it ends, and nothing after it is read or passed on. Before that, `response.failed`,
+ * `response.incomplete` and `error` fail the stream. Event types are read from `event:` lines or the leading `type`
+ * of each `data:` line; an event whose type cannot be read in the bounded prefix is never taken for completion, so an
+ * unreadable stream fails closed.
+ *
+ * It also keeps a bounded summary of the event names seen (consecutive repeats counted, never any content), which
+ * `onIncomplete` receives when the terminal judges the response incomplete.
  */
 export class ResponsesCompletion {
   static readonly #PREFIX = 512;
   static readonly #FAILURES = new Set(['response.failed', 'response.incomplete', 'error']);
-  readonly #decoder = new TextDecoder();
-  #prefix = '';
-  #prefixFull = false;
+  readonly #prefix = new Uint8Array(ResponsesCompletion.#PREFIX);
+  #prefixLength = 0;
+  #lastWasCR = false;
   #completed = false;
   #failed = false;
+  #finished = false;
+  #endAt: number | undefined;
+  readonly #summary: { name: string; count: number }[] = [];
+  #summaryOverflow = false;
+
+  constructor(private readonly report?: (summary: string) => void) {}
 
   observe(chunk: Uint8Array): void {
-    const text = this.#decoder.decode(chunk, { stream: true });
-    let start = 0;
-    for (let index = 0; index < text.length; index++) {
-      if (text[index] !== '\n' && text[index] !== '\r') continue;
-      this.#take(text.slice(start, index));
-      this.#end();
-      start = index + 1;
+    this.#endAt = undefined;
+    if (this.#finished) return;
+    for (let index = 0; index < chunk.length; index++) {
+      const byte = chunk[index] as number;
+      if (byte === 0x0a && this.#lastWasCR) {
+        // The second byte of a CRLF ending: the line already ended at the CR.
+        this.#lastWasCR = false;
+        continue;
+      }
+      this.#lastWasCR = byte === 0x0d;
+      if (byte !== 0x0a && byte !== 0x0d) {
+        if (this.#prefixLength < ResponsesCompletion.#PREFIX) this.#prefix[this.#prefixLength] = byte;
+        this.#prefixLength++;
+        continue;
+      }
+      const empty = this.#prefixLength === 0;
+      this.#line();
+      // A blank line ends an event; once the completed event has ended, the response is complete.
+      if (empty && this.#completed && !this.#failed) {
+        this.#finished = true;
+        // Include the LF of a CRLF blank line when it is in this chunk; a lone CR is itself a valid line end.
+        this.#endAt = byte === 0x0d && chunk[index + 1] === 0x0a ? index + 2 : index + 1;
+        return;
+      }
     }
-    this.#take(text.slice(start));
   }
 
-  #take(part: string): void {
-    if (this.#prefixFull) return;
-    this.#prefix += part;
-    if (this.#prefix.length >= ResponsesCompletion.#PREFIX) {
-      this.#prefix = this.#prefix.slice(0, ResponsesCompletion.#PREFIX);
-      this.#prefixFull = true;
-    }
-  }
-
-  #end(): void {
-    const line = this.#prefix;
-    this.#prefix = '';
-    this.#prefixFull = false;
+  #line(): void {
+    const length = Math.min(this.#prefixLength, ResponsesCompletion.#PREFIX);
+    const truncated = this.#prefixLength > ResponsesCompletion.#PREFIX;
+    this.#prefixLength = 0;
+    if (length === 0) return;
+    const line = new TextDecoder().decode(this.#prefix.subarray(0, length));
     let type: string | undefined;
-    if (line.startsWith('event:')) type = line.slice('event:'.length).trim();
-    else if (line.startsWith('data:')) type = /^\s*\{\s*"type"\s*:\s*"([^"\\]{1,128})"/.exec(line.slice(5))?.[1];
-    if (type === undefined) return;
+    if (line.startsWith('event:')) {
+      type = line.slice('event:'.length).trim();
+      if (truncated) type = undefined;
+    } else if (line.startsWith('data:')) {
+      type = /^\s*\{\s*"type"\s*:\s*"([^"\\]{1,128})"/.exec(line.slice(5))?.[1];
+      this.#note(type === undefined ? (line.slice(5).trim() === '[DONE]' ? 'done_marker' : 'untyped') : type);
+    }
+    if (type === undefined || this.#completed) return;
     if (ResponsesCompletion.#FAILURES.has(type)) this.#failed = true;
     else if (type === 'response.completed') this.#completed = true;
-    else if (this.#completed) this.#failed = true;
+  }
+
+  #note(type: string): void {
+    const name = EVENT_NAME.test(type) ? type : 'other';
+    const last = this.#summary.at(-1);
+    if (last?.name === name) last.count++;
+    else if (this.#summary.length < SUMMARY_LIMIT) this.#summary.push({ name, count: 1 });
+    else this.#summaryOverflow = true;
   }
 
   get complete(): boolean {
@@ -219,6 +255,22 @@ export class ResponsesCompletion {
 
   get failed(): boolean {
     return this.#failed;
+  }
+
+  /** Where the response ended within the chunk just observed, once it is complete; nothing after it is read. */
+  get endAt(): number | undefined {
+    return this.#endAt;
+  }
+
+  /** The event names seen, in order, with consecutive repeats counted (`name*count`). */
+  summary(): string {
+    const parts = this.#summary.map(({ name, count }) => (count === 1 ? name : `${name}*${count}`));
+    if (this.#summaryOverflow) parts.push('more');
+    return parts.join(',');
+  }
+
+  onIncomplete(): void {
+    this.report?.(this.summary());
   }
 }
 
