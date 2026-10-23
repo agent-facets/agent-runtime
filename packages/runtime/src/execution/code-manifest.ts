@@ -8,7 +8,7 @@
 // Monorepo package boundaries do not end the closure: an import of a workspace package (`workspace:` in the
 // lockfile) follows that package's public entry into its source, which joins the closure file by file. There is one
 // manifest per provider whose adapter this build includes — the common roots plus that adapter. A provider without
-// an adapter (OpenAI, design Decision 11) has no manifest: nothing can run or continue on it.
+// an adapter has no manifest: nothing can run or continue on it.
 //
 // The application image ships only bundled output, so the manifests are written at build time beside the bundle
 // and read from there; running from source computes them directly.
@@ -41,6 +41,7 @@ export const EXECUTION_ROOTS: readonly string[] = [
 /** The adapter roots of each provider this build includes: its model, request profile, credentials and wiring. */
 export const PROVIDER_ROOTS: Readonly<Partial<Record<Provider, readonly string[]>>> = {
   anthropic: ['src/providers/anthropic/binding.ts'],
+  openai: ['src/providers/openai/binding.ts'],
 };
 
 /**

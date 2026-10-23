@@ -23,9 +23,11 @@ describe('environment guard', () => {
       HTTP_PROXY: 'http://proxy.invalid:3128',
       all_proxy: 'socks5://proxy.invalid',
       ANTHROPIC_BASE_URL: 'https://gateway.invalid',
+      OPENAI_BASE_URL: 'https://gateway.invalid',
       NODE_TLS_REJECT_UNAUTHORIZED: '0',
       NODE_EXTRA_CA_CERTS: '/tmp/ca.pem',
       ANTHROPIC_LOG: 'debug',
+      OPENAI_LOG: 'info',
       BUN_CONFIG_VERBOSE_FETCH: 'curl',
       DEBUG: '*',
     };
@@ -34,15 +36,26 @@ describe('environment guard', () => {
     expect(JSON.stringify(problems)).not.toContain('invalid');
   });
 
-  test('refuses gateway routing, but not a disabled gateway', () => {
-    expect(environmentProblems({ LANGSMITH_GATEWAY: 'true' })).toEqual([
+  test('refuses gateway routing and request identity overrides, but not a disabled gateway', () => {
+    const env = {
+      LANGSMITH_GATEWAY: 'true',
+      OPENAI_ORGANIZATION: 'org-invalid',
+      OPENAI_ORG_ID: 'org-invalid',
+      OPENAI_PROJECT: 'proj-invalid',
+      openai_project_id: 'proj-invalid',
+    };
+    expect(environmentProblems(env)).toEqual([
       { variable: 'LANGSMITH_GATEWAY', reason: 'endpoint_override' },
+      { variable: 'OPENAI_ORGANIZATION', reason: 'request_override' },
+      { variable: 'OPENAI_ORG_ID', reason: 'request_override' },
+      { variable: 'OPENAI_PROJECT', reason: 'request_override' },
+      { variable: 'openai_project_id', reason: 'request_override' },
     ]);
     for (const value of ['', 'false', '0', 'no']) expect(environmentProblems({ LANGSMITH_GATEWAY: value })).toEqual([]);
     expect(environmentProblems({ LANGSMITH_GATEWAY: 'https://gateway.invalid' })).toHaveLength(1);
   });
 
-  test('permits harmless settings, and ignores ambient API keys and settings only the retired OpenAI client read', () => {
+  test('permits harmless settings, and ignores ambient API keys', () => {
     expect(
       environmentProblems({
         NO_PROXY: 'localhost',
@@ -51,9 +64,6 @@ describe('environment guard', () => {
         HTTPS_PROXY: '',
         ANTHROPIC_API_KEY: 'sk-ant-synthetic',
         OPENAI_API_KEY: 'sk-synthetic',
-        OPENAI_BASE_URL: 'https://gateway.invalid',
-        OPENAI_ORGANIZATION: 'org-invalid',
-        OPENAI_LOG: 'debug',
         PATH: '/usr/bin',
       }),
     ).toEqual([]);

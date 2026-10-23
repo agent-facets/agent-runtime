@@ -46,10 +46,29 @@ describe('failure catalogue', () => {
 });
 
 describe('failure mapping by operation context', () => {
-  test('inference 403/404 statuses are failures, typed by their normalized code', () => {
+  test('device-login polling 403/404 means keep polling, while the same inference statuses are failures', () => {
+    for (const status of [403, 404]) {
+      expect(classify({ kind: 'device_poll', provider: 'openai', evidence: http(status) })).toEqual({
+        kind: 'continue_polling',
+      });
+    }
     expect(failureOf(inference(http(403))).category).toBe('authorization');
     expect(failureOf(inference(http(404, 'model_unsupported'))).reason).toBe('model_unsupported');
     expect(failureOf(inference(http(404))).category).toBe('provider_failure');
+  });
+
+  test('device-login outcomes are never run failures', () => {
+    expect(classify({ kind: 'device_poll', provider: 'openai', evidence: http(400, 'auth_rejected') })).toEqual({
+      kind: 'login_failed',
+      reason: 'login_denied',
+    });
+    expect(classify({ kind: 'device_poll', provider: 'openai', evidence: http(400, 'auth_expired') })).toEqual({
+      kind: 'login_failed',
+      reason: 'login_expired',
+    });
+    expect(
+      classify({ kind: 'device_poll', provider: 'openai', evidence: { kind: 'transport', problem: 'network' } }),
+    ).toEqual({ kind: 'continue_polling' });
   });
 
   test('only an explicit refresh-grant rejection requires reauthorization', () => {

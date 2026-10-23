@@ -23,7 +23,7 @@ const RULES: readonly Rule[] = [
     reason: 'proxy_override',
   },
   {
-    names: ['ANTHROPIC_BASE_URL', 'ANTHROPIC_API_URL'],
+    names: ['ANTHROPIC_BASE_URL', 'ANTHROPIC_API_URL', 'OPENAI_BASE_URL', 'OPENAI_API_BASE'],
     allowed: (value) => value === '',
     reason: 'endpoint_override',
   },
@@ -32,6 +32,12 @@ const RULES: readonly Rule[] = [
     names: ['LANGSMITH_GATEWAY'],
     allowed: (value) => FALSE_VALUES.has(value.trim().toLowerCase()) || value.trim().toLowerCase() === 'no',
     reason: 'endpoint_override',
+  },
+  {
+    // The OpenAI client adds these to every request as organization/project identity.
+    names: ['OPENAI_ORGANIZATION', 'OPENAI_ORG_ID', 'OPENAI_PROJECT', 'OPENAI_PROJECT_ID'],
+    allowed: (value) => value === '',
+    reason: 'request_override',
   },
   {
     // Disabled verification or substituted trust roots would let an intermediary read credentials.
@@ -46,7 +52,7 @@ const RULES: readonly Rule[] = [
   },
   {
     // These log full requests, including authorization headers.
-    names: ['ANTHROPIC_LOG'],
+    names: ['ANTHROPIC_LOG', 'OPENAI_LOG'],
     allowed: (value) => ['', 'off', 'error', 'warn'].includes(value.trim().toLowerCase()),
     reason: 'debug_logging',
   },
@@ -59,7 +65,13 @@ const RULES: readonly Rule[] = [
 
 export interface EnvironmentProblem {
   variable: string;
-  reason: 'tracing_enabled' | 'proxy_override' | 'endpoint_override' | 'tls_override' | 'debug_logging';
+  reason:
+    | 'tracing_enabled'
+    | 'proxy_override'
+    | 'endpoint_override'
+    | 'request_override'
+    | 'tls_override'
+    | 'debug_logging';
 }
 
 /** Names are matched case-insensitively: proxy variables in particular are honored in either case. */

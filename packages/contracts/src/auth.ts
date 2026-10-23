@@ -1,9 +1,14 @@
-// Connecting a subscription provider from the console (design Decision 16). The browser starts a login attempt,
-// opens the provider's authorization page, and submits the code that page shows. The attempt and its private login
-// state live only on the server; responses carry the attempt's identity, state and the provider's authorization URL,
-// never a code, verifier or token.
+// Connecting a subscription provider from the console (design Decision 16). The browser starts a login attempt and
+// the owner signs in on the provider's own page in another tab:
+//
+// - Anthropic shows a code after sign-in, which the owner pastes back into the browser form.
+// - OpenAI (a device login) has the browser show a short code, which the owner enters on OpenAI's page; the server
+//   notices the approval itself, so nothing is pasted back.
+//
+// The attempt and its private login state live only on the server; responses carry the attempt's identity, state,
+// the provider's page and (for OpenAI) the code to enter there — never an authorization code, verifier or token.
 import { z } from 'zod';
-import { instantSchema, uuidSchema } from './common.ts';
+import { instantSchema, providerSchema, uuidSchema } from './common.ts';
 import { utf8Bytes } from './text.ts';
 
 /** The largest pasted authorization code (a callback URL or `code#state`) the runtime accepts. */
@@ -12,7 +17,10 @@ export const AUTH_CODE_MAX_BYTES = 16 * 1024;
 export const AUTH_BODY_MAX_BYTES = 32 * 1024;
 
 export const AUTH_ATTEMPT_STATES = [
+  /** Anthropic: waiting for the owner to paste the code the provider's page shows. */
   'awaiting_code',
+  /** OpenAI: waiting for the owner to enter `userCode` on the provider's page and approve. */
+  'awaiting_approval',
   'completing',
   'connected',
   'failed',
@@ -26,6 +34,7 @@ export type AuthAttemptState = z.infer<typeof authAttemptStateSchema>;
 export const AUTH_FAILURE_REASONS = [
   'code_mismatch',
   'rejected',
+  'denied',
   'throttled',
   'not_sent',
   'outcome_unknown',
@@ -38,15 +47,20 @@ export type AuthFailureReason = z.infer<typeof authFailureReasonSchema>;
 
 export const authAttemptSchema = z.strictObject({
   attemptId: uuidSchema,
-  provider: z.literal('anthropic'),
+  provider: providerSchema,
   state: authAttemptStateSchema,
-  /** When an unfinished attempt stops accepting a code. */
+  /** When an unfinished attempt stops accepting a code or approval. */
   expiresAt: instantSchema,
-  /** The provider's authorization page; present only while the attempt is waiting for its code. */
+  /** The provider's sign-in page; present only while the attempt is waiting for the owner. */
   authorizationUrl: z
     .string()
     .max(4096)
     .regex(/^https:\/\/[^\s/?#]+\/\S*$/, 'must be an HTTPS URL')
+    .optional(),
+  /** OpenAI only: the code the owner enters on the provider's page; present only while awaiting approval. */
+  userCode: z
+    .string()
+    .regex(/^[A-Za-z0-9-]{4,64}$/)
     .optional(),
   failure: z.strictObject({ reason: authFailureReasonSchema, message: z.string().min(1).max(512) }).optional(),
 });

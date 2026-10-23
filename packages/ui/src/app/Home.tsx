@@ -3,7 +3,7 @@ import type { Options, Provider, RunSummary } from '@agent-runtime/contracts';
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import type { ApiClient } from '../api/client.ts';
 import { RequestIdentity } from '../api/requests.ts';
-import { ConnectAnthropic } from './Connect.tsx';
+import { ConnectAnthropic, ConnectOpenAI } from './Connect.tsx';
 import { formatTime, providerLabel, STATE_LABELS } from './format.ts';
 import { runHref } from './route.ts';
 
@@ -73,7 +73,6 @@ export function StartForm({ client }: { client: ApiClient }) {
   };
 
   const selected = options?.providers.find((entry) => entry.provider === provider);
-  const unavailable = selected?.readiness === 'integration_unavailable';
   return (
     <section className="panel">
       <h1>Start a task</h1>
@@ -117,31 +116,26 @@ export function StartForm({ client }: { client: ApiClient }) {
                 ` · Deployment limit: ${options.modelRequestCeiling} model requests`}
             </span>
           )}
-          <button type="submit" disabled={busy || unavailable || provider === undefined || !/\S/.test(goal)}>
+          <button type="submit" disabled={busy || provider === undefined || !/\S/.test(goal)}>
             {busy ? 'Starting…' : identity.current.pending ? 'Submit again' : 'Start'}
           </button>
         </div>
-        {selected !== undefined && unavailable && (
-          <p className="notice error">
-            This build has no {providerLabel(selected.provider)} integration, so it cannot run tasks. Signing in would
-            not change that.
-          </p>
-        )}
-        {selected !== undefined && selected.readiness !== 'ready' && !unavailable && (
+        {selected !== undefined && selected.readiness !== 'ready' && (
           <p className="notice error">
             {providerLabel(selected.provider)} is not ready ({selected.readiness.replaceAll('_', ' ')}).
-            {selected.provider === 'anthropic' &&
-              selected.readiness === 'reauthorization_required' &&
-              ' Connect it below.'}
+            {selected.readiness === 'reauthorization_required' && ' Connect it below.'}
           </p>
         )}
         {notice !== undefined && <p className={`notice ${notice.tone}`}>{notice.text}</p>}
       </form>
       {/* Its own form, outside the task form: the code is never part of a task. */}
-      {selected?.provider === 'anthropic' &&
-        (selected.readiness === 'ready' || selected.readiness === 'reauthorization_required') && (
+      {selected !== undefined &&
+        (selected.readiness === 'ready' || selected.readiness === 'reauthorization_required') &&
+        (selected.provider === 'anthropic' ? (
           <ConnectAnthropic client={client} readiness={selected.readiness} onConnected={() => void loadOptions()} />
-        )}
+        ) : (
+          <ConnectOpenAI client={client} readiness={selected.readiness} onConnected={() => void loadOptions()} />
+        ))}
     </section>
   );
 }
