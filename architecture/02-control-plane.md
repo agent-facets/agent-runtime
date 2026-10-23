@@ -35,7 +35,7 @@ lifetime, state inspection, application transactions and history projection — 
 
 ## Phase 2 delegation as built (MVP 02)
 
-The [MVP 02 design](../openspec/changes/mvp-02-facet-backed-capabilities/design.md) (Decisions 1, 7 and 8) adds
+The [MVP 02 design](../openspec/changes/archive/2026-10-20-mvp-02-facet-backed-capabilities/design.md) (Decisions 1, 7 and 8) adds
 bounded named delegation to command runs without reviving the manager/scheduler design below. The root stays one
 stock `createAgent`; delegation is an ordinary tool of it (`packages/runtime/src/execution/delegation.ts`):
 

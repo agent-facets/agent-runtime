@@ -86,7 +86,7 @@ evidence did not cover either.
 
 ## Phase 2 MCP boundary (MVP 02)
 
-The [MVP 02 design](../openspec/changes/mvp-02-facet-backed-capabilities/design.md) (Decisions 4, 5 and 10) governs
+The [MVP 02 design](../openspec/changes/archive/2026-10-20-mvp-02-facet-backed-capabilities/design.md) (Decisions 4, 5 and 10) governs
 external tools. The trust tiers and broker below remain historical intent; there is no broker service.
 
 - **Grants are configuration.** Operator configuration approves a server connection (`serverDigest` over its

@@ -22,7 +22,7 @@ workload proves the runtime; it is not a dedicated PR-review application.
 | Order | Change | Status | Depends on | User-visible exit |
 |---|---|---|---|---|
 | 1 | [`mvp-01-interactive-agent-execution`](../changes/mvp-01-interactive-agent-execution/proposal.md) | Proposal reviewed | — | Start a task in a browser console, observe it, leave, return, answer a question, and obtain the result, using either Anthropic or OpenAI subscription access |
-| 2 | [`mvp-02-facet-backed-capabilities`](../changes/mvp-02-facet-backed-capabilities/proposal.md) | Proposal reviewed | 1 | A facet-backed workflow loads a skill, delegates a bounded task, calls an approved MCP tool, asks a question, and produces an inspectable result |
+| 2 | [`mvp-02-facet-backed-capabilities`](../changes/archive/2026-10-20-mvp-02-facet-backed-capabilities/proposal.md) | Archived | 1 | A facet-backed workflow loads a skill, delegates a bounded task, calls an approved MCP tool, asks a question, and produces an inspectable result |
 | 3 | [`mvp-03-cross-run-memory`](../changes/mvp-03-cross-run-memory/proposal.md) | Proposal reviewed | 1, 2 | A fresh run uses relevant prior knowledge; a correction changes later behavior; a repository-specific preference does not leak into another repository |
 | 4 | [`mvp-04-pr-feedback-to-plan`](../changes/mvp-04-pr-feedback-to-plan/proposal.md) | Proposal reviewed | 1, 2, 3 | Investigate a PR's feedback, decide items individually or in batches, discuss without accidental verdicts, and save an approved VIPER plan for accepted items; a later PR reuses and honors corrected preferences |
 

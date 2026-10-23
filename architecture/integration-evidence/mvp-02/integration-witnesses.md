@@ -1,7 +1,7 @@
 # MVP 02 integration witnesses — facet-backed capabilities
 
 **Status: synthetic verification complete; owner acceptance not given.** Recorded under task 18.5 of
-[`mvp-02-facet-backed-capabilities`](../../../openspec/changes/mvp-02-facet-backed-capabilities/tasks.md). Every
+[`mvp-02-facet-backed-capabilities`](../../../openspec/changes/archive/2026-10-20-mvp-02-facet-backed-capabilities/tasks.md). Every
 result below comes from scripted providers, a disposable PostgreSQL fixture, the bundled synthetic MCP server, local
 synthetic facets and an isolated Compose project with internal networks. **No live provider request, deployment,
 production facet or grant, or owner-state operation was made.**
@@ -114,8 +114,8 @@ coding tool's materialized command in the workspace is not offered, cannot be st
 
 ## Scenario coverage
 
-Every scenario of the [capabilities](../../../openspec/changes/mvp-02-facet-backed-capabilities/specs/capabilities/spec.md)
-(37) and [execution](../../../openspec/changes/mvp-02-facet-backed-capabilities/specs/execution/spec.md) (43) deltas,
+Every scenario of the [capabilities](../../../openspec/specs/capabilities/spec.md)
+(37) and [execution](../../../openspec/specs/execution/spec.md) (43) deltas,
 with the tests that witness it. All listed suites passed in the task 18.4 run. Paths are under `tests/integration/`
 unless stated; "facets" is `tests/facets/export.facet.test.ts`, "container" is `scripts/container-smoke.ts`, and
 "restart" is `mcp-delegate-restart.integration.test.ts`.
@@ -220,10 +220,25 @@ unless stated; "facets" is `tests/facets/export.facet.test.ts`, "container" is `
   rollback of the live deployment or to a binary predating migrations 4 and 5.
 - MCP server processes are trusted code: request restrictions are not process isolation.
 
+## Deployment (after review, owner-approved, 2026-10-20)
+
+The verified build was deployed to the live Compose project `agent-runtime-live` after the task 18.7 review. The
+results above predate it and are unaffected.
+
+- Image `agent-runtime/runtime:3639d5d-mvp-02`, ID `sha256:8ea9542d…cc6e` — the same ID the container suite verified —
+  built from the clean `3639d5d` tree (the stack through #34). It replaced `dbf7145-openai-recovery`
+  (`sha256:ed0293c9…`); the previous environment file is kept as `compose.env.dbf7145`.
+- No run was waiting or working (14 runs, all finished), so none was cancelled.
+- Before the switch the database (schema 3) was saved with `pg_dump` to a private file under the deployment's state
+  directory (`backups/pre-mvp-02-20261020T140004Z.dump`, mode 0600). Startup applied migrations 4 and 5; the earlier
+  image now refuses this database, so the dump is the only way back. Restoring it would be a separate owner decision.
+- Only the runtime service was recreated; configuration (goal-only, no `capabilities`), workspace, Tailscale,
+  PostgreSQL and volumes were unchanged.
+- Read-only checks after the switch: healthy and ready; schema versions 1–5; both providers ready; all 14 runs, their
+  histories and capability views (`native`) readable; a fingerprint of runs, events, model attempts and questions
+  unchanged; catalog `unconfigured`; the console served over the tailnet address. No model request was made.
+
 ## Owner decisions pending
 
 - Acceptance of this phase, and whether live provider trials are required for it.
-- Committing and submitting the task 18.1–18.3 test changes and this report.
-- Deployment of the new build, including finishing or cancelling waiting runs first, and any production facets,
-  programs, grants or MCP credentials.
-- Syncing the delta specs and archiving the change.
+- Any production facets, programs, grants or MCP credentials for the live deployment.
