@@ -6,6 +6,7 @@ import {
   type StartupStage,
 } from '../../packages/runtime/src/persistence/persistence.ts';
 import { RUNTIME_MIGRATIONS } from '../../packages/runtime/src/persistence/runtime-migrations.ts';
+import { pauseOnQuestion, seedWorkingRun } from '../support/run-records.ts';
 import { createScratchDatabase, type ScratchDatabase } from '../support/scratch-database.ts';
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -154,5 +155,43 @@ describe('schema version refusal', () => {
     expect(await codeOf(openPersistence({ url: db.url, onFault: () => {} }))).toBe('schema_incompatible');
     const [saver] = await db.admin`select to_regclass('checkpoints.checkpoint_migrations') is not null as present`;
     expect(saver.present).toBe(false);
+  });
+});
+
+describe('upgrading recorded questions to byte limits (migration 3)', () => {
+  /** A database migrated only through version 2, holding one question with the given prompt. */
+  async function versionTwoDatabase(prompt: string): Promise<ScratchDatabase> {
+    const db = await scratch();
+    await (await openPersistence({ url: db.url, onFault: () => {} })).close();
+    await db.admin.unsafe(`
+      alter table runtime.questions drop constraint questions_prompt_bytes, drop constraint questions_text_bytes;
+      alter table runtime.events drop constraint events_question_text_bytes;
+      drop function runtime.question_text_bytes(text, jsonb);
+      delete from runtime.schema_migrations where version = 3;`);
+    await db.admin.begin(async (tx) => {
+      const run = await seedWorkingRun(tx);
+      await pauseOnQuestion(tx, run, 'call-legacy', { prompt });
+    });
+    return db;
+  }
+
+  const journal = async (db: ScratchDatabase) =>
+    (await db.admin`select version from runtime.schema_migrations order by version`).map(
+      (row: { version: number }) => row.version,
+    );
+
+  test('compliant history upgrades', async () => {
+    const db = await versionTwoDatabase('é'.repeat(8192));
+    await open(db);
+    expect(await journal(db)).toEqual([1, 2, 3]);
+  });
+
+  test('a recorded prompt over the byte limit stops startup without rewriting history', async () => {
+    const prompt = 'é'.repeat(8193);
+    const db = await versionTwoDatabase(prompt);
+    expect(await codeOf(openPersistence({ url: db.url, onFault: () => {} }))).toBe('migration_failed');
+    expect(await journal(db)).toEqual([1, 2]);
+    const [row] = await db.admin`select prompt from runtime.questions`;
+    expect(row.prompt).toBe(prompt);
   });
 });

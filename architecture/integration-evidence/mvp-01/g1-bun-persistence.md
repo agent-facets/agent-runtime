@@ -130,6 +130,22 @@ correctly refused ownership. PostgreSQL now runs with `tcp_keepalives_idle=10`, 
 - The saver's `setup()` silently skips when its ledger is newer than the package, so startup checks the saver ledger
   (read-only, versions 0–4 for saver 1.0.5) and refuses unknown, newer or gapped histories.
 
+### Later finding (task 6.2, 2026-09-29): failed transactions on reserved sessions
+
+Recorded separately from the gate results above. While adding runtime migration 3, a migration that correctly
+refused an existing row surfaced a second Bun 1.3.14 defect: when `ReservedSQL.begin()` fails, its promise rejects
+to the caller **and** Bun raises an additional unhandled rejection. A diagnostic run compared the paths: pool
+`sql.begin()` failures (tagged templates, `unsafe()`, multi-statement) were caught cleanly, while every failing
+`begin()` on a reserved session also produced an unhandled rejection. In a running process this would crash the
+runtime instead of letting startup fail cleanly.
+
+**Mitigation:** reserved sessions (only migrations use transactions on them) run explicit `BEGIN`/`COMMIT`/`ROLLBACK`
+statements through `sessionTransaction()` in `packages/runtime/src/persistence/app-database.ts`; a failure rolls back
+with no stray rejection, and the session returns to autocommit. A boundary test allows `.begin(` only inside the
+application database adapter, and `tests/integration/bun-sql-discipline.integration.test.ts` covers rollback and
+recovery. The integration suite then passed (61 tests), including a migration that refuses a recorded prompt over
+the new byte limit without rewriting history. Not yet reported upstream.
+
 ## Limitations
 
 - Proves the pinned matrix under Bun for a single root-level question pause, SIGKILL after settlement, and one fresh

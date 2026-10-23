@@ -1,4 +1,5 @@
 import { RUN_RECORDS_SQL } from './migrations/002-run-records.ts';
+import { QUESTION_TEXT_BYTES_SQL } from './migrations/003-question-text-bytes.ts';
 
 // Ordered application migrations for the `runtime` schema. Applied migrations are immutable: their name and
 // normalized SQL checksum are journaled, and a build refuses a database whose history it does not recognize.
@@ -23,4 +24,5 @@ create table runtime.runtime_owner (
 `,
   },
   { version: 2, name: 'run_records', sql: RUN_RECORDS_SQL },
+  { version: 3, name: 'question_text_bytes', sql: QUESTION_TEXT_BYTES_SQL },
 ];

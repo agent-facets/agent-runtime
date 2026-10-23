@@ -3,8 +3,12 @@ import {
   eventSchema,
   failureSchema,
   operationIdFor,
+  QUESTION_TEXT_MAX_BYTES,
+  questionDefinitionSchema,
   questionDispositionSchema,
   questionInputSchema,
+  questionPromptSchema,
+  questionTextBytes,
   runStateSchema,
   workspaceSchema,
 } from './schemas.ts';
@@ -107,6 +111,36 @@ describe('question records', () => {
       { kind: 'schema', schema: {} },
     ];
     for (const input of invalid) expect(questionInputSchema.safeParse(input).success).toBe(false);
+  });
+
+  test('labels are bounded in code points, like PostgreSQL char_length', () => {
+    const choice = (label: string) => ({ kind: 'choice', multiple: false, options: [{ label, value: 1 }] });
+    expect(questionInputSchema.safeParse(choice('😀'.repeat(256))).success).toBe(true);
+    expect(questionInputSchema.safeParse(choice('😀'.repeat(257))).success).toBe(false);
+    expect(questionInputSchema.safeParse(choice('a\u0000')).success).toBe(false);
+  });
+
+  test('prompts are bounded to 16 KiB of UTF-8, and question text to 64 KiB overall', () => {
+    const input = { kind: 'text', minLength: 0, maxLength: 10 };
+    const asked = (prompt: string, questionInput: unknown = input) =>
+      eventSchema.safeParse({ kind: 'question.asked', payload: { questionId: digest, prompt, input: questionInput } })
+        .success;
+    expect(questionPromptSchema.safeParse('a'.repeat(16_384)).success).toBe(true);
+    expect(questionPromptSchema.safeParse('é'.repeat(8192)).success).toBe(true);
+    expect(questionPromptSchema.safeParse('é'.repeat(8193)).success).toBe(false);
+    expect(questionPromptSchema.safeParse('').success).toBe(false);
+    expect(asked('é'.repeat(8193))).toBe(false);
+
+    const options = Array.from({ length: 50 }, (_, index) => ({
+      label: 'l'.repeat(256),
+      value: `${index}`.repeat(1000),
+    }));
+    const large = { kind: 'choice', multiple: false, options: options.slice(0, 40) };
+    expect(questionTextBytes('p', large as never)).toBeGreaterThan(QUESTION_TEXT_MAX_BYTES);
+    expect(questionDefinitionSchema.safeParse({ prompt: 'p', input: large }).success).toBe(false);
+    expect(asked('p', large)).toBe(false);
+    const fitting = { kind: 'choice', multiple: false, options: options.slice(0, 10) };
+    expect(questionDefinitionSchema.safeParse({ prompt: 'p', input: fitting }).success).toBe(true);
   });
 });
 

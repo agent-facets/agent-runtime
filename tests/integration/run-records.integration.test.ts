@@ -354,3 +354,69 @@ describe('run records', () => {
     expect(await commits((tx) => insertOperation(tx, 'message-2'))).toMatch(REFUSED);
   });
 });
+
+describe('question text limits (migration 3)', () => {
+  // 8,193 two-byte characters: within migration 2's 16,384-character limit, beyond the 16,384-byte one.
+  const overBytes = 'é'.repeat(8193);
+
+  async function refusalOf(body: (tx: TransactionSQL) => Promise<unknown>) {
+    try {
+      await persistence.app.transaction(body);
+      return 'committed';
+    } catch (error) {
+      return `${sqlStateOf(error)}:${(error as { constraint?: string }).constraint ?? ''}`;
+    }
+  }
+
+  test('a prompt is limited to 16 KiB of UTF-8, not 16,384 characters', async () => {
+    const run = await seeded();
+    expect(await commits((tx) => pauseOnQuestion(tx, run, 'call-at-limit', { prompt: 'é'.repeat(8192) }))).toBe(
+      'committed',
+    );
+    const other = await seeded();
+    expect(await refusalOf((tx) => pauseOnQuestion(tx, other, 'call-over', { prompt: overBytes }))).toBe(
+      '23514:questions_prompt_bytes',
+    );
+  });
+
+  test('question text in total is limited to 64 KiB', async () => {
+    const options = Array.from({ length: 40 }, (_, index) => ({
+      label: `option ${index}`,
+      value: 'v'.repeat(1700) + index,
+    }));
+    const run = await seeded();
+    expect(
+      await refusalOf((tx) =>
+        pauseOnQuestion(tx, run, 'call-large', { input: { kind: 'choice', multiple: false, options } }),
+      ),
+    ).toBe('23514:questions_text_bytes');
+    const [bytes] = await persistence.app.readOnly(
+      (tx) =>
+        tx`select runtime.question_text_bytes('é', ${j({
+          kind: 'choice',
+          multiple: false,
+          options: [
+            { label: 'ab', value: 'cd' },
+            { label: 'x', value: 5 },
+          ],
+        })}::text::jsonb)::int as n`,
+    );
+    expect(bytes.n).toBe(2 + 2 + 2 + 1);
+  });
+
+  test('question.asked events carry the same limit', async () => {
+    const run = await seeded();
+    const result = await refusalOf(async (tx) => {
+      await tx`update runtime.runs set last_seq = 3 where run_id = ${run.runId}`;
+      await insertEvent(
+        tx,
+        run.runId,
+        3,
+        'question.asked',
+        { questionId: DIGEST, prompt: overBytes, input: { kind: 'text', minLength: 0, maxLength: 10 } },
+        'question:over',
+      );
+    });
+    expect(result).toBe('23514:events_question_text_bytes');
+  });
+});

@@ -20,10 +20,29 @@ export interface AppDatabase {
   transaction<T>(body: (tx: TransactionSQL) => Promise<T>): Promise<T>;
   /** A read-only transaction; `repeatable read` gives one consistent snapshot across its statements. */
   readOnly<T>(body: (tx: TransactionSQL) => Promise<T>, isolation?: 'read committed' | 'repeatable read'): Promise<T>;
-  /** A dedicated session (ownership, migrations); callers must release it. */
+  /** A dedicated session (ownership, migrations); callers must release it. Use sessionTransaction(), not begin(). */
   reserve(): Promise<ReservedSQL>;
   /** Closes every application connection. Connection closes after this call are not faults. */
   close(timeoutSeconds?: number): Promise<void>;
+}
+
+/**
+ * A transaction on a reserved session, issued as explicit BEGIN/COMMIT/ROLLBACK statements. On Bun 1.3.14 a failed
+ * ReservedSQL.begin() rejects to its caller and additionally raises an unhandled rejection, which would crash the
+ * process instead of letting it fail cleanly, so reserved sessions never use begin().
+ */
+export async function sessionTransaction<T>(session: ReservedSQL, body: () => Promise<T>): Promise<T> {
+  await session`begin`;
+  let result: T;
+  try {
+    result = await body();
+  } catch (error) {
+    // If the rollback also fails the session is unusable; the caller's cleanup discards it with the pool.
+    await session`rollback`.catch(() => {});
+    throw error;
+  }
+  await session`commit`;
+  return result;
 }
 
 export interface AppDatabaseOptions {

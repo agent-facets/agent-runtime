@@ -1,4 +1,5 @@
 import type { ReservedSQL, SQL } from 'bun';
+import { sessionTransaction } from './app-database.ts';
 import { PersistenceError, sqlStateOf } from './errors.ts';
 import { RUNTIME_MIGRATIONS, type RuntimeMigration } from './runtime-migrations.ts';
 import { SAVER_SCHEMA } from './saver/constants.ts';
@@ -90,9 +91,9 @@ export async function inspectRuntimeSchema(sql: SQL | ReservedSQL): Promise<Runt
 
 /** Applies pending runtime migrations, each atomically with its journal row. Callers must hold the migration lock. */
 export async function migrateRuntimeSchema(connection: ReservedSQL): Promise<void> {
-  await connection.begin(async (tx) => {
-    await tx`create schema if not exists runtime`;
-    await tx`create table if not exists runtime.schema_migrations (
+  await sessionTransaction(connection, async () => {
+    await connection`create schema if not exists runtime`;
+    await connection`create table if not exists runtime.schema_migrations (
       version integer primary key check (version > 0),
       name text not null,
       checksum text not null check (checksum ~ '^[0-9a-f]{64}$'),
@@ -104,9 +105,9 @@ export async function migrateRuntimeSchema(connection: ReservedSQL): Promise<voi
   if (state.kind === 'current') return;
   for (const migration of state.pending) {
     try {
-      await connection.begin(async (tx) => {
-        await tx.unsafe(migration.sql);
-        await tx`insert into runtime.schema_migrations (version, name, checksum)
+      await sessionTransaction(connection, async () => {
+        await connection.unsafe(migration.sql);
+        await connection`insert into runtime.schema_migrations (version, name, checksum)
           values (${migration.version}, ${migration.name}, ${migrationChecksum(migration)})`;
       });
     } catch (error) {

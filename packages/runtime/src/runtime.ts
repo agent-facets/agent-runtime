@@ -2,6 +2,7 @@ import type { RuntimeConfig } from './config.ts';
 import { PersistenceError } from './persistence/errors.ts';
 import type { OwnershipOptions } from './persistence/ownership.ts';
 import { openPersistence, type Persistence } from './persistence/persistence.ts';
+import { formatDiagnostic } from './security/diagnostics.ts';
 import { type PersistenceStatus, startServer } from './server.ts';
 
 export interface RuntimeHandle {
@@ -16,6 +17,7 @@ export interface RuntimeHandle {
 
 export interface RuntimeOptions {
   config: RuntimeConfig;
+  /** Receives safe diagnostic lines (security/diagnostics.ts); never free text. */
   log?: (line: string) => void;
   ownership?: OwnershipOptions;
 }
@@ -55,7 +57,7 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
 
   const onFault = (error: PersistenceError) => {
     if (error.code === 'shutdown' || stopping !== undefined) return;
-    log(`persistence fault: ${error.code}`);
+    log(formatDiagnostic({ event: 'persistence_fault', operation: 'persistence', reason: error.code }));
     if (FAIL_STOP_FAULTS.has(error.code)) {
       status = 'ownership_lost';
       void stop(1);
@@ -78,7 +80,7 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
           (error: unknown) => {
             const code = error instanceof PersistenceError ? error.code : 'database_unavailable';
             status = statusForStartupFailure(code);
-            log(`persistence startup failed: ${code}`);
+            log(formatDiagnostic({ event: 'persistence_startup_failed', operation: 'startup', reason: code }));
             // Exiting lets the supervisor retry, e.g. once a predecessor's ownership session has ended. An
             // incompatible schema cannot fix itself, so that process stays up, unready, for the operator.
             if (status !== 'schema_incompatible') void stop(1);

@@ -1,5 +1,49 @@
 # Model Authentication
 
+## Phase 1 as built (MVP 01)
+
+The [MVP 01 design](../openspec/changes/mvp-01-interactive-agent-execution/design.md) (Decisions 9–11)
+supersedes this document where they differ. In particular, **Phase 1 is subscription-only: there is no API-key
+transport, no API fallback and no transport switching.** A later, explicitly selected API-key mode is anticipated
+by keeping provider identity separate from authentication mode, but it is not implemented or enabled. The
+configuration and fallback examples below are historical.
+
+Implemented so far (`packages/runtime/src/providers/`, `packages/runtime/src/credentials/`):
+
+- **Provider bindings.** A small registry knows exactly `(anthropic, subscription)` and `(openai, subscription)`.
+  Models and request profiles are required operator configuration, never inferred from spike IDs. Readiness is one
+  of `unconfigured`, `integration_unavailable`, `reauthorization_required`, `temporarily_unavailable` or `ready`;
+  both providers currently report `integration_unavailable` because neither integration is connected. Ambient API
+  keys are ignored.
+- **Credential records.** Versioned, strictly decoded, per provider and slot: generation, lifecycle
+  (`usable` or `reauthorization_required`), access/refresh tokens, expiry in epoch **milliseconds**, and required
+  account metadata (OpenAI: account ID; Anthropic: whatever the maintained library's contract requires, currently
+  none). A rejected credential is stored without token material.
+- **Durable replacement.** Same-directory exclusive temporary file (`0600`), complete write, fsync, rename, fsync
+  of the directory; acknowledged only afterwards. Records and directories must be private to the runtime user and
+  single-linked. A crash at any write boundary leaves the old or new complete record (verified by killing a writer
+  at each boundary).
+- **Coordination.** An in-process single flight per slot, plus a provider-scoped kernel `flock` held by the Bun
+  process itself (acquired through the image's `/usr/bin/flock` on an inherited descriptor) and shared with operator
+  login. The lock covers reread → issuer refresh → partial merge → durable replacement, and login holds it for its
+  whole flow. Verified with two Bun processes: 64 concurrent callers produce one refresh; a refresh waiting behind a
+  login adopts it; a login waiting behind a refresh is written after it; a dead holder releases the lock; a paused
+  one keeps it. A negative control without the lock produced two refreshes.
+- **Rotation rules.** Refresh begins five minutes before expiry. An omitted refresh token or account keeps the
+  stored value; an invalid supplied one is not written. A definitive refresh rejection records
+  `reauthorization_required`; a temporary failure keeps the credential and is not retried automatically. A delayed
+  rejection of an older generation cannot revoke a newer login.
+- **Failure mapping** considers the operation: device-login polling 403/404 means "keep polling", while the same
+  statuses on inference are failures; typed provider codes take precedence over HTTP status; `Retry-After` is
+  clamped to a week.
+
+Not yet implemented: the Anthropic integration through the owner-maintained `@ex-machina/opencode-anthropic-auth`
+release (blocked on its public contract, Decision 10), the OpenAI device flow, refresh and Responses transport,
+the operator `auth` commands, and any live verification. Issuer rotation and local persistence cannot be one
+transaction: a crash between them can require reauthorization.
+
+## Historical design
+
 **Subscription authentication is the primary path.** API keys are the fallback.
 
 Most agent frameworks assume metered API billing. We already pay for Claude and
