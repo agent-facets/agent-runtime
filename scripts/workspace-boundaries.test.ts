@@ -18,6 +18,10 @@ const subscriptionDir = join(repoRoot, 'packages', 'anthropic-subscription');
 const subscriptionPackage = '@agent-runtime/anthropic-subscription';
 const contractsDir = join(repoRoot, 'packages', 'contracts');
 const contractsPackage = '@agent-runtime/contracts';
+const facetAdapterDir = join(repoRoot, 'packages', 'facet-adapter');
+const facetAdapterPackage = '@agent-runtime/facet-adapter';
+// Only the published adapter SDK entry points are public; the facet engine, protocol and CLI internals are private.
+const facetSdkEntries = new Set(['@agent-facets/adapter', '@agent-facets/adapter/api-version']);
 // The contracts package is shared with the browser: pure schemas and validation, no platform or server access.
 const platformAccess: [string, RegExp][] = [
   ['Bun API', /\bBun\s*\./],
@@ -78,6 +82,7 @@ describe('workspace import boundaries', () => {
     expect(packages.map((pkg) => pkg.manifest.name)).toEqual([
       subscriptionPackage,
       contractsPackage,
+      facetAdapterPackage,
       '@agent-runtime/runtime',
       '@agent-runtime/ui',
     ]);
@@ -155,6 +160,31 @@ describe('workspace import boundaries', () => {
   test('other packages import the contracts only through their public entry', async () => {
     const violations = (await importsOf(join(repoRoot, 'packages'))).filter((record) =>
       record.specifier.startsWith(`${contractsPackage}/`),
+    );
+    expect(violations.map(describeImport)).toEqual([]);
+  });
+
+  test('only the install-time adapter package uses the facet SDK, and only through its public entries', async () => {
+    const violations = (await importsOf(join(repoRoot, 'packages'))).filter(
+      (record) =>
+        record.specifier.startsWith('@agent-facets/') &&
+        (!isWithin(facetAdapterDir, record.file) || !facetSdkEntries.has(record.specifier)),
+    );
+    expect(violations.map(describeImport)).toEqual([]);
+  });
+
+  test('the facet adapter imports only its own modules, the SDK, its schema library and built-ins', async () => {
+    const violations = (await importsOf(facetAdapterDir)).filter((record) => {
+      if (record.specifier.startsWith('.') || record.specifier === 'zod') return false;
+      if (facetSdkEntries.has(record.specifier) || /^node:[a-z_/]+$/.test(record.specifier)) return false;
+      return !(/\.test\.ts$/.test(record.file) && record.specifier === 'bun:test');
+    });
+    expect(violations.map(describeImport)).toEqual([]);
+  });
+
+  test('no package imports the facet adapter package', async () => {
+    const violations = (await importsOf(join(repoRoot, 'packages'))).filter((record) =>
+      record.specifier.startsWith(facetAdapterPackage),
     );
     expect(violations.map(describeImport)).toEqual([]);
   });
@@ -386,6 +416,23 @@ describe('workspace dependency boundaries', () => {
     const ui = packages.find((pkg) => pkg.manifest.name === '@agent-runtime/ui');
     expect(Object.keys(ui?.manifest.dependencies ?? {}).sort()).toEqual([contractsPackage, 'react', 'react-dom']);
     expect(Object.keys(ui?.manifest.devDependencies ?? {}).every((name) => name.startsWith('@types/'))).toBe(true);
+  });
+
+  test('only the facet adapter declares the facet SDK, and nothing depends on the adapter', () => {
+    const violations: string[] = [];
+    for (const pkg of packages) {
+      for (const field of dependencyFields) {
+        for (const name of Object.keys(pkg.manifest[field] ?? {})) {
+          if (name.startsWith('@agent-facets/') && pkg.manifest.name !== facetAdapterPackage)
+            violations.push(`${pkg.manifest.name} ${field}: ${name}`);
+          if (name === facetAdapterPackage) violations.push(`${pkg.manifest.name} depends on ${facetAdapterPackage}`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+    const adapter = packages.find((pkg) => pkg.manifest.name === facetAdapterPackage);
+    expect(adapter?.manifest.dependencies).toEqual({ '@agent-facets/adapter': '0.30.0', zod: '4.6.5' });
+    expect(dependencyFields.filter((field) => field !== 'dependencies' && adapter?.manifest[field])).toEqual([]);
   });
 
   test('only the runtime declares node-postgres', () => {

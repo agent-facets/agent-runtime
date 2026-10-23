@@ -32,10 +32,11 @@ A Bun-workspace monorepo orchestrated by [Turborepo](https://turborepo.com), dep
 | `packages/runtime` | The Bun server and sole deployable application: persistence, configuration, credentials, workspace tools, security boundaries, agent execution, provider adapters, the run service and REST/SSE API, serving the console, and the operator `auth` command. |
 | `packages/contracts` | Browser-safe API schemas, the public run-state and event unions, command envelopes and answer validation, shared by the runtime and the console. Pure validation (`zod` only). |
 | `packages/ui` | The React browser console: API client, replaying event store, run views and question/cancellation controls. Its public entry is the HTML page the runtime bundles. |
+| `packages/facet-adapter` | Install-time tooling for the runtime's own facet installation: the `agent-runtime` adapter for the `facet` CLI and the sealer that turns a completed installation into the bundle the runtime verifies. Never imported by the runtime or shipped in its image. See [Runtime facets](#runtime-facets). |
 | `packages/anthropic-subscription` | Private, server-only Anthropic subscription authorization and request profile: a minimal, project-maintained derivative of `@ex-machina/opencode-anthropic-auth` ([provenance](packages/anthropic-subscription/PROVENANCE.md)). No I/O of its own. |
 | `scripts/` | Repository checks, fixture launchers, the acceptance-trial tool and their tests. |
-| `tests/` | Explicitly launched integration, browser and container fixtures and the shared acceptance-trial fixture (never run by ordinary checks). |
-| `deploy/` | Deployment configuration: Tailscale Serve, an example operator configuration and the [Anthropic acceptance checklist](deploy/runtime/anthropic-acceptance.md). |
+| `tests/` | Explicitly launched integration, browser, container and facet-export fixtures and the shared acceptance-trial fixture (never run by ordinary checks). |
+| `deploy/` | Deployment configuration: Tailscale Serve, an example operator configuration, the runtime's [facet project](deploy/runtime/facets/README.md) and the [Anthropic acceptance checklist](deploy/runtime/anthropic-acceptance.md). |
 | `spikes/`, `architecture/` | Historical evidence and design intent. Not application dependencies. |
 
 Boundaries enforced by tests:
@@ -56,6 +57,8 @@ Boundaries enforced by tests:
   Other packages import it only through its public entry. Server records, saved-graph bindings and credential
   references stay in the runtime; the API sends explicit projections.
 - The console depends only on the contracts and React; its bundle contains no server code (a test checks it).
+- Only `packages/facet-adapter` depends on the facet SDK, and only through its public entry points; no package
+  imports the facet engine, protocol or CLI internals, and nothing depends on the adapter package.
 - Only the runtime's OpenAI adapter (`src/providers/openai/`) imports the OpenAI client or names its endpoints, and
   production sources and the shipped image contain none of the retired Codex request rewriter or stream parser.
 
@@ -78,8 +81,10 @@ Bun is configured to add exact versions. The runtime pins LangChain 1.5.14, `@la
 console pins React and React DOM 19.3.0 (`packages/ui`); browser journeys use Playwright 1.63.0 (root development
 dependency) with its headless Chromium, installed once with `bun run browser:install`.
 
-Each spike harness has its own README with separate requirements. `facets.json` configures optional agent
-tooling; neither is needed to build or run the runtime.
+Each spike harness has its own README with separate requirements. The root `facets.json` configures optional
+coding-tool facets for working on this repository; neither is needed to build or run the runtime. The runtime's own
+facet installation is separate (see [Runtime facets](#runtime-facets)) and needs the pinned `facet` CLI only when you
+install facets for it or run `bun run test:facets`.
 
 ### Worktrees
 
@@ -99,7 +104,7 @@ Run from the repository root (prefix with `mise exec --` if mise is not activate
 | Command | What it does |
 |---|---|
 | `bun run dev` | Runs the runtime with hot reload (uncached). |
-| `bun run build` | Builds the application to `packages/runtime/dist/`. |
+| `bun run build` | Builds the application to `packages/runtime/dist/` and the runtime facet adapter to `packages/facet-adapter/dist/`. |
 | `bun run start` | Runs the built application. |
 | `bun run check` | Lint, typechecks, unit tests and build through Turbo; reuses valid local cache results. |
 | `bun run check:verify` | The same graph with `--force`: every task executes. Use this for acceptance. |
@@ -109,6 +114,7 @@ Run from the repository root (prefix with `mise exec --` if mise is not activate
 | `bun run test:integration` | Starts a disposable PostgreSQL fixture and runs `tests/integration` (persistence, ownership, run records, lifecycle, provider assembly and the API). Requires Docker. |
 | `bun run test:browser` | Starts a disposable PostgreSQL fixture and runs `tests/browser`: the built console in headless Chromium against the run service, with scripted providers, including the acceptance-trial rehearsal. Requires Docker and `bun run browser:install`. |
 | `bun run console:offline` | Runs the console on this machine at `http://127.0.0.1:4310/` (or a free port, printed) with nothing real behind it: a disposable PostgreSQL fixture, a synthetic workspace and credential, and a scripted model that reads a file, asks one question and reports your answer. Goals containing “text”, “several” or “fail” choose a text question, a multiple-choice question or a provider failure. No provider is contacted. Ctrl+C stops it and removes everything it created. Requires Docker. |
+| `bun run test:facets` | Runs `tests/facets` with the pinned `facet` CLI (on `PATH`): installs synthetic fixture facets into disposable runtime and editor homes, then checks exports, sealing, reproducibility, server-bearing refusal and isolation between the two installations. Refuses an unpinned CLI without running it. No Docker, model or MCP server is used. |
 | `bun run browser:install` | Downloads the pinned Playwright headless Chromium (once, into Playwright's user cache). |
 | `bun run test:container` | Builds the image and smoke-tests the isolated Compose topology, including the served console and the Host/Origin checks, then rehearses an image rollback over preserved storage (below). Stops at the first failed check. Requires Docker. |
 | `bun run acceptance:anthropic` | The live trial's operator tool (Anthropic by default; `--provider openai --ceiling <n>` for OpenAI); use only as the [checklist](deploy/runtime/anthropic-acceptance.md) describes, after fresh authorization. Its `report` only reads two named runs. |
@@ -122,9 +128,9 @@ uses `check:verify`. Build caching and run continuation are separate: a console-
 does not change any execution manifest, so paused runs stay answerable; a change to execution code — including a
 contracts module the server's execution uses — does change it.
 
-The integration and container launchers accept no arguments, never read `.env`, forward only an allowlisted
-environment, and refuse to start if storage, Compose, credential or provider variables (for example
-`DATABASE_URL`, `PG*`, `COMPOSE_*`, `AGENT_RUNTIME_*`, `ANTHROPIC_*`) are set. Each run uses a uniquely named
+The integration, container and facet launchers accept no arguments, never read `.env`, forward only an allowlisted
+environment, and refuse to start if storage, Compose, credential, provider or facet-CLI variables (for example
+`DATABASE_URL`, `PG*`, `COMPOSE_*`, `AGENT_RUNTIME_*`, `ANTHROPIC_*`, `FACET_*`) are set. Each run uses a uniquely named
 Compose project with fresh storage and removes only what it created. The container smoke replaces the
 Tailscale daemon with an inert namespace holder, so it performs no tailnet login and proves Docker topology,
 not real Serve/HTTPS behavior.
@@ -249,6 +255,24 @@ enables the LangSmith gateway (`LANGSMITH_GATEWAY`), disables or replaces TLS ve
 (`ANTHROPIC_LOG` or `OPENAI_LOG` below `warn`, `BUN_CONFIG_VERBOSE_FETCH`, `DEBUG`). Ambient API keys such as
 `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are ignored: nothing reads them, and providers are selected only from this
 configuration.
+
+## Runtime facets
+
+Commands, skills and agents for the runtime come from a dedicated facet project,
+[`deploy/runtime/facets/`](deploy/runtime/facets/README.md). It has its own manifest and lockfile and is installed
+with the pinned `facet` CLI into an isolated, absolute `FACET_DIR`. It stays separate from the editor facets in the
+repository root and from their materialized copies, which the runtime never reads. The `agent-runtime` adapter
+exports each contribution. `bun packages/facet-adapter/src/cli.ts seal` then joins the exports to the recorded
+manifest and lockfile and writes one canonical `installation.json`. The owner pins that file's SHA-256.
+
+- Runtime behavior comes only from an explicit `agent-runtime` block (`runtimeVersion: 1`) in a facet's
+  `facet.json`. Unsupported settings, missing prerequisites and requirement cycles refuse that contribution, with a
+  reason, rather than being ignored. Facets written for coding tools usually need explicit runtime adaptation.
+- Installing a facet grants nothing. Installation never starts a run or launches a declared MCP server.
+- An installation that declares an MCP server cannot be sealed, because the lockfile does not record which facets
+  contributed each server. Omit such servers to seal the rest. Contributions that reference MCP tools are refused.
+- Generated exports and `installation.json` are local artifacts and are never committed. The server does not read
+  the bundle, and command runs are not offered.
 
 ## Authority boundaries
 
@@ -625,6 +649,7 @@ part of readiness: an unauthorized provider is shown in the console and refuses 
 - Read-only mounts and path checks are not a sandbox against hostile processes on the host; the workspace is
   assumed to be owner-controlled.
 - Ordinary restarts are in scope; host-reboot and disaster-recovery guarantees are not.
+- Runtime facet installations that declare MCP servers cannot be sealed (see [Runtime facets](#runtime-facets)).
 
 ## License
 

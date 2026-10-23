@@ -22,6 +22,13 @@
         "zod": "4.6.5",
       },
     },
+    "packages/facet-adapter": {
+      "name": "@agent-runtime/facet-adapter",
+      "dependencies": {
+        "@agent-facets/adapter": "0.30.0",
+        "zod": "4.6.5",
+      },
+    },
     "packages/runtime": {
       "name": "@agent-runtime/runtime",
       "dependencies": {
@@ -58,9 +65,13 @@
     },
   },
   "packages": {
+    "@agent-facets/adapter": ["@agent-facets/adapter@0.30.0", "", { "dependencies": { "yaml": "2.9.0" } }, "sha512-e9wwN0gVgdMqP683DMIix8JdDQMCbgECcyjHxsztfS+gnR0Zal6rmScbtzSn1vJ9mr/Z+qSyPRfAIH1j5jQtdg=="],
+
     "@agent-runtime/anthropic-subscription": ["@agent-runtime/anthropic-subscription@workspace:packages/anthropic-subscription"],
 
     "@agent-runtime/contracts": ["@agent-runtime/contracts@workspace:packages/contracts"],
+
+    "@agent-runtime/facet-adapter": ["@agent-runtime/facet-adapter@workspace:packages/facet-adapter"],
 
     "@agent-runtime/runtime": ["@agent-runtime/runtime@workspace:packages/runtime"],
 
@@ -353,6 +364,8 @@
     "yoctocolors": ["yoctocolors@2.2.0", "", {}, "sha512-xYqdZFUK/VYazNl/oCDYN+3WloWQwMfZxBoiNt6qNyk+xfOdi598muWE42rNZFp1kNOiqW936q5RhUdnpqElSg=="],
 
     "zod": ["zod@4.6.5", "", {}, "sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q=="],
+
+    "@agent-facets/adapter/yaml": ["yaml@2.9.0", "", { "bin": { "yaml": "bin.mjs" } }, "sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA=="],
 
     "@langchain/langgraph-sdk/@langchain/protocol": ["@langchain/protocol@0.0.19", "", {}, "sha512-9hKcRrH7cBX6gfutdfXPoft1OCchHe4FEpALoDJMl5Qu+n/YG5ynZmyu8+8cxORlPwHBoKTxggvXz+76M1yX1Q=="],
 

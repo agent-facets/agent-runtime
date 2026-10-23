@@ -18,6 +18,8 @@ const refusedEnvPatterns = [
   /^CODEX_/,
   /^LANGSMITH_/,
   /^LANGCHAIN_/,
+  // The facet CLI's home, credentials, registry and binary selection; fixtures choose their own isolated homes.
+  /^FACET_/,
 ];
 
 export function refusedOverrides(env: Record<string, string | undefined>): string[] {

@@ -1,0 +1,47 @@
+{
+  "name": "rt-workflows",
+  "version": "1.0.0",
+  "description": "Synthetic runtime workflow fixture",
+  "skills": {
+    "review": {
+      "description": "Reviews a synthetic change",
+      "files": ["references/guide.md", "assets/sample.bin"],
+      "adapters": { "agent-runtime": { "runtimeVersion": 1 } }
+    },
+    "scratch": {
+      "description": "A skill the omission case drops",
+      "adapters": { "agent-runtime": { "runtimeVersion": 1 } }
+    }
+  },
+  "agents": {
+    "scout": {
+      "description": "Investigates one synthetic question",
+      "adapters": {
+        "agent-runtime": {
+          "runtimeVersion": 1,
+          "requires": [{ "kind": "skill", "name": "review" }],
+          "restrict": { "native": ["mcp_Read", "mcp_Search"], "agents": [] }
+        }
+      }
+    }
+  },
+  "commands": {
+    "triage": {
+      "description": "Triage a synthetic report",
+      "adapters": {
+        "agent-runtime": {
+          "runtimeVersion": 1,
+          "arguments": { "required": true },
+          "requires": [{ "kind": "skill", "name": "review" }, { "kind": "agent", "name": "scout" }]
+        }
+      }
+    },
+    "legacy": {
+      "description": "Relies on another tool's model selection",
+      "adapters": { "agent-runtime": { "runtimeVersion": 1, "model": "other-tool-model" } }
+    },
+    "plain": {
+      "description": "Has no runtime adaptation"
+    }
+  }
+}

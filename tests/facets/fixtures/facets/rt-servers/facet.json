@@ -1,0 +1,24 @@
+{
+  "name": "rt-servers",
+  "version": "1.0.0",
+  "description": "Synthetic server-declaration fixture",
+  "servers": {
+    "repo-tools": {
+      "type": "stdio",
+      "command": "./never-run.sh",
+      "args": ["--fixture"],
+      "env": { "FIXTURE_MODE": "synthetic" }
+    }
+  },
+  "commands": {
+    "sync": {
+      "description": "Uses the synthetic repository tools",
+      "adapters": {
+        "agent-runtime": {
+          "runtimeVersion": 1,
+          "requires": [{ "kind": "mcp", "server": "repo-tools", "tool": "list_items" }]
+        }
+      }
+    }
+  }
+}

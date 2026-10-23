@@ -14,8 +14,8 @@
       "!!tmp",
       "!!**/dist",
       "!!**/.turbo",
-      "!facets.json",
-      "!facets.lock"
+      "!**/facets.json",
+      "!**/facets.lock"
     ]
   },
   "formatter": {

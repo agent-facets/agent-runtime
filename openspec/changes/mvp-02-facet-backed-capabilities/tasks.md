@@ -29,6 +29,14 @@ Each implementation block SHALL remain shippable with the goal-only path working
 
 Commands below run from the repository root, prefixed with `mise exec --` when needed. `bun run check:verify` includes forced lint, typechecks, unit tests and build; explicitly launched integration/browser/container suites use isolated fixtures. Each Verify SHALL run the checks applicable to the changed inputs, stop at the first failure, and retain command, revision, fixture identity and result evidence. Tests awaiting a later block SHALL be explicitly skipped with a TODO naming that block before verification, never hidden after a failing run; no required gate or final witness may remain skipped at completion.
 
+### Temporary upstream dependency: `UPSTREAM-SERVER-PROVENANCE`
+
+On 2026-10-08 the owner approved deferring the missing public server-origin join while upstream work adds per-facet server data to the CLI lockfile (design Decision 2). CLI 0.33.0/SDK 0.30.0 research and lockfile format 0.3 do not establish that join. The owner subsequently reported CLI 0.35.0; its presence is neither proof of the forthcoming fields nor approval to replace a pin. Task 5.3 SHALL establish the exact interim CLI/SDK pins and binary identity before fixture installation.
+
+Group 6 SHALL implement independent text-asset sealing, metadata and catalog work plus raw server export behavior, without inventing server origins or a future lockfile schema. Server-bearing installations SHALL remain unsealable until provenance is verified. Only the provenance-dependent checks MAY be deferred, explicitly before verification with `TODO UPSTREAM-SERVER-PROVENANCE: revisit 9.1; complete 10.1; verify 10.2`. Task 6.9 is interim verification, not a pass of the full public-export gate. Independent MCP transport work in groups 7–8 MAY continue using clearly labelled synthetic inputs.
+
+Task 9.1 SHALL revisit the released public contract; task 9.4 SHALL obtain approval for its exact pins and remaining integration. Tasks 10.1–10.2 SHALL complete and verify the deferred join before dependent command/MCP implementation. Missing upstream support at that point is a blocker, not permission to infer provenance or add a private-cache/archive-reader workaround. The full public-export gate and final integrated journey remain mandatory with no required provenance checks skipped. Existing completed work and adversarial history SHALL remain unchanged.
+
 ## 1. Durable capability foundation — Research
 
 ### Step 1 - Explore: Map records and migration constraints
@@ -122,50 +130,52 @@ Commands below run from the repository root, prefixed with `mise exec --` when n
 - [x] 4.11 Verify: Run `bun run check:verify` and `bun run test:integration`, including the fresh-process delegate witness; its PostgreSQL/process-boundary pass is required before group 5 or any later feature block. Report evidence and stop on any failure without an engine replacement, framework upgrade or loss of durable-question behavior. Group 12 later adds the distinct full MCP replay gate.
 
 ### Step 29 - Pause: Switch model for exploration
-- [ ] 4.12 Pause: Switch model for exploration; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
+- [x] 4.12 Pause: Switch model for exploration; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
 
 ## 5. Isolated facet export and catalog — Research
 
 ### Step 30 - Explore: Inspect the pinned public facet toolchain
-- [ ] 5.1 Explore: Load `using-facets`, read the installed CLI's usage/authoring instructions and public SDK 0.30.0/API 0.3 contracts; deliver exact CLI 0.33.0 binary integrity, export/inspect/remove interfaces and an isolated absolute `FACET_DIR` procedure without importing the private engine or treating adjacent source as binary equivalence.
+- [x] 5.1 Explore: Load `using-facets`, read the installed CLI's usage/authoring instructions and public SDK 0.30.0/API 0.3 contracts; deliver exact CLI 0.33.0 binary integrity, export/inspect/remove interfaces and an isolated absolute `FACET_DIR` procedure without importing the private engine or treating adjacent source as binary equivalence.
 
 ### Step 31 - Explore: Map export integrity and installation isolation
-- [ ] 5.2 Explore: Inspect public manifest/lock materialization, alias/omission namespaces, companion bytes and transformed-primary limitations; deliver a sealer join/refusal matrix and reproducibility fixture plan, including identical deduplicated server origins and cross-installation mutation checks in both directions.
+- [x] 5.2 Explore: Inspect public manifest/lock materialization, alias/omission namespaces, companion bytes and transformed-primary limitations; deliver a sealer join/refusal matrix and reproducibility fixture plan with cross-installation mutation checks in both directions. Identify the complete deduplicated-server-origin join as `UPSTREAM-SERVER-PROVENANCE`, deferred to 9.1/10.1–10.2 rather than blocking independent work or claiming the current public inputs provide it.
 
 ### Step 32 - Propose: Approve the export and catalog block
-- [ ] 5.3 Propose: Present the complete adapter, sealer, loader and supported-metadata implementation with exact package pins and fixture-only install scope; obtain approval for the block without committing generated owner-specific exports or adding production facets/grants.
+- [x] 5.3 Propose: Present the adapter, text-asset sealer, loader, supported metadata and raw server-export implementation with the explicit server-provenance deferral and fixture-only install scope. Establish and obtain approval for the exact interim CLI version/binary SHA-256 and SDK pin, accounting for the owner-reported CLI 0.35.0 without assuming provenance support. Obtain approval for the block without committing generated owner-specific exports, adding production facets/grants, inventing upstream fields or claiming the full export gate will pass during the deferral.
+
+  Approval recorded 2026-10-08: owner approved the group-6 proposal and interim CLI 0.35.0 (Linux x86-64), binary SHA-256 `d6590bb2c1af0119e2bdfcafbfc0dbafe98e6e9ef015ae524926e983fa9a2a46`, replacing the initial CLI 0.33.0 selection for this block. SDK remains `@agent-facets/adapter` 0.30.0/API 0.3 with `yaml` 2.9.0; Bun/provider/framework pins remain unchanged. Initial sealer inputs are project manifest 0.2 and lockfile 0.3. Fixtures use local synthetic facets and a test-only editor adapter in separate disposable homes, not owner editor tooling. CLI/SDK installation compatibility remains unproven until the group-6 fixture gate. `UPSTREAM-SERVER-PROVENANCE` and its return points remain unchanged; no production facets/grants, owner-state operations, live requests or deployment were approved.
 
 ### Step 33 - Pause: Switch model for implementation
-- [ ] 5.4 Pause: Switch model for implementation; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
+- [x] 5.4 Pause: Switch model for implementation; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
 
 ## 6. Isolated facet export and catalog — Implementation
 
 ### Step 34 - Implement: Add the public adapter workspace package
-- [ ] 6.1 Implement: Add private `packages/facet-adapter` with public SDK 0.30.0, exact lockfile resolutions, normal build/typecheck/test tasks and package-boundary checks; verify frozen installation/build compatibility without upgrading the existing framework/provider pins, and add its license notice to `THIRD_PARTY_NOTICES.md`. In this same change, update the Dockerfile's manifest/source COPY lists, the hard-coded workspace-package assertions and intended dependency boundaries in `scripts/workspace-boundaries.test.ts`, and any required non-`src` build-context allowlist entries. Tested packages SHALL declare `test: "bun test"` and appear in `scripts/test-discovery.test.ts`'s Turbo graph. Verify existing wildcard workspace/Turbo configuration before changing it; do not add redundant configuration. The image build SHALL remain valid from this block onward.
+- [x] 6.1 Implement: Add private `packages/facet-adapter` with public SDK 0.30.0, exact lockfile resolutions, normal build/typecheck/test tasks and package-boundary checks; verify frozen installation/build compatibility without upgrading the existing framework/provider pins, and add its license notice to `THIRD_PARTY_NOTICES.md`. In this same change, update the Dockerfile's manifest/source COPY lists, the hard-coded workspace-package assertions and intended dependency boundaries in `scripts/workspace-boundaries.test.ts`, and any required non-`src` build-context allowlist entries. Tested packages SHALL declare `test: "bun test"` and appear in `scripts/test-discovery.test.ts`'s Turbo graph. Verify existing wildcard workspace/Turbo configuration before changing it; do not add redundant configuration. The image build SHALL remain valid from this block onward.
 
 ### Step 35 - Implement: Export through SDK file-transition plans
-- [ ] 6.2 Implement: Implement SDK-owned file-transition plans for install, inspect and removal of asset/server/refusal exports; test effective names/descriptions, lossless skill companions, missing/unsupported metadata, owned-output removal, repeated installation and zero direct file mutation, server launch or private-engine imports from the adapter.
+- [x] 6.2 Implement: Implement SDK-owned file-transition plans for install, inspect and removal of asset/server/refusal exports; test effective names/descriptions, lossless skill companions, missing/unsupported metadata, owned-output removal, repeated installation and zero direct file mutation, server launch or private-engine imports from the adapter.
 
 ### Step 36 - Implement: Resolve supported metadata and references
-- [ ] 6.3 Implement: Implement explicit version-1 runtime metadata and reference resolution: raw command arguments, `requires`, command/agent allowlist restrictions and no skill `restrict`; unit-test aliases, omissions, local/cross-facet references, cycles, absent/refused prerequisites, skill/command shared namespace and separate agent/server namespaces without prose inference or automatic composition.
+- [x] 6.3 Implement: Implement explicit version-1 runtime metadata and independent reference resolution: raw command arguments, `requires`, command/agent allowlist restrictions and no skill `restrict`; unit-test aliases, omissions, local/cross-facet skill/agent/native references, cycles, absent/refused prerequisites, skill/command shared namespace and separate agent/server namespaces without prose inference or automatic composition. Validate MCP reference syntax without guessing server origins; defer the verified authored-server-to-effective-server binding and its dependent checks to 10.1 under `UPSTREAM-SERVER-PROVENANCE`.
 
 ### Step 37 - Implement: Seal canonical recorded installations
-- [ ] 6.4 Implement: Implement the canonical sealer joining exports to the CLI-managed manifest/lock and recorded installer/adapter identities; test missing/extra/conflicting records, mappings, companion integrity, all deduplicated server origins, transformed-versus-source hash separation and deterministic bundle bytes without a self-hashed digest field.
+- [x] 6.4 Implement: Implement the canonical text-asset sealer joining exports to the CLI-managed manifest/lock and recorded installer/adapter identities; test missing/extra/conflicting text-asset records, mappings, companion integrity, transformed-versus-source hash separation and deterministic bundle bytes without a self-hashed digest field. While `UPSTREAM-SERVER-PROVENANCE` is unresolved, test that server-bearing installations are refused as provenance unavailable without fabricated origins or silently dropped servers. The complete server join and all deduplicated origins land in 10.1.
 
 ### Step 38 - Implement: Load and validate the runtime catalog
-- [ ] 6.5 Implement: Implement the runtime loader/catalog behind the capability boundary; test owner-pinned digest/canonical-format/UTF-8/bounds checks, whole-catalog corrupt-input unavailability, contribution-local unsupported refusals, reserved/colliding IDs and usable unrelated contributions. Goal-only readiness SHALL remain independent of an optional unusable catalog.
+- [x] 6.5 Implement: Implement the runtime loader/catalog behind the capability boundary; test owner-pinned digest/canonical-format/UTF-8/bounds checks, whole-catalog corrupt-input unavailability, contribution-local unsupported refusals, reserved/colliding IDs and usable unrelated contributions. Goal-only readiness SHALL remain independent of an optional unusable catalog.
 
 ### Step 39 - Implement: Establish isolated runtime installation inputs
-- [ ] 6.6 Implement: Create CLI-authored synthetic facet fixtures and the dedicated `deploy/runtime/facets/` project inputs using the CLI rather than hand-writing lockfiles; keep production selection empty until separately chosen, refuse contaminated runtime adapter homes, and verify generated export/bundle/cache exclusions without changing root editor inputs or archive-ignore policy. Test that changing the install command's working directory does not change its absolute selected `FACET_DIR`; verify the sealed installation records the actual CLI version and platform-binary SHA-256.
+- [x] 6.6 Implement: Create CLI-authored synthetic facet fixtures and the dedicated `deploy/runtime/facets/` project inputs using the CLI rather than hand-writing lockfiles; keep production selection empty until separately chosen, refuse contaminated runtime adapter homes, and verify generated export/bundle/cache exclusions without changing root editor inputs or archive-ignore policy. Include text-only sealing fixtures and separate server-export/provenance-refusal fixtures. Test that changing the install command's working directory does not change its absolute selected `FACET_DIR`; verify the sealed installation records the actual CLI version and platform-binary SHA-256 approved in 5.3.
 
 ### Step 40 - Implement: Add the public export fixture gate
-- [ ] 6.7 Implement: Add an explicitly launched public-export fixture check using separate runtime/editor homes: command, skill companion, agent and server; alias, omission, unsupported metadata, removal and repeated install; equal sealed bytes from identical inputs; altered-bundle refusal; no cross-writes in either direction and no model/tool execution. Verify fixture manifests with `facet build --verify`. Add `scripts/run-facets.ts` behind `bun run test:facets`, invoking only `tests/facets/*.facet.test.ts` with disposable runtime/editor homes and an allowlisted environment. Refuse missing or mismatched pinned CLI inputs before installation; never download or repair them automatically. Add launcher-refusal coverage in `scripts/fixture-guards.test.ts` and a facet-suite exclusion witness in `scripts/test-discovery.test.ts`. Keep the suites under the existing `tests/**` exclusion; ordinary unit checks SHALL NOT run CLI installations.
+- [x] 6.7 Implement: Add an explicitly launched interim public-export fixture check using separate runtime/editor homes: command, skill companion, agent and raw server export; alias, omission, unsupported metadata, removal and repeated install; equal text-only sealed bytes from identical inputs; altered-bundle refusal; server-bearing sealing refusal; no cross-writes in either direction and no model/tool execution. Before verification, explicitly skip only the missing lockfile server-origin join and dependent MCP-reference/full-server-bundle checks with `TODO UPSTREAM-SERVER-PROVENANCE: revisit 9.1; complete 10.1; verify 10.2`; do not defer raw server-export behavior that the current SDK already supports. Verify fixture manifests with `facet build --verify`. Add `scripts/run-facets.ts` behind `bun run test:facets`, invoking only `tests/facets/*.facet.test.ts` with disposable runtime/editor homes and an allowlisted environment. Refuse missing or mismatched pinned CLI inputs before installation; never download or repair them automatically. Add launcher-refusal coverage in `scripts/fixture-guards.test.ts` and a facet-suite exclusion witness in `scripts/test-discovery.test.ts`. Keep the suites under the existing `tests/**` exclusion; ordinary unit checks SHALL NOT run CLI installations.
 
 ### Step 41 - Implement: Document installation and sealing
-- [ ] 6.8 Implement: Write `deploy/runtime/facets/README.md` and update README layout/setup/install/seal/supported-subset guidance; validate commands against fixture runs and describe absolute isolated `FACET_DIR`, pinned digests, generated artifacts, explicit runtime adaptation and source-versus-export integrity without promising coding-tool parity.
+- [x] 6.8 Implement: Write `deploy/runtime/facets/README.md` and update README layout/setup/install/seal/supported-subset guidance; validate commands against fixture runs and describe absolute isolated `FACET_DIR`, pinned digests, generated artifacts, explicit runtime adaptation and source-versus-export integrity without promising coding-tool parity. Describe server-bearing sealing refusal as an operational limitation while provenance support is absent, not as a completed feature or README progress narration; the tracked upstream work and return point belong in this checklist and design.
 
-### Step 42 - Verify: Check public export and isolation
-- [ ] 6.9 Verify: Run `bun run check:verify`, `bun run test:facets` and `bun run test:container`; report exact CLI/SDK identity, reproducibility/isolation evidence and a working frozen-lockfile image build. Stop on incompatibility rather than upgrading dependencies or reading private caches.
+### Step 42 - Verify: Check interim public export and isolation
+- [x] 6.9 Verify: Run `bun run check:verify`, `bun run test:facets` and `bun run test:container`; report exact CLI/SDK identity, text-asset reproducibility/isolation and raw server-export evidence, a working frozen-lockfile image build, and every explicitly deferred provenance-dependent check. A pass permits independent groups 7–8, but the full public-export gate remains pending until 10.2. Stop on any failure or incompatibility rather than adding skips after failure, upgrading dependencies or reading private caches.
 
 ### Step 43 - Pause: Switch model for exploration
 - [ ] 6.10 Pause: Switch model for exploration; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
@@ -236,203 +246,212 @@ Commands below run from the repository root, prefixed with `mise exec --` when n
 
 ## 9. Retained command starts and skill execution — Research
 
-### Step 64 - Explore: Map command acceptance and retained definitions
-- [ ] 9.1 Explore: Inspect run-service creation retry order, provider/workspace prerequisites, catalog revisions and stored execution closure; deliver the normalized-input/digest and atomic snapshot binding flow, resolving accepted request IDs before current readiness/discovery.
+### Step 64 - Explore: Revisit upstream server provenance
+- [ ] 9.1 Explore: Revisit `UPSTREAM-SERVER-PROVENANCE`: inspect the released CLI's public lockfile server inventory, source/version/integrity linkage, authored/effective names, aliases/omissions and identical-declaration origins. Establish the actual supported schema and exact CLI binary/SDK identities without guessing fields or treating adjacent source as binary equivalence. Deliver the remaining join/reference/fixture plan for 9.4 approval; if support is still missing, report the blocker and do not proceed to dependent group-10 implementation.
 
-### Step 65 - Explore: Map actor-local skill and reference tools
-- [ ] 9.2 Explore: Inspect native tool admission, content policy, resource paging and model-response batch handling; deliver actor-local skill-load/reference eligibility and command-to-delegate capability wiring that preserves native confinement and immutable retained definitions.
+### Step 65 - Explore: Map command acceptance and retained definitions
+- [ ] 9.2 Explore: Inspect run-service creation retry order, provider/workspace prerequisites, catalog revisions and stored execution closure; deliver the normalized-input/digest and atomic snapshot binding flow, resolving accepted request IDs before current readiness/discovery.
 
-### Step 66 - Propose: Approve the command and skill block
-- [ ] 9.3 Propose: Present the whole command/skill integration with service-level tests, same-response membership rules and required-MCP preflight boundaries; obtain approval without adding a template language, facet-selected root agent or additional goal-only tools.
+### Step 66 - Explore: Map actor-local skill and reference tools
+- [ ] 9.3 Explore: Inspect native tool admission, content policy, resource paging and model-response batch handling; deliver actor-local skill-load/reference eligibility and command-to-delegate capability wiring that preserves native confinement and immutable retained definitions.
 
-### Step 67 - Pause: Switch model for implementation
-- [ ] 9.4 Pause: Switch model for implementation; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
+### Step 67 - Propose: Approve the command and skill block
+- [ ] 9.4 Propose: Present the whole command/skill integration with service-level tests, same-response membership rules and required-MCP preflight boundaries. Include completion of `UPSTREAM-SERVER-PROVENANCE`, the actual public lockfile contract, exact CLI version/binary SHA-256 and SDK compatibility, every resumed fixture, and the full public-export gate before dependent implementation. Obtain explicit approval for any pin change and for this block without adding a template language, facet-selected root agent, additional goal-only tools or a private-cache/archive-reader workaround. Missing upstream support remains a blocker for the dependent block.
+
+### Step 68 - Pause: Switch model for implementation
+- [ ] 9.5 Pause: Switch model for implementation; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
 
 ## 10. Retained command starts and skill execution — Implementation
 
-### Step 68 - Implement: Add exclusive command start contracts
-- [ ] 10.1 Implement: Add normalized exclusive goal/command inputs and strict shared start/error contracts; contract tests SHALL reject both/neither modes and arbitrary prompts, graphs, paths, grants or credential references, while preserving the existing goal wire form and typed command arguments/revision. Keep the public HTTP command form disabled until group 14.
+### Step 69 - Implement: Complete verified server provenance
+- [ ] 10.1 Implement: Complete `UPSTREAM-SERVER-PROVENANCE` using the approved released public lockfile contract and exact toolchain pins. Join every selected server declaration to its originating facets/source/version/integrity and recorded alias/omission choices; retain all identical-declaration origins and reject missing/extra/conflicting records. Finish authored MCP-reference resolution through that mapping. Remove the explicitly deferred provenance skips and add server-only, deduplicated-origin, alias/omission, conflicting-declaration, frozen-install, removal/reinstall, reproducibility, altered-bundle and bidirectional-isolation witnesses. Preserve primary-source versus transformed-export integrity separation. Update fixture preflight and installation documentation to the observed supported behavior; introduce no private-cache/archive-reader dependency, fabricated provenance or unrelated SDK/provider/framework upgrade.
 
-### Step 69 - Implement: Render and validate selected commands
-- [ ] 10.2 Implement: Implement raw-text `$ARGUMENTS` substitution or labelled append, required/optional arguments and selection revisions; unit-test blank/oversized goals, literal shell-like content, secret-bearing arguments, stale selection, missing/refused prerequisites and no automatic free-form fallback or alternate command.
+### Step 70 - Verify: Complete the public export gate
+- [ ] 10.2 Verify: Run `bun run check:verify`, `bun run test:facets` and `bun run test:container` against the completed public server-provenance integration. Report actual toolchain identities and all text/server join, reproducibility/isolation and frozen-image results; no `UPSTREAM-SERVER-PROVENANCE` witness may remain skipped. Passing the complete public-export gate is required before the remaining group-10 implementation. Stop on missing upstream support or any failed check without automatic repair, rerun, fallback or dependency upgrade.
 
-### Step 70 - Implement: Capture complete immutable run capabilities
-- [ ] 10.3 Implement: Assemble and atomically retain immutable snapshots containing all available definitions, unloaded resources, agents, raw/adapted tool definitions, program/declaration identity, original authority ceiling and limits; integration-test digest/bounds validation, no private credentials, deduplication, installation removal and atomic rollback with no acknowledged run lacking its snapshot. Test that assembly refuses a known managed credential in any snapshot field and that its canonical digest is independent of input object key order.
+### Step 71 - Implement: Add exclusive command start contracts
+- [ ] 10.3 Implement: Add normalized exclusive goal/command inputs and strict shared start/error contracts; contract tests SHALL reject both/neither modes and arbitrary prompts, graphs, paths, grants or credential references, while preserving the existing goal wire form and typed command arguments/revision. Keep the public HTTP command form disabled until group 14.
 
-### Step 71 - Implement: Preserve submitted-input creation idempotency
-- [ ] 10.4 Implement: Extend run creation so normalized submitted input resolves existing request identity before installation/provider/server checks; integration-test lost acknowledgements across installation updates/removal and provider/MCP outage, different-input conflicts, fresh stale-selection refusal, and zero duplicate model work or MCP preflight for accepted retries.
+### Step 72 - Implement: Render and validate selected commands
+- [ ] 10.4 Implement: Implement raw-text `$ARGUMENTS` substitution or labelled append, required/optional arguments and selection revisions; unit-test blank/oversized goals, literal shell-like content, secret-bearing arguments, stale selection, missing/refused prerequisites and no automatic free-form fallback or alternate command.
 
-### Step 72 - Implement: Preflight approved required MCP definitions
-- [ ] 10.5 Implement: Add bounded preflight only for a new command's approved required MCP dependencies and bind the current reviewed definitions; test no tool/model call during preflight, no server launch for catalog reads, no launch without matching connection approval, optional-unavailable isolation and safe attributed start errors.
+### Step 73 - Implement: Capture complete immutable run capabilities
+- [ ] 10.5 Implement: Assemble and atomically retain immutable snapshots containing all available definitions, unloaded resources, agents, raw/adapted tool definitions, program/declaration identity, original authority ceiling and limits; integration-test digest/bounds validation, no private credentials, deduplication, installation removal and atomic rollback with no acknowledged run lacking its snapshot. Test that assembly refuses a known managed credential in any snapshot field and that its canonical digest is independent of input object key order.
 
-### Step 73 - Implement: Load retained skills and confined references
-- [ ] 10.6 Implement: Implement `mcp_LoadSkill` and `mcp_ReadSkillReference` through the actor-aware operation ledger and retained resources, atomically committing successful outcome/membership/provenance; unit/integration-test name/description-only advertisement, on-demand full instructions, idempotent membership, disallowed or unloaded/missing/escaping references, UTF-8/bounded paging, and no arbitrary filesystem/script access.
+### Step 74 - Implement: Preserve submitted-input creation idempotency
+- [ ] 10.6 Implement: Extend run creation so normalized submitted input resolves existing request identity before installation/provider/server checks; integration-test lost acknowledgements across installation updates/removal and provider/MCP outage, different-input conflicts, fresh stale-selection refusal, and zero duplicate model work or MCP preflight for accepted retries.
 
-### Step 74 - Implement: Freeze reference eligibility per model response
-- [ ] 10.7 Implement: Capture loaded membership when a model response is admitted; test load plus independent read is allowed, sibling load does not enable a same-response reference, later responses can read it, and replay/cancellation cannot invent or lose a successful load record. Cover mixed MCP calls through test doubles here and real MCP dispatch in group 12.
+### Step 75 - Implement: Preflight approved required MCP definitions
+- [ ] 10.7 Implement: Add bounded preflight only for a new command's approved required MCP dependencies and bind the current reviewed definitions; test no tool/model call during preflight, no server launch for catalog reads, no launch without matching connection approval, optional-unavailable isolation and safe attributed start errors.
 
-### Step 75 - Implement: Bind retained definitions into execution compatibility
-- [ ] 10.8 Implement: Bind the root/delegate factories to retained definitions and extend per-provider execution manifests with resume-critical capability/delegate/MCP code and interpretation/tool/question versions; test install changes alone preserving continuation, code or confirmed snapshot loss refusing it, storage inspection outage accepting nothing, and native goal-only authority remaining unchanged with or without facets. Add a named regression asserting that a configured catalog leaves goal runs with exactly `mcp_Read`, `mcp_Search` and `mcp_AskUser` for both provider assemblies. Manifest tests SHALL confirm the coverage established as earlier modules landed, not introduce it for the first time here.
+### Step 76 - Implement: Load retained skills and confined references
+- [ ] 10.8 Implement: Implement `mcp_LoadSkill` and `mcp_ReadSkillReference` through the actor-aware operation ledger and retained resources, atomically committing successful outcome/membership/provenance; unit/integration-test name/description-only advertisement, on-demand full instructions, idempotent membership, disallowed or unloaded/missing/escaping references, UTF-8/bounded paging, and no arbitrary filesystem/script access.
 
-### Step 76 - Implement: Document command and skill retention
-- [ ] 10.9 Implement: Update facet metadata/argument/skill docs, README execution/compatibility and `architecture/02-control-plane.md`/`09-data-model-and-lifecycle.md`; verify the service fixture demonstrates retained first-use-after-pause, bound-versus-used provenance and no grants embedded as frozen authority.
+### Step 77 - Implement: Freeze reference eligibility per model response
+- [ ] 10.9 Implement: Capture loaded membership when a model response is admitted; test load plus independent read is allowed, sibling load does not enable a same-response reference, later responses can read it, and replay/cancellation cannot invent or lose a successful load record. Cover mixed MCP calls through test doubles here and real MCP dispatch in group 12.
 
-### Step 77 - Verify: Check command acceptance and skill loading
-- [ ] 10.10 Verify: Run `bun run check:verify`, `bun run test:integration` and `bun run test:facets`, including the load/reference cases in the integration suite; report command retry, snapshot and ordinary-skill-batch evidence and stop on any failure.
+### Step 78 - Implement: Bind retained definitions into execution compatibility
+- [ ] 10.10 Implement: Bind the root/delegate factories to retained definitions and extend per-provider execution manifests with resume-critical capability/delegate/MCP code and interpretation/tool/question versions; test install changes alone preserving continuation, code or confirmed snapshot loss refusing it, storage inspection outage accepting nothing, and native goal-only authority remaining unchanged with or without facets. Add a named regression asserting that a configured catalog leaves goal runs with exactly `mcp_Read`, `mcp_Search` and `mcp_AskUser` for both provider assemblies. Manifest tests SHALL confirm the coverage established as earlier modules landed, not introduce it for the first time here.
 
-### Step 78 - Pause: Switch model for exploration
-- [ ] 10.11 Pause: Switch model for exploration; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
+### Step 79 - Implement: Document command and skill retention
+- [ ] 10.11 Implement: Update facet metadata/argument/skill docs, README execution/compatibility and `architecture/02-control-plane.md`/`09-data-model-and-lifecycle.md`; verify the service fixture demonstrates retained first-use-after-pause, bound-versus-used provenance and no grants embedded as frozen authority.
+
+### Step 80 - Verify: Check command acceptance and skill loading
+- [ ] 10.12 Verify: Run `bun run check:verify`, `bun run test:integration` and `bun run test:facets`, including the load/reference cases in the integration suite; report command retry, snapshot and ordinary-skill-batch evidence and stop on any failure. Confirm the full public-export gate remains covered with no server-provenance checks deferred.
+
+### Step 81 - Pause: Switch model for exploration
+- [ ] 10.13 Pause: Switch model for exploration; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
 
 ## 11. MCP dispatch through the durable run boundary — Research
 
-### Step 79 - Explore: Map MCP admission and commit uncertainty
+### Step 82 - Explore: Map MCP admission and commit uncertainty
 - [ ] 11.1 Explore: Inspect operation replay, final current-grant checks, run dispatch serialization and commit-certainty handling; deliver a call-admission/crash-window matrix separating never dispatched, dispatch intent, completed response and unknown external effect.
 
-### Step 80 - Propose: Approve durable MCP dispatch
+### Step 83 - Propose: Approve durable MCP dispatch
 - [ ] 11.2 Propose: Present the whole ledger-to-MCP wiring and delegate replay gate completion, including effective revocation after restart-loaded configuration and actor cancellation races; obtain approval for one SDK attempt per new operation and terminal uncertainty without generic confirmation or automatic recovery.
 
-### Step 81 - Pause: Switch model for implementation
+### Step 84 - Pause: Switch model for implementation
 - [ ] 11.3 Pause: Switch model for implementation; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
 
 ## 12. MCP dispatch through the durable run boundary — Implementation
 
-### Step 82 - Implement: Wrap MCP definitions with runtime-owned tools
+### Step 85 - Implement: Wrap MCP definitions with runtime-owned tools
 - [ ] 12.1 Implement: Wrap adapted external definitions with runtime-owned LangChain tools and stable `mcp_ext_` identity names; test credential-safe public name prefixes, unchanged raw approval digests, collision/reserved-name refusal and no invocation of adapter-generated call/resource helpers.
 
-### Step 83 - Implement: Admit one authorized durable MCP operation
+### Step 86 - Implement: Admit one authorized durable MCP operation
 - [ ] 12.2 Implement: Wire dispatch in the designed order: exact replay, active actor/contribution, current matching server/tool grants, raw schema and argument equality, secret-safe arguments, then final ownership/run/cancellation admission with durable intent; integration-test out-of-scope repository and other denied cases send zero `callTool` requests while matching grants need no generic confirmation. Independent fixture counters SHALL observe exactly one SDK `callTool` attempt per admitted new operation and zero for refused or completed-replay operations.
 
-### Step 84 - Implement: Serialize MCP initiation with cancellation
+### Step 87 - Implement: Serialize MCP initiation with cancellation
 - [ ] 12.3 Implement: Serialize final definition/grant checks and SDK request initiation with cancellation acceptance, with connections/discovery tracked outside short gates; race-test no dispatch after accepted cancellation, call deadlines, best-effort child termination, settled local work, no late root success and no claim that external effects were undone.
 
-### Step 85 - Implement: Settle shared invocation-owned MCP sessions
+### Step 88 - Implement: Settle shared invocation-owned MCP sessions
 - [ ] 12.4 Implement: Share invocation-owned connections by approved server identity between root/delegate and close them at settlement, human pause or failure; test one appropriate connection per identity, separate short-lived inspection, retained directory data and no durable MCP-session promise or automatic reconnect/retry of an operation. For a successful fixture invocation using one approved server identity, multiple root/delegate calls SHALL share one child process, which closes at pause or settlement; count separate discovery/preflight connections separately. An accepted creation-request retry SHALL launch zero processes.
 
-### Step 86 - Implement: Persist outcomes before model consumption
+### Step 89 - Implement: Persist outcomes before model consumption
 - [ ] 12.5 Implement: Record safe completed outcomes atomically before model consumption and reuse exact completed bindings before new-dispatch permission checks; integration-test new identical-argument operations remain new, completed replay after grant revocation sends nothing, ambiguous completion commits never fabricate success, and recognized credentials never reach graph/checkpoint/history.
 
-### Step 87 - Implement: Stop runs on unknown external effects
+### Step 90 - Implement: Stop runs on unknown external effects
 - [ ] 12.6 Implement: Record unconfirmed external intent as uncertain and end the run with `tool_failure`/`mcp_outcome_unknown` unless cancellation/interruption already determines it; crash/disconnect tests SHALL prove no automatic retry or later model turn, inspectable prior progress and no false claim of delivery, success or zero effect.
 
-### Step 88 - Implement: Complete real MCP delegate replay coverage
+### Step 91 - Implement: Complete real MCP delegate replay coverage
 - [ ] 12.7 Implement: Complete the PostgreSQL fresh-process delegate gate using the bundled MCP fixture rather than only a stand-in; test an MCP operation before each of two questions, exact negative answers across restart, unchanged completed-call counts, genuinely new identical-argument calls, mixed skill-load/MCP batches and shared-budget exhaustion through both scripted provider assemblies.
 
-### Step 89 - Implement: Document external dispatch and uncertainty
+### Step 92 - Implement: Document external dispatch and uncertainty
 - [ ] 12.8 Implement: Update README MCP/restart/uncertainty guidance and `architecture/08-execution-security.md`/`09-data-model-and-lifecycle.md`; verify matching grants remain distinct from workflow-specific approvals and unknown replies leave external recovery to the owner, not a hidden retry loop.
 
-### Step 90 - Verify: Check the complete durable MCP boundary
+### Step 93 - Verify: Check the complete durable MCP boundary
 - [ ] 12.9 Verify: Run `bun run check:verify` and `bun run test:integration`, including the MCP/Bun and full durable-delegate gates; report dispatch-intent/uncertainty evidence before exposing capabilities through the browser.
 
-### Step 91 - Pause: Switch model for exploration
+### Step 94 - Pause: Switch model for exploration
 - [ ] 12.10 Pause: Switch model for exploration; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
 
 ## 13. Browser catalog, command mode and provenance — Research
 
-### Step 92 - Explore: Map safe capability routes and event replay
+### Step 95 - Explore: Map safe capability routes and event replay
 - [ ] 13.1 Explore: Inspect HTTP security/acceptance envelopes, projection, SSE replay and strict contracts; deliver route/event mappings for catalog, explicit discovery, retained run capabilities and actor-attributed legacy-compatible history without exposing private bindings.
 
-### Step 93 - Explore: Map the additive browser journey
+### Step 96 - Explore: Map the additive browser journey
 - [ ] 13.2 Explore: Inspect `Home.tsx`, `RunDetail.tsx`, API client, timeline and browser fixtures independently; deliver a small UI plan for command selection, grants/refusals, discovery and actor/provenance labels with the existing provider/question/cancel experience intact.
 
-### Step 94 - Propose: Approve the server and console block
+### Step 97 - Propose: Approve the server and console block
 - [ ] 13.3 Propose: Present the complete server-and-console block, including no-launch reads, plain-text rendering and both-provider scripted browser cases; obtain approval without facet management, approval-editing APIs or a separate multi-agent dashboard.
 
-### Step 95 - Pause: Switch model for implementation
+### Step 98 - Pause: Switch model for implementation
 - [ ] 13.4 Pause: Switch model for implementation; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
 
 ## 14. Browser catalog, command mode and provenance — Implementation
 
-### Step 96 - Implement: Expose safe capability inspection and discovery
+### Step 99 - Implement: Expose safe capability inspection and discovery
 - [ ] 14.1 Implement: Add strict safe catalog/discovery/run-capability schemas and complete the new error/event variants, then implement `/api/v1/capabilities`, server discovery and run capability routes; contract/API tests SHALL enforce bounds, Host/Origin/body/security headers, configured-versus-effective grants, no credential/environment/slot/checkpoint exposure and no launch on GET. API fixture counters SHALL show zero launches for catalog GET or refused discovery, and exactly one short-lived connection/process for one successful explicit discovery action.
 
-### Step 97 - Implement: Enable validated command starts through HTTP
+### Step 100 - Implement: Enable validated command starts through HTTP
 - [ ] 14.2 Implement: Enable the exclusive command start through HTTP only after prerequisite backend gates pass; integration-test status/error mappings, zero work for refused selections, uncertain-acceptance retry behavior and unchanged goal starts/provider authorization.
 
-### Step 98 - Implement: Add command selection and installed capability views
+### Step 101 - Implement: Add command selection and installed capability views
 - [ ] 14.3 Implement: Add goal/command mode, command description/arguments/revision/readiness and installed-contribution/server inspection to the start view; unit/browser-test no-argument commands, stale/unsupported/missing selections, explicit native-goal selection when the catalog is unconfigured/unavailable, discovery without approval mutation and retained request IDs after unknown acceptance. Never silently turn a refused command into a goal run.
 
-### Step 99 - Implement: Show retained and actually used capabilities
+### Step 102 - Implement: Show retained and actually used capabilities
 - [ ] 14.4 Implement: Add the retained capability panel with command/origin/version, bound versus used items, limits and recorded/current permission explanations; test viewing finished runs after uninstall/restart without fetching new definitions, starting a server or invoking a graph/tool.
 
-### Step 100 - Implement: Attribute ordered history and pending questions
+### Step 103 - Implement: Attribute ordered history and pending questions
 - [ ] 14.5 Implement: Extend ordered history, pending questions and results with actor/public contribution labels, delegation start/end and uncertainty; UI/timeline/browser tests SHALL distinguish repeated named delegates, original asker, delegate result versus root final result, exact negative answers, cancellation, legacy events and reconnect replay with no duplicate or missing event.
 
-### Step 101 - Implement: Add safe browser projection fixtures
+### Step 104 - Implement: Add safe browser projection fixtures
 - [ ] 14.6 Implement: Add credential-bearing and markup-like catalog, discovery, argument, question and result fixtures to contract/projection/browser capture tests; verify plain-text rendering, no external resource loading, no secrets in responses/SSE/console, and no internal imports in the UI bundle.
 
-### Step 102 - Implement: Document capability usage without status narration
+### Step 105 - Implement: Document capability usage without status narration
 - [ ] 14.7 Implement: Update README console/API/usage/troubleshooting and `architecture/07-network-and-protocols.md` alongside the routes; remove README milestone/progress/status narration from its introduction, Providers and Limitations rather than update it, preserving setup, operational caveats and stable historical evidence links. Verify documented requests and links against API/browser fixtures.
 
-### Step 103 - Verify: Check both scripted browser journeys
+### Step 106 - Verify: Check both scripted browser journeys
 - [ ] 14.8 Verify: Run `bun run check:verify`, `bun run test:integration` and `bun run test:browser`; report both-provider command/delegate question and browser replay/provenance results with the goal-only and provider-login regressions still green.
 
-### Step 104 - Pause: Switch model for exploration
+### Step 107 - Pause: Switch model for exploration
 - [ ] 14.9 Pause: Switch model for exploration; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
 
 ## 15. Reproducible deployment inputs — Research
 
-### Step 105 - Explore: Map image inputs and isolated deployment fixtures
+### Step 108 - Explore: Map image inputs and isolated deployment fixtures
 - [ ] 15.1 Explore: Inspect `Dockerfile`, `.dockerignore`, Compose, build manifests, environment allowlists and disposable container/rollback fixtures; deliver a read-only bundle/program mount and private-state plan that preserves the existing topology and owner volumes.
 
-### Step 106 - Propose: Approve reproducible deployment packaging
+### Step 109 - Propose: Approve reproducible deployment packaging
 - [ ] 15.2 Propose: Present the complete image/configuration/documentation block and synthetic container witness, including no-production-server defaults, old-waiting-run incompatibility and schema-aware rollback limits; obtain approval for repository/test changes only, not live deployment or maintenance of owner state.
 
-### Step 107 - Pause: Switch model for implementation
+### Step 110 - Pause: Switch model for implementation
 - [ ] 15.3 Pause: Switch model for implementation; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
 
 ## 16. Reproducible deployment inputs — Implementation
 
-### Step 108 - Implement: Package reproducible program and build inputs
+### Step 111 - Implement: Package reproducible program and build inputs
 - [ ] 16.1 Implement: Complete final program-artifact packaging on top of the package/Dockerfile scaffolding already landed in groups 6 and 8, without importing install-time code into browser/provider runtime boundaries; build tests SHALL verify exact program manifest digests under `/opt/agent-runtime/mcp/<programId>/<sha256>.js`, relevant execution closure changes and no on-demand installer/Node fallback or test-only server in the default image.
 
-### Step 109 - Implement: Mount sealed facets without widening writes
+### Step 112 - Implement: Mount sealed facets without widening writes
 - [ ] 16.2 Implement: Add optional `AGENT_RUNTIME_FACETS` host bundle wiring to the fixed read-only `/etc/agent-runtime/facets/installation.json` destination and complete non-secret examples; configuration/container tests SHALL cover native deployment without a selected facet bundle as well as approved synthetic capability deployment, preserving workspace/config/root read-only mounts and existing private-state/tmp limits.
 
-### Step 110 - Implement: Exercise packaged MCP state and provisioning
+### Step 113 - Implement: Exercise packaged MCP state and provisioning
 - [ ] 16.3 Implement: Extend the isolated container fixture to supply an explicitly test-built program and sealed bundle read-only, exercise persistent server cwd/HOME/TMPDIR and stopped-runtime stdin provisioning, and refuse tampered/missing artifacts; assert no additional writable mount, host credential access, provider request, package download or Tailscale enrollment.
 
-### Step 111 - Implement: Preserve storage across supported upgrade paths
+### Step 114 - Implement: Preserve storage across supported upgrade paths
 - [ ] 16.4 Implement: Extend upgrade/compatibility fixtures for the new migration and stored capabilities, preserving record/credential fingerprints; test disable-new-starts configuration rollback and newer-schema rejection by an incompatible binary without executing a down-migration or claiming phase-1 binary compatibility.
 
-### Step 112 - Implement: Document packaging and rollback limitations
+### Step 115 - Implement: Document packaging and rollback limitations
 - [ ] 16.5 Implement: Complete README deployment/commands, `.env.example`, `deploy/runtime/config.example.json`, facet setup guidance and third-party notices; validate documented install/seal/mount/discover/grant/provision steps on synthetic inputs and explicitly document finishing/cancelling old waiting runs before upgrade, preserved history and owner-directed recovery with no automatic deletion/restore.
 
-### Step 113 - Verify: Check isolated deployment and preserved state
+### Step 116 - Verify: Check isolated deployment and preserved state
 - [ ] 16.6 Verify: Run `bun run check:verify`, `bun run test:integration`, `bun run test:browser` and `bun run test:container`; report image identities, read-only mount assertions and preserved-storage evidence without touching the live deployment.
 
-### Step 114 - Pause: Switch model for exploration
+### Step 117 - Pause: Switch model for exploration
 - [ ] 16.7 Pause: Switch model for exploration; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
 
 ## 17. Integrated phase-2 witnesses — Research
 
-### Step 115 - Explore: Map requirements to phase-2 evidence
+### Step 118 - Explore: Map requirements to phase-2 evidence
 - [ ] 17.1 Explore: Map every capability and execution-delta scenario plus the four design gates to existing results and remaining cross-component cases; deliver a coverage matrix distinguishing unit, PostgreSQL/process, MCP/Bun, browser/container and live evidence, with no substitution of the MemorySaver probe or accepted phase-1 exceptions.
 
-### Step 116 - Propose: Approve the final finite integration witnesses
+### Step 119 - Propose: Approve the final finite integration witnesses
 - [ ] 17.2 Propose: Present the final finite synthetic witness and evidence plan for both stock provider assemblies, including secret capture, retained definitions, revocation and goal-only regressions; obtain approval for its exact scope and identify any owner-only live/deployment/acceptance decisions separately rather than authorizing them implicitly.
 
-### Step 117 - Pause: Switch model for implementation
+### Step 120 - Pause: Switch model for implementation
 - [ ] 17.3 Pause: Switch model for implementation; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
 
 ## 18. Integrated phase-2 witnesses — Implementation
 
-### Step 118 - Implement: Complete both scripted end-to-end journeys
+### Step 121 - Implement: Complete both scripted end-to-end journeys
 - [ ] 18.1 Implement: Add only cross-component missing witnesses: installed command → on-demand skill/reference → delegate → approved MCP tool → delegated question → exact answer → delegate outcome → final root result for Anthropic and OpenAI scripted assemblies; verify no provider fallback, fresh-process continuation, actual-use provenance, shared accounting and final ordered browser history.
 
-### Step 119 - Implement: Complete retention and revocation integration
+### Step 122 - Implement: Complete retention and revocation integration
 - [ ] 18.2 Implement: Add cross-component installation replacement/removal and configuration-revocation cases: load an unused retained skill/reference or agent after restart, reuse completed outcomes but deny revoked new calls, and inspect old history without installation; verify optional capability failures do not widen or disable an otherwise ready native goal run and no required scenario remains skipped.
 
-### Step 120 - Implement: Capture whole-journey credential privacy
+### Step 123 - Implement: Capture whole-journey credential privacy
 - [ ] 18.3 Implement: Add a whole-journey synthetic-credential capture assertion across model inputs, checkpointed tool results, retained definitions, histories, SSE, final results, browser console and diagnostic output; verify only the intended test server receives its value, with failure/refusal/uncertain paths included and raw sensitive evidence never saved.
 
-### Step 121 - Verify: Run the final bounded synthetic witnesses
+### Step 124 - Verify: Run the final bounded synthetic witnesses
 - [ ] 18.4 Verify: Run `bun run test:facets`, `bun run check:verify`, `bun run test:integration` including the MCP/Bun gate, `bun run test:browser` and `bun run test:container` on the final changed inputs; stop at the first failure and report successful/failed/not-run distinctions, exact request counts, versions and fixture identifiers. Do not run live acceptance or deploy.
 
-### Step 122 - Implement: Record attributable phase-2 integration evidence
+### Step 125 - Implement: Record attributable phase-2 integration evidence
 - [ ] 18.5 Implement: Write a phase-2 evidence report under `architecture/integration-evidence/mvp-02/` mapping every delta scenario and design gate to its actual test/result, code revision, pinned tools and retained safe outputs; label live/deployment checks not performed and owner decisions still pending. Verify the report contains no missing required synthetic witness, invented pass or phase-1 exception carried forward as approval.
 
-### Step 123 - Verify: Check evidence integrity and planning consistency
+### Step 126 - Verify: Check evidence integrity and planning consistency
 - [ ] 18.6 Verify: Run strict OpenSpec validation and read-only evidence/link/whitespace checks after the evidence-only write; verify the report matches observed results and historical/adversarial files are unchanged, without rerunning unchanged application trials or claiming live acceptance.
 
-### Step 124 - Review: Present results and remaining owner decisions
+### Step 127 - Review: Present results and remaining owner decisions
 - [ ] 18.7 Review: Present the completed scenario/gate matrix, remaining limitations and any separately required live/deployment/acceptance decisions, then request feedback through the question gate. Completion means feedback is recorded; this step neither runs live work nor declares owner acceptance, synchronizes specs or archives the change automatically.
