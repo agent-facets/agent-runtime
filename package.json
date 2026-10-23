@@ -20,7 +20,8 @@
     "test:scripts": "bun test ./scripts",
     "typecheck:scripts": "tsc -p tsconfig.json",
     "test:integration": "bun --no-env-file scripts/run-integration.ts",
-    "test:container": "bun --no-env-file scripts/container-smoke.ts"
+    "test:container": "bun --no-env-file scripts/container-smoke.ts",
+    "provenance:anthropic": "bun --no-env-file scripts/verify-anthropic-provenance.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.15",

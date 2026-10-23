@@ -43,6 +43,15 @@ SOFTWARE.
 
 Source: <https://github.com/anomalyco/opencode>
 
+### Anthropic subscription authorization
+
+`packages/anthropic-subscription` contains code derived from
+`@ex-machina/opencode-anthropic-auth` (MIT, Copyright (c) 2026 Ex Machina) at revision
+`156cb66c6889e1be3ad2b839345ea409942ab40f`. Its license text and provenance are in
+[`packages/anthropic-subscription/THIRD_PARTY_NOTICES.md`](packages/anthropic-subscription/THIRD_PARTY_NOTICES.md)
+and [`PROVENANCE.md`](packages/anthropic-subscription/PROVENANCE.md). The runtime image carries that notice
+under `/app/licenses/anthropic-subscription/`.
+
 ## Dependencies installed separately
 
 Nothing in this section is included in this repository. Each item is

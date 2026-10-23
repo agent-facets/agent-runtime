@@ -15,7 +15,7 @@ import { ASK_TOOL } from '../../packages/runtime/src/execution/tools.ts';
 import { KeyedSerializer } from '../../packages/runtime/src/persistence/keyed-serializer.ts';
 import type { Persistence } from '../../packages/runtime/src/persistence/persistence.ts';
 import { type CreateRunInput, RunStore } from '../../packages/runtime/src/records/run-store.ts';
-import type { ProviderBinding, QuestionInput } from '../../packages/runtime/src/records/schemas.ts';
+import type { Provider, ProviderBinding, QuestionInput } from '../../packages/runtime/src/records/schemas.ts';
 import { createContentPolicy } from '../../packages/runtime/src/security/content-policy.ts';
 import { AIMessage, ScriptedModel, type ScriptStep } from '../../packages/runtime/test-support/scripted-model.ts';
 import type { Fixture } from '../../packages/runtime/test-support/workspace.ts';
@@ -49,7 +49,7 @@ export class Lifecycle {
   readonly executor = new InvocationExecutor(new KeyedSerializer());
   readonly policy = createContentPolicy(exactSecretMatcher([]));
   /** Overridable per test: what continuation verification sees. */
-  code: () => Promise<CodeManifest> = currentCodeManifest;
+  code: (provider: Provider) => Promise<CodeManifest> = currentCodeManifest;
   saver: Persistence['checkpoints']['saver'];
   reconstruct: ContinuationDeps['reconstruct'] = (binding) => ({ ok: true, binding });
 
@@ -81,7 +81,7 @@ export class Lifecycle {
     const { agent, params } = this.agentFor(runId, crypto.randomUUID(), new ScriptedModel([]));
     return (
       await executionDefinition({
-        code: await currentCodeManifest(),
+        code: await currentCodeManifest(BINDING.provider),
         agent,
         params,
         binding: BINDING,
@@ -135,7 +135,7 @@ export class Lifecycle {
           workspacePolicyDigest: () => this.workspacePolicy.digest,
           agentFor: (runId) => this.agentFor(runId, crypto.randomUUID(), new ScriptedModel([])),
           saver: this.saver,
-          code: () => this.code(),
+          code: (provider) => this.code(provider),
         },
         question,
       );

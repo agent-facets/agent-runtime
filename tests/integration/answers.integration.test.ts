@@ -179,8 +179,8 @@ describe('continuation verification', () => {
   test('changed execution code closes the question and fails the run as continuation unavailable', async () => {
     const { runId, questionId } = await life.waitingRun();
     const original = life.code;
-    life.code = async (): Promise<CodeManifest> => {
-      const code = await original();
+    life.code = async (provider): Promise<CodeManifest> => {
+      const code = await original(provider);
       return {
         ...code,
         executionCode: code.executionCode.map((entry) =>

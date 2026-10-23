@@ -13,16 +13,22 @@ export type FailureClassification =
   | { kind: 'superseded' }
   | { kind: 'fail_stop' };
 
-const fail = (reason: FailureReason, provider: Provider): FailureClassification => ({
+const fail = (reason: FailureReason, provider: Provider, attemptId?: string): FailureClassification => ({
   kind: 'failure',
-  failure: failureFor(reason, { provider }),
+  failure: failureFor(reason, {
+    provider,
+    ...(attemptId === undefined ? {} : { operation: { kind: 'model_attempt', attemptId } }),
+  }),
 });
 
 const TERMINAL_REASONS: Partial<Record<TerminalErrorCode, FailureReason>> = {
   request_timeout: 'request_timeout',
   endpoint_refused: 'invariant_violation',
+  // The runtime builds every request; one its provider profile cannot represent is the runtime's fault.
+  request_refused: 'invariant_violation',
   redirect_refused: 'redirect_refused',
   provider_unreachable: 'provider_unreachable',
+  incomplete_response: 'incomplete_response',
   persistence_failure: 'persistence_failure',
   invariant_violation: 'invariant_violation',
 };
@@ -44,6 +50,25 @@ export function classifyInvocationFailure(error: unknown, provider: Provider): F
     return fail(EXECUTION_REASONS[failure.code] ?? 'invariant_violation', provider);
 
   const evidence = failure.evidence ?? { kind: 'unknown' as const };
+  if (evidence.kind === 'provider') {
+    // Renewal has already been spent or was unavailable by the time a classified failure reaches the run.
+    const classified = classify({
+      kind: 'inference',
+      provider,
+      attemptId: evidence.attemptId,
+      evidence: {
+        kind: 'http',
+        status: evidence.status,
+        code: evidence.code,
+        ...(evidence.retryAfter === undefined ? {} : { retryAfter: evidence.retryAfter }),
+      },
+      renewalAvailable: false,
+      now: new Date(),
+    });
+    return classified.kind === 'failure'
+      ? classified
+      : fail('unexpected_provider_response', provider, evidence.attemptId);
+  }
   if (evidence.kind === 'http') {
     const classified = classify({
       kind: 'inference',
@@ -73,6 +98,6 @@ export function classifyInvocationFailure(error: unknown, provider: Provider): F
       }
       return fail('provider_unavailable', provider);
     default:
-      return fail(TERMINAL_REASONS[evidence.code] ?? 'invariant_violation', provider);
+      return fail(TERMINAL_REASONS[evidence.code] ?? 'invariant_violation', provider, evidence.attemptId);
   }
 }

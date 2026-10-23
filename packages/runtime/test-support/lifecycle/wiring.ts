@@ -137,7 +137,7 @@ export function createWiring(persistence: Persistence, options: WiringOptions) {
     const { agent, params } = inspectionAgent(crypto.randomUUID());
     return (
       await executionDefinition({
-        code: await currentCodeManifest(),
+        code: await currentCodeManifest(BINDING.provider),
         agent,
         params,
         binding: BINDING,

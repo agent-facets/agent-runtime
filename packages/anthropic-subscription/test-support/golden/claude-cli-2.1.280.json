@@ -1,0 +1,91 @@
+{
+  "generatedFrom": "@ex-machina/opencode-anthropic-auth@2.0.0-next.5 (156cb66c6889e1be3ad2b839345ea409942ab40f) dist",
+  "clientVersion": "2.1.280",
+  "appliedDifferences": ["D1: upstream tool-name aliases decoded to the native names"],
+  "outputs": [
+    {
+      "name": "first turn",
+      "url": "https://api.anthropic.com/v1/messages?beta=true",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "oauth-2025-04-20,interleaved-thinking-2025-05-14",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-golden-synthetic-access-token",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-stainless-arch": "x64",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.122.0",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v24.3.0",
+        "x-stainless-timeout": "600"
+      },
+      "body": "{\"model\":\"claude-opus-5\",\"stream\":true,\"max_tokens\":16384,\"tools\":[{\"name\":\"mcp_Read\",\"description\":\"Read a file or list a directory in the workspace.\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"mode\":{\"type\":\"string\",\"enum\":[\"file\",\"directory\"]},\"path\":{\"type\":\"string\"}},\"required\":[\"mode\",\"path\"],\"additionalProperties\":false}},{\"name\":\"mcp_Search\",\"description\":\"Search workspace text.\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"}},\"required\":[\"query\"],\"additionalProperties\":false}},{\"name\":\"mcp_AskUser\",\"description\":\"Ask the owner one question.\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"prompt\":{\"type\":\"string\"}},\"required\":[\"prompt\"],\"additionalProperties\":false}}],\"messages\":[{\"role\":\"user\",\"content\":\"Summarize the plan in notes/plan.md.\"}],\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.60b; cc_entrypoint=sdk-cli; cch=d9e41;\"},{\"type\":\"text\",\"text\":\"You are a Claude agent, built on Anthropic's Claude Agent SDK.\"},{\"type\":\"text\",\"text\":\"You are investigating a repository for its owner. You can read files, list directories and search text in the configured workspace, and ask the owner a question.\"}]}"
+    },
+    {
+      "name": "tool result round",
+      "url": "https://api.anthropic.com/v1/messages?beta=true",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "oauth-2025-04-20,interleaved-thinking-2025-05-14",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-golden-synthetic-access-token",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-stainless-arch": "x64",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.122.0",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v24.3.0",
+        "x-stainless-timeout": "600"
+      },
+      "body": "{\"model\":\"claude-opus-5\",\"stream\":true,\"max_tokens\":16384,\"tools\":[{\"name\":\"mcp_Read\",\"description\":\"Read a file or list a directory in the workspace.\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"mode\":{\"type\":\"string\",\"enum\":[\"file\",\"directory\"]},\"path\":{\"type\":\"string\"}},\"required\":[\"mode\",\"path\"],\"additionalProperties\":false}},{\"name\":\"mcp_Search\",\"description\":\"Search workspace text.\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"}},\"required\":[\"query\"],\"additionalProperties\":false}},{\"name\":\"mcp_AskUser\",\"description\":\"Ask the owner one question.\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"prompt\":{\"type\":\"string\"}},\"required\":[\"prompt\"],\"additionalProperties\":false}}],\"messages\":[{\"role\":\"user\",\"content\":\"Summarize the plan in notes/plan.md.\"},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Reading it.\"},{\"type\":\"tool_use\",\"id\":\"toolu_01\",\"name\":\"mcp_Read\",\"input\":{\"mode\":\"file\",\"path\":\"notes/plan.md\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"content\":\"{\\\"outcome\\\":\\\"ok\\\",\\\"result\\\":{\\\"lines\\\":[]}}\",\"tool_use_id\":\"toolu_01\"}]}],\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.60b; cc_entrypoint=sdk-cli; cch=d9e41;\"},{\"type\":\"text\",\"text\":\"You are a Claude agent, built on Anthropic's Claude Agent SDK.\"},{\"type\":\"text\",\"text\":\"You are investigating a repository for its owner. You can read files, list directories and search text in the configured workspace, and ask the owner a question.\"}]}"
+    },
+    {
+      "name": "question resume with a negative answer",
+      "url": "https://api.anthropic.com/v1/messages?beta=true",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "oauth-2025-04-20,interleaved-thinking-2025-05-14",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-golden-synthetic-access-token",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-stainless-arch": "x64",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.122.0",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v24.3.0",
+        "x-stainless-timeout": "600"
+      },
+      "body": "{\"model\":\"claude-opus-5\",\"stream\":true,\"max_tokens\":16384,\"tools\":[{\"name\":\"mcp_Read\",\"description\":\"Read a file or list a directory in the workspace.\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"mode\":{\"type\":\"string\",\"enum\":[\"file\",\"directory\"]},\"path\":{\"type\":\"string\"}},\"required\":[\"mode\",\"path\"],\"additionalProperties\":false}},{\"name\":\"mcp_Search\",\"description\":\"Search workspace text.\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"}},\"required\":[\"query\"],\"additionalProperties\":false}},{\"name\":\"mcp_AskUser\",\"description\":\"Ask the owner one question.\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"prompt\":{\"type\":\"string\"}},\"required\":[\"prompt\"],\"additionalProperties\":false}}],\"messages\":[{\"role\":\"user\",\"content\":\"Decide whether to proceed.\"},{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_02\",\"name\":\"mcp_AskUser\",\"input\":{\"prompt\":\"Proceed?\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"content\":\"{\\\"outcome\\\":\\\"ok\\\",\\\"result\\\":{\\\"answer\\\":false}}\",\"tool_use_id\":\"toolu_02\"}]}],\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.818; cc_entrypoint=sdk-cli; cch=0787a;\"},{\"type\":\"text\",\"text\":\"You are a Claude agent, built on Anthropic's Claude Agent SDK.\"},{\"type\":\"text\",\"text\":\"You are investigating a repository for its owner. You can read files, list directories and search text in the configured workspace, and ask the owner a question.\"}]}"
+    },
+    {
+      "name": "block content, block system and extra betas",
+      "url": "https://api.anthropic.com/v1/messages?beta=true",
+      "headers": {
+        "accept": "application/json",
+        "anthropic-beta": "oauth-2025-04-20,interleaved-thinking-2025-05-14,custom-beta-1",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-ant-oat01-golden-synthetic-access-token",
+        "content-type": "application/json",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
+        "x-stainless-arch": "x64",
+        "x-stainless-lang": "js",
+        "x-stainless-os": "Linux",
+        "x-stainless-package-version": "0.122.0",
+        "x-stainless-retry-count": "0",
+        "x-stainless-runtime": "node",
+        "x-stainless-runtime-version": "v24.3.0",
+        "x-stainless-timeout": "600"
+      },
+      "body": "{\"model\":\"claude-opus-5\",\"stream\":true,\"max_tokens\":1024,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Hi there, what is in the workspace?\"}]}],\"system\":[{\"type\":\"text\",\"text\":\"x-anthropic-billing-header: cc_version=2.1.280.ce3; cc_entrypoint=sdk-cli; cch=6e982;\"},{\"type\":\"text\",\"text\":\"You are a Claude agent, built on Anthropic's Claude Agent SDK.\"},{\"type\":\"text\",\"text\":\"You are investigating a repository for its owner. You can read files, list directories and search text in the configured workspace, and ask the owner a question.\",\"cache_control\":{\"type\":\"ephemeral\"}}]}"
+    }
+  ]
+}

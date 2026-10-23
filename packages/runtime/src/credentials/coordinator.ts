@@ -9,6 +9,11 @@
 //
 // Provider protocol is injected (CredentialIssuer). Issuer rotation and local persistence cannot be one
 // transaction: if the process dies between them, the new tokens are lost and reauthorization may be required.
+//
+// A refresh token is never replayed after a refresh whose outcome is unknown — the issuer may already have rotated
+// it, and reusing a spent token can revoke the whole grant. Such a refresh (including one whose issuer threw, or
+// whose returned credential is unusable) durably marks the slot as needing reauthorization, for every process.
+// Only a refresh that certainly consumed nothing leaves the credential in place to try again later.
 import type { Provider } from '../records/schemas.ts';
 import { acquireProviderLock, CredentialLockError, DEFAULT_LOCK_WAIT_MS } from './lock.ts';
 import {
@@ -34,8 +39,13 @@ export type IssuerOutcome =
   | { kind: 'refreshed'; credential: IssuedCredential }
   /** The issuer definitively rejected the refresh grant. */
   | { kind: 'rejected'; reason: string }
-  /** Nothing definitive was learned (network, 5xx, ambiguous response). */
-  | { kind: 'unavailable' };
+  /** The refresh request certainly consumed nothing (never sent, or the issuer declined to process it yet). */
+  | { kind: 'unavailable' }
+  /**
+   * The request may have reached the issuer, but no usable answer came back (timeout or loss after sending, 5xx,
+   * unreadable success). A rotating refresh token may now be spent, so it is never sent again.
+   */
+  | { kind: 'uncertain' };
 
 export interface CredentialIssuer {
   refresh(current: UsableCredential, signal: AbortSignal): Promise<IssuerOutcome>;
@@ -149,20 +159,25 @@ export class CredentialCoordinator {
             AbortSignal.timeout(this.options.issuerDeadlineMs ?? DEFAULT_ISSUER_DEADLINE_MS),
           );
         } catch {
-          outcome = { kind: 'unavailable' };
+          // Whether the request left is unknown.
+          outcome = { kind: 'uncertain' };
         }
         if (outcome.kind === 'unavailable') return { kind: 'temporarily_unavailable' };
         if (outcome.kind === 'rejected') return this.#write(this.#rejected(current.generation + 1, outcome.reason));
+        if (outcome.kind === 'uncertain') {
+          return this.#write(this.#rejected(current.generation + 1, 'refresh_outcome_unknown'));
+        }
 
-        // Partial rotation: an omitted refresh token or account keeps the stored value; a supplied one must be
-        // valid, or nothing is written (the merge is validated as a whole record).
+        // Partial rotation: an omitted refresh token or account keeps the stored value. A supplied value must be
+        // valid (the merge is validated as a whole record); if it is not, the issuer has rotated to something this
+        // runtime cannot store, so the old refresh token is not trusted either.
         const merged = this.#usable(current.generation + 1, {
           accessToken: outcome.credential.accessToken,
           refreshToken: outcome.credential.refreshToken ?? current.refreshToken,
           expiresAtMs: outcome.credential.expiresAtMs,
           account: outcome.credential.account ?? current.account,
         });
-        if (merged === undefined) return { kind: 'temporarily_unavailable' };
+        if (merged === undefined) return this.#write(this.#rejected(current.generation + 1, 'refresh_result_invalid'));
         return this.#write(merged);
       });
     } catch {

@@ -28,6 +28,18 @@ const RULES: readonly Rule[] = [
     reason: 'endpoint_override',
   },
   {
+    // LangChain routes a model without an explicit endpoint through the LangSmith gateway when this is set.
+    names: ['LANGSMITH_GATEWAY'],
+    allowed: (value) => FALSE_VALUES.has(value.trim().toLowerCase()) || value.trim().toLowerCase() === 'no',
+    reason: 'endpoint_override',
+  },
+  {
+    // The OpenAI client adds these to every request as organization/project identity.
+    names: ['OPENAI_ORGANIZATION', 'OPENAI_ORG_ID', 'OPENAI_PROJECT', 'OPENAI_PROJECT_ID'],
+    allowed: (value) => value === '',
+    reason: 'request_override',
+  },
+  {
     // Disabled verification or substituted trust roots would let an intermediary read credentials.
     names: ['NODE_TLS_REJECT_UNAUTHORIZED'],
     allowed: (value) => value === '' || value === '1',
@@ -53,7 +65,13 @@ const RULES: readonly Rule[] = [
 
 export interface EnvironmentProblem {
   variable: string;
-  reason: 'tracing_enabled' | 'proxy_override' | 'endpoint_override' | 'tls_override' | 'debug_logging';
+  reason:
+    | 'tracing_enabled'
+    | 'proxy_override'
+    | 'endpoint_override'
+    | 'request_override'
+    | 'tls_override'
+    | 'debug_logging';
 }
 
 /** Names are matched case-insensitively: proxy variables in particular are honored in either case. */

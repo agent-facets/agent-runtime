@@ -50,14 +50,23 @@ What Phase 1 enforces:
   provider replay metadata (IDs, tool calls, reasoning, response metadata) intact and redacting only displayable
   text; converts every non-control-flow failure into a fixed-text error before the graph records exception text;
   and refuses unavailable tools (writes, commands) as recorded outcomes. The exact matcher follows credential
-  rotation (`credentials/screening.ts`): a generation is screened from the moment it is resolved for a request,
-  and earlier generations stay screened. Model requests leave only through a guarded terminal (exact endpoint, no
-  redirects, durable admission, full-body deadline), and cancellation waits for tracked request bodies, tool calls
-  and checkpoint writes to settle. Tests scan the persisted checkpoint tables for synthetic credentials.
+  rotation (`credentials/screening.ts`): a request leases its generation from the moment it is resolved, before
+  admission, until that model call's response has been sanitized or discarded; a leased generation is never
+  evicted, and a full screen refuses the request instead of dropping coverage. Model requests leave only through a
+  guarded terminal (exact endpoint, no redirects, durable admission, full-body deadline, provider request
+  preparation re-checked against the endpoint policy, and a completion check that refuses truncated or
+  error-terminated streams), and cancellation waits for tracked request bodies, tool calls and checkpoint writes
+  to settle. Tests scan the persisted checkpoint tables for synthetic credentials.
+- **Provider adapters** (`packages/runtime/src/providers/`, provider block). Token requests reach exactly one
+  issuer endpoint and never follow redirects; inference headers are set by the provider profile, with SDK
+  fingerprint headers and the SDK's sentinel key removed (OpenAI's are rebuilt from an allowlist). The Anthropic
+  subscription package performs no I/O of its own and reads no environment. Offline suites scan checkpoints for the
+  synthetic tokens of every generation used, including across a renewal.
 
 Not yet covered: the complete protected-surface scan over the API, console and logs belongs to the console block,
-and provider bindings (with their credential resolution) arrive in the provider block. The screening corrections
-above were made on 2026-09-30, after the block-6 acceptance; earlier acceptance evidence did not cover them.
+and registration of the provider adapters in the running service is still pending. The screening corrections were
+made on 2026-09-30, after the block-6 acceptance; the lease-based retention was added in the provider block. Earlier
+acceptance evidence did not cover either.
 
 ## Threat model
 

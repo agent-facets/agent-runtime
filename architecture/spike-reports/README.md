@@ -32,6 +32,11 @@ the original spike results above, which were measured on Node and are left uncha
 |---|---|---|
 | G1 — Bun persistence and ownership | [g1-bun-persistence.md](../integration-evidence/mvp-01/g1-bun-persistence.md) | **Pass** (early gate), with a Bun SQL pool defect found and mitigated |
 | G3 — Harness dispatch and lifecycle (added 2026-09-30) | [g3-dispatch-lifecycle.md](../integration-evidence/mvp-01/g3-dispatch-lifecycle.md) | **Pass** with provider-free models; real-provider gates outstanding |
+| G2 — Internal Anthropic subscription boundary (added 2026-09-30) | [g2-anthropic-boundary.md](../integration-evidence/mvp-01/g2-anthropic-boundary.md) | **Pass** offline against synthetic issuers; live login outstanding |
+| G4 — Anthropic transport, offline part (added 2026-09-30) | [g4-anthropic-offline.md](../integration-evidence/mvp-01/g4-anthropic-offline.md) | **Pass** offline, including the production assembly on the official saver; live journey outstanding |
+| G5 — OpenAI transport, offline part (added 2026-09-30) | [g5-openai-offline.md](../integration-evidence/mvp-01/g5-openai-offline.md) | **Pass** offline; Bun `fetch` selected; device auth and live journey outstanding |
+| Anthropic code ownership (added 2026-09-30) | [upstream-handoff.md](../integration-evidence/mvp-01/upstream-handoff.md) | **Decision record**: internal derivative of the maintained plugin replaces the planned upstream release; provenance and differences recorded. Not a gate result |
+| OpenAI cost checkpoint (added 2026-09-30) | [openai-cost-checkpoint.md](../integration-evidence/mvp-01/openai-cost-checkpoint.md) | **Decision record**: proceed, moderate cost; Bun `fetch` selected over `node:http` by a loopback capture. Not a gate result |
 
 ## Working records
 

@@ -3,12 +3,15 @@
 A personal agent runtime: start a repository task from a browser, leave, return, answer the agent's
 questions, and collect the result using an existing Anthropic or OpenAI subscription.
 
-> **Status: controlled agent execution, not yet connected to a provider or the browser.** The workspace,
-> toolchain, checks, container topology, PostgreSQL persistence (ownership, migrations, run records, the official
-> checkpointer), operator configuration, credential storage, the confined read/search tools, secret-safe
-> projections and the agent execution lifecycle (see [Agent execution](#agent-execution)) exist and are tested with
-> scripted, provider-free models. **Provider login and inference, the REST/SSE API and the browser console are not
-> implemented yet**; they are delivered by the remaining tasks in
+> **Status: controlled agent execution with Anthropic subscription access assembled, not yet reachable from the
+> browser.** The workspace, toolchain, checks, container topology, PostgreSQL persistence (ownership, migrations,
+> run records, the official checkpointer), operator configuration, credential storage, the confined read/search
+> tools, secret-safe projections and the agent execution lifecycle (see [Agent execution](#agent-execution))
+> exist. So do the [providers](#providers): Anthropic subscription login and inference, registered in the service's
+> provider assembly, and the OpenAI inference transport (not yet usable: no OpenAI login). They are verified
+> offline against synthetic issuers and networks. **Nothing has been verified against a real provider, and the
+> REST/SSE API and browser console — the only way to start a run — are not implemented**; they are delivered by
+> the remaining tasks in
 > [`openspec/changes/mvp-01-interactive-agent-execution`](openspec/changes/mvp-01-interactive-agent-execution/tasks.md).
 > The runtime serves only health and readiness endpoints, and readiness always reports `ready: false`.
 
@@ -24,7 +27,8 @@ A Bun-workspace monorepo orchestrated by [Turborepo](https://turborepo.com), dep
 
 | Path | Contents |
 |---|---|
-| `packages/runtime` | The Bun server and sole deployable application: persistence, configuration, credentials, workspace tools, security boundaries and agent execution today; providers, REST/SSE and operator commands later. |
+| `packages/runtime` | The Bun server and sole deployable application: persistence, configuration, credentials, workspace tools, security boundaries, agent execution, provider adapters and the operator `auth` command; REST/SSE later. |
+| `packages/anthropic-subscription` | Private, server-only Anthropic subscription authorization and request profile: a minimal, project-maintained derivative of `@ex-machina/opencode-anthropic-auth` ([provenance](packages/anthropic-subscription/PROVENANCE.md)). No I/O of its own. |
 | `packages/ui` | Browser console package. Currently an empty package boundary; the console arrives in its later block. |
 | `packages/contracts` | Not created yet. Browser-safe API schemas/types, extracted when the API is implemented. |
 | `scripts/` | Repository checks, fixture launchers and their tests. |
@@ -43,6 +47,9 @@ Boundaries enforced by tests:
 - Workspace tool and agent execution source contains no process execution, dynamic evaluation or filesystem
   mutation.
 - Internal dependencies use `workspace:*`; root owns development tooling, packages own application dependencies.
+- The subscription package declares no dependencies, imports only its own modules and platform built-ins, never
+  calls global `fetch` or reads the environment, and is imported only by the runtime through its public entry. No
+  package imports the upstream plugin or an OpenCode host.
 
 ## Setup
 
@@ -56,8 +63,10 @@ mise exec -- bun install --frozen-lockfile  # reproduces bun.lock exactly
 ```
 
 Pinned tools: Bun 1.3.14 (`mise.toml` and `packageManager`), Turbo 2.10.4, TypeScript 5.9.3, Biome 2.4.15.
-Bun is configured to add exact versions. The LangChain/LangGraph candidate matrix is pinned in
-`packages/runtime/package.json` but its Bun compatibility has not yet been verified.
+Bun is configured to add exact versions. The runtime pins LangChain 1.5.14, `@langchain/core` 1.2.13, LangGraph
+1.4.13 with its PostgreSQL checkpointer, and the provider models `@langchain/anthropic` 1.5.11 (with
+`@anthropic-ai/sdk` 0.122.0) and `@langchain/openai` 1.6.0 (with `openai` 7.25.0), all in
+`packages/runtime/package.json`. Their Bun compatibility is verified by the offline suites, not by live use.
 
 Each spike harness has its own README with separate requirements. `facets.json` configures optional agent
 tooling; neither is needed to build or run the runtime.
@@ -89,6 +98,7 @@ Run from the repository root (prefix with `mise exec --` if mise is not activate
 | `bun test` | Direct Bun discovery of unit suites; excludes spikes, `tests/**`, generated output and `*.integration`/`*.live` suites. |
 | `bun run test:integration` | Starts a disposable PostgreSQL fixture and runs `tests/integration` (persistence, ownership, run records and the G1 gate). Requires Docker. |
 | `bun run test:container` | Builds the image and smoke-tests the isolated Compose topology. Requires Docker. |
+| `bun run provenance:anthropic` | Maintenance only, uses the network: re-verifies the subscription package's recorded upstream baseline, or lists what differs at a candidate revision (see [PROVENANCE.md](packages/anthropic-subscription/PROVENANCE.md)). Never part of `check`. |
 
 Turbo caching is **local only** (remote caching and telemetry disabled). Package tasks are invalidated by
 changes to their workspace dependencies' sources and to shared configuration (`bun.lock`, `bunfig.toml`,
@@ -168,9 +178,14 @@ endpoint, API key or other unsupported option can never be silently ignored:
 ```
 
 - Replace `your-model-id` and `your-profile-id`: models and request profiles are the owner's explicit choice, and
-  there are no built-in defaults. Only
-  `authMode: "subscription"` exists — there is no API-key mode and no billed fallback. A configured provider
-  reports `integration_unavailable` until its integration is delivered (later blocks).
+  there are no built-in defaults. The implemented profiles are `claude-cli-2.1.280` (Anthropic) and
+  `codex-0.151.0` (OpenAI); see [Providers](#providers). Only `authMode: "subscription"` exists — there is no
+  API-key mode and no billed fallback. At startup the runtime logs each configured provider's readiness
+  (`provider_readiness`): Anthropic is `ready` with a usable stored credential (an expired access token still
+  counts; it renews on use) and `reauthorization_required` without one; OpenAI reports `integration_unavailable`
+  until its login exists; an unknown profile ID is `integration_unavailable`.
+- `credentialSlot` (default `default`) names the provider's credential record; the `auth` command uses the
+  configured slot unless given `--slot`.
 - The workspace root must be a normalized absolute path that neither contains nor lies inside the runtime state
   directory, and does not contain the configuration file. Before the tools may use it, the root must also be its
   own canonical path (no symlink at any level), and the state directory and configuration file must resolve
@@ -179,8 +194,10 @@ endpoint, API key or other unsupported option can never be silently ignored:
 - `stepBudget` defaults to 50 model requests per run; `modelRequestDeadlineSeconds` to 300.
 - The Compose file does not mount a configuration file yet; that wiring arrives with agent execution.
 
-The runtime refuses to start, before loading any framework or provider code, if the environment enables
-LangSmith/LangChain tracing, sets an HTTP(S)/ALL proxy, overrides a provider base URL, disables or replaces TLS
+The runtime (and the `auth` command) refuses to start, before loading any framework or provider code, if the
+environment enables LangSmith/LangChain tracing, sets an HTTP(S)/ALL proxy, overrides a provider base URL or
+enables the LangSmith gateway (`LANGSMITH_GATEWAY`), sets an OpenAI organization or project
+(`OPENAI_ORGANIZATION`, `OPENAI_ORG_ID`, `OPENAI_PROJECT`, `OPENAI_PROJECT_ID`), disables or replaces TLS
 verification (`NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_*`), or turns on request logging
 (`ANTHROPIC_LOG`/`OPENAI_LOG` below `warn`, `BUN_CONFIG_VERBOSE_FETCH`, `DEBUG`). Ambient API keys such as
 `ANTHROPIC_API_KEY` are ignored: nothing reads them, and providers are selected only from this configuration.
@@ -237,8 +254,12 @@ result. A caller that is already cancelled starts no refresh and launches no loc
 waiting for a refresh already in progress does not cancel it, and that refresh keeps the lock until the issuer
 and the write have settled. A provider-scoped kernel lock (via the image's `/usr/bin/flock`) is shared by the runtime and operator
 login, so a stale refresh can never overwrite a newer login. A definitive rejection records
-"reauthorization required" and keeps no token material. Provider login and refresh protocols are not implemented
-yet; the lifecycle is tested with synthetic credentials.
+"reauthorization required" and keeps no token material. **A refresh token is never replayed after a refresh whose
+outcome is unknown** (a timeout or lost connection after sending, a server error, an unreadable or unusable
+answer): the issuer may already have rotated it, so the slot is durably marked as needing reauthorization
+(`refresh_outcome_unknown`) for every process. Only a refresh that certainly consumed nothing — never sent, or
+throttled — keeps the credential for a later attempt. Anthropic login and refresh are implemented (see
+[Providers](#providers)); OpenAI's are not yet.
 
 **Secret-safe projections.** Goals and answers containing credential material are refused, not rewritten.
 Credential material is located over the complete text — a whole file, or a whole assembled model message — and
@@ -254,8 +275,11 @@ this runtime's live credentials — through an opaque matcher from the credentia
 enumerate and which execution code must be given explicitly — with a small set of unambiguous formats
 (vendor-prefixed keys, private-key blocks, literal bearer tokens); it is not general secret scanning, and ordinary
 identifiers, hashes and example JWTs pass through. The execution layer's matcher follows credential rotation: a
-generation is added when it is resolved for a request, before that request is sent, and earlier generations stay
-screened (the 16 most recent), so a response to an older request is still covered. Complete model responses are
+request **leases** its generation when the credential is resolved, before the request is admitted or sent, and
+the lease ends only when that model call's response has been sanitized or discarded — not when its HTTP exchange
+ends. A leased generation is never evicted, however many rotations happen meanwhile; released generations stay
+screened until room is needed. The screen holds 64 generations; if all are leased, a new one is refused and its
+request is not sent. Complete model responses are
 sanitized inside the model call, before the graph checkpoints them, keeping the provider's full message (IDs, tool
 calls, reasoning and replay metadata); only displayable text is redacted, and a credential anywhere else withholds
 the response.
@@ -277,9 +301,14 @@ loop; the runtime only constrains what crosses into graph state and what is disp
 - **Model requests** pass one guarded terminal (the SDK's `fetch`): exact HTTPS endpoint and method, no redirects,
   credentials resolved first (outside the budget), then durable admission under the run's short dispatch gate —
   ownership re-verified, run still working, one step reserved within budget — and the request starts while that
-  gate is held. Dispatch is recorded before the response is used; completion before its body ends. The deadline
-  (default five minutes) covers the whole body. Hidden retries are not possible: every physical request is admitted
-  and counted. After a recoverable authorization rejection, one renewal retry is allowed, as another counted step.
+  gate is held. A provider's request profile adapts the request for that credential before admission (a request
+  it cannot represent is refused unsent). Dispatch is recorded before the response is used; completion before its
+  body ends, and a streamed body that ends without the provider's successful end-of-response (or carries an error
+  event) fails instead of becoming a partial message. The deadline (default five minutes) covers the whole body.
+  Hidden retries are not possible: every physical request is admitted and counted, and framework retries are
+  forced off for every call. After a recoverable authorization rejection, one renewal retry is allowed, as another
+  counted step. An unsuccessful response is classified into a safe provider code (rate limit, usage limit,
+  authorization, unsupported model or profile, service unavailable) and reported with its attempt.
 - **Budget.** The default is 50 model requests. The run reports `{ maximum, consumed, unconfirmed }`; an admission
   whose dispatch was never confirmed stays charged as unconfirmed. Tool calls from the last permitted response still
   run; only another model request fails the run with `step_limit`. An answer can be accepted with no steps left.
@@ -294,9 +323,11 @@ loop; the runtime only constrains what crosses into graph state and what is disp
   delivered once, to the saved interrupt by its ID.
 - **Compatibility.** The execution definition covers the Bun version, the exact package versions and integrity
   values used by the execution code, digests of that code's own import closure (line endings normalized), the
-  generated graph, middleware, tool schemas, the prompt, protocol versions and the run's binding. The code manifest
-  is written at build time beside the bundle (`dist/execution-manifest.json`). Browser code, documentation and
-  default settings are not inputs.
+  generated graph, middleware, tool schemas, the prompt, protocol versions and the run's binding. There is one code
+  manifest per provider — the common execution closure plus that provider's adapter, following workspace packages
+  into their source (so the Anthropic manifest includes the subscription package's files) — written at build time
+  beside the bundle (`dist/execution-manifest.json`). A change to one provider's adapter does not refuse runs bound
+  to the other. Browser code, documentation, tests and default settings are not inputs.
 - **Cancellation** is recorded before it is acknowledged and serialized with admissions, so nothing is dispatched
   after it. A waiting run is cancelled at once; a working run is `cancelling` until its request bodies, tool calls
   and checkpoint writes have actually settled. An answer accepted earlier stays accepted.
@@ -308,9 +339,54 @@ loop; the runtime only constrains what crosses into graph state and what is disp
   kept, admissions never confirmed as sent recorded unconfirmed) and runs whose cancellation was accepted as
   `cancelled`. Waiting and finished runs are unchanged. Nothing is resumed, retried or dispatched.
 
-Not yet connected: provider bindings (Anthropic, OpenAI), and the API that starts runs, accepts answers and
-cancels. Verification with provider-free models, including every crash window, is recorded in
+Not yet connected: the API that starts runs, accepts answers and cancels. The service composes the provider
+assembly (`src/providers/assembly.ts`) that the API will use to build each invocation from a run's stored binding;
+until then it only reports provider readiness. Verification with provider-free models, including every crash window, is recorded in
 [the G3 evidence (2026-09-30)](architecture/integration-evidence/mvp-01/g3-dispatch-lifecycle.md).
+
+## Providers
+
+Both providers use the stock LangChain chat model for their API (`ChatAnthropic`, `ChatOpenAI` in streaming
+Responses mode) with its SDK `fetch` set to the guarded terminal. The runtime owns credentials (storage, locking,
+refresh, screening), admission and the one renewal retry; provider code only adapts requests, classifies failures
+and checks that a response ended completely. Responses are never rewritten. Each model is built per run from the
+run's stored model and profile, with an inert sentinel API key (so no ambient key is ever looked up), an explicit
+endpoint (so neither the environment nor a gateway can redirect it) and retries off.
+
+**Anthropic** (profile `claude-cli-2.1.280`). Authorization and the request profile come from
+[`packages/anthropic-subscription`](packages/anthropic-subscription/README.md), a minimal, project-maintained
+derivative of `@ex-machina/opencode-anthropic-auth` 2.0.0-next.5. It is updated only by manual review
+([provenance and intentional differences](packages/anthropic-subscription/PROVENANCE.md)); it follows no npm tag
+and recovers from no version rejection by itself. Requests carry the reference client's headers, betas, identity
+and billing blocks, with the runtime's native tool names unchanged; a conversation must open with the user's text,
+because the billing block derives from it. A client-version rejection fails the run as an unsupported
+model/profile; updating the profile is a reviewed package change with a new profile ID.
+
+Log in from a private terminal. The command prints a URL to open in a browser on any device, then reads the
+pasted code; it shares the runtime's credential lock, so it can run while the service is up:
+
+```bash
+docker compose exec -it runtime bun dist/auth.js anthropic login     # inside the running application container
+docker compose exec runtime bun dist/auth.js anthropic status        # safe status only; never refreshes
+bun packages/runtime/src/auth.ts anthropic status [--slot s]         # from a checkout (RUNTIME_STATE_DIR, RUNTIME_CONFIG_FILE)
+```
+
+Token values are never printed. A rejection right after a renewal is definitive: the slot is marked as needing
+reauthorization, and later runs fail with authorization guidance without sending anything.
+
+**OpenAI** (profile `codex-0.151.0`). The inference transport exists: the measured Codex backend profile
+(allowlisted headers, stateless replay of encrypted reasoning and function calls with matching IDs), token and
+account always from one credential generation, and completion only on `response.completed`. It uses Bun's own
+`fetch`, which a test shows adds no browser-style headers. Device login and renewal are not implemented, so OpenAI
+stays unavailable.
+
+Offline verification runs the stock models inside the stock agent against scripted provider streams
+(`src/providers/*/inference.test.ts`, and the production assembly on the official saver in
+`tests/integration/provider-assembly.integration.test.ts`); results are recorded in the dated
+[G2](architecture/integration-evidence/mvp-01/g2-anthropic-boundary.md),
+[G4 offline](architecture/integration-evidence/mvp-01/g4-anthropic-offline.md) and
+[G5 offline](architecture/integration-evidence/mvp-01/g5-openai-offline.md) evidence. Nothing has been verified
+against a real provider in this runtime yet; live checks happen only with the owner's fresh authorization.
 
 ## Deployment
 
@@ -340,8 +416,8 @@ Health endpoints:
 
 ## Limitations
 
-- No provider login or inference, API or console yet: the execution lifecycle runs only with scripted test models,
-  so no real agent run can be started.
+- There is no API or console yet, so no agent run can be started. Provider integrations are verified offline
+  only; OpenAI login is not implemented.
 - No backup, retention or restore tooling; ordinary restarts preserve the database volume, nothing more.
 - Read-only mounts and path checks are not a sandbox against hostile processes on the host; the workspace is
   assumed to be owner-controlled.

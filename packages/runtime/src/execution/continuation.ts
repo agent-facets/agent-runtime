@@ -4,7 +4,7 @@
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
 import { digestOf } from '../records/canonical.ts';
 import type { RecordedQuestion } from '../records/run-store.ts';
-import type { ProviderBinding } from '../records/schemas.ts';
+import type { Provider, ProviderBinding } from '../records/schemas.ts';
 import type { ExecutionAgent, executionAgentParams } from './agent.ts';
 import type { ContinuationCheck } from './answers.ts';
 import type { CodeManifest } from './code-manifest.ts';
@@ -25,7 +25,8 @@ export interface ContinuationDeps {
     params: ReturnType<typeof executionAgentParams>;
   };
   saver: BaseCheckpointSaver;
-  code(): Promise<CodeManifest>;
+  /** The running code's manifest for runs bound to that provider. */
+  code(provider: Provider): Promise<CodeManifest>;
 }
 
 export async function verifyContinuation(
@@ -41,7 +42,7 @@ export async function verifyContinuation(
   let digest: string;
   try {
     ({ digest } = await executionDefinition({
-      code: await deps.code(),
+      code: await deps.code(reconstructed.binding.provider),
       agent,
       params,
       binding: reconstructed.binding,

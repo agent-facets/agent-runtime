@@ -1,0 +1,13 @@
+{
+  "name": "@agent-runtime/anthropic-subscription",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "bun test"
+  }
+}

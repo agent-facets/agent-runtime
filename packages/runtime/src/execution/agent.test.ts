@@ -2,14 +2,20 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import { Command, MemorySaver } from '@langchain/langgraph';
 import { MemoryLedger } from '../../test-support/memory-ledger.ts';
-import { FetchingModel, persistedText, ScriptedModel, untilAborted } from '../../test-support/scripted-model.ts';
+import {
+  FetchingModel,
+  persistedText,
+  ScriptedModel,
+  type ScriptStep,
+  untilAborted,
+} from '../../test-support/scripted-model.ts';
 import { createFixture } from '../../test-support/workspace.ts';
 import { exactSecretMatcher } from '../credentials/matcher.ts';
-import { CredentialScreen } from '../credentials/screening.ts';
+import { CredentialScreen, SCREEN_CAPACITY, ScreenCapacityError, ScreenScope } from '../credentials/screening.ts';
 import { KeyedSerializer } from '../persistence/keyed-serializer.ts';
 import { operationIdFor } from '../records/schemas.ts';
 import { createContentPolicy, REDACTION } from '../security/content-policy.ts';
-import { createExecutionAgent, executionAgentParams } from './agent.ts';
+import { boundaryMiddleware, createExecutionAgent, executionAgentParams } from './agent.ts';
 import { executionFailureOf } from './failures.ts';
 import { graphInput, InvocationExecutor, type InvocationSettlement, invocationConfig } from './invocation.ts';
 import { identityFor, jsonbTextBytes, RECORDED_OUTCOME_MAX_BYTES, recordableOutcome } from './operations.ts';
@@ -84,6 +90,21 @@ describe('invocation contract', () => {
     expect(config.signal).toBe(signal);
     expect(config.streamMode).toEqual(['updates', 'custom']);
     expect(config.recursionLimit).toBe(216);
+  });
+
+  test('the model boundary turns off framework retries for every call, whatever settings arrive', async () => {
+    const middleware = boundaryMiddleware({
+      runId: 'run-1',
+      contentPolicy: () => policy,
+      newMessageId: () => 'm-assigned',
+      operations: new MemoryLedger(),
+    });
+    let seen: unknown;
+    await middleware.wrapModelCall?.({ modelSettings: { maxRetries: 3, temperature: 0 } } as never, async (request) => {
+      seen = request.modelSettings;
+      return new AIMessage({ id: 'm1', content: 'ok' });
+    });
+    expect(seen).toEqual({ maxRetries: 0, temperature: 0 });
   });
 
   test('a resume is addressed to one interrupt and carries a truthy envelope even for a false answer', () => {
@@ -463,26 +484,24 @@ describe('tool identity, batches and replay', () => {
 });
 
 describe('screening follows credential rotation', () => {
-  test('a response echoing a just-rotated or an earlier credential is redacted before it is stored', async () => {
-    const screen = new CredentialScreen();
-    let generation = 0;
-    const tokens: string[] = [];
-    const terminal = createTerminal({
+  const credentialFor = (generation: number) => ({
+    provider: 'anthropic' as const,
+    slot: 'default',
+    generation,
+    accessToken: `rotating-access-${generation}-0123456789`,
+    refreshToken: `rotating-refresh-${generation}-0123456789`,
+  });
+  type Credential = ReturnType<typeof credentialFor>;
+
+  /** A terminal whose credential resolution runs `resolve` (which pins, or not) before admission and dispatch. */
+  function terminalWith(resolve: () => Credential, log: string[] = []) {
+    return createTerminal({
       policy: { origin: 'https://api.provider.test', routes: [{ method: 'POST', path: '/v1/messages' }] },
       signal: new AbortController().signal,
       credentials: async () => {
-        // Each request rotates to a new generation, observed before the request is admitted or sent.
-        generation++;
-        const credential = {
-          provider: 'anthropic' as const,
-          slot: 'default',
-          generation,
-          accessToken: `rotating-access-${generation}-0123456789`,
-          refreshToken: `rotating-refresh-${generation}-0123456789`,
-        };
-        tokens.push(credential.accessToken, credential.refreshToken);
-        screen.observe(credential);
-        return { headers: { authorization: `Bearer ${credential.accessToken}` }, generation };
+        const credential = resolve();
+        log.push(`resolved:${credential.generation}`);
+        return { headers: { authorization: `Bearer ${credential.accessToken}` }, generation: credential.generation };
       },
       admission: {
         admit: async (_, begin) => {
@@ -496,8 +515,47 @@ describe('screening follows credential rotation', () => {
           };
         },
       },
-      transport: (async () => new Response('{}')) as unknown as typeof fetch,
+      transport: (async () => {
+        log.push('sent');
+        return new Response('{}');
+      }) as unknown as typeof fetch,
     });
+  }
+
+  function run(model: ScriptedModel, screen: CredentialScreen, scope?: ScreenScope) {
+    const saver = new MemorySaver();
+    const runId = `00000000-0000-4000-8000-${String(++runCounter).padStart(12, '0')}`;
+    const agent = createExecutionAgent({
+      runId,
+      model,
+      checkpointer: saver,
+      workspace,
+      contentPolicy: () => createContentPolicy(screen.matcher()),
+      operations: new MemoryLedger(),
+      ...(scope === undefined ? {} : { modelCallSettled: () => scope.release() }),
+    });
+    const running = new InvocationExecutor(new KeyedSerializer()).start({
+      runId,
+      agent,
+      input: { kind: 'initial', goal: 'Go.' },
+      budgetMax: 5,
+    });
+    return { saver, running };
+  }
+
+  test('a response echoing a just-rotated or an earlier credential is redacted before it is stored', async () => {
+    const screen = new CredentialScreen();
+    const scope = new ScreenScope(screen);
+    const tokens: string[] = [];
+    let generation = 0;
+    const log: string[] = [];
+    const terminal = terminalWith(() => {
+      // Each request rotates to a new generation, pinned before the request is admitted or sent.
+      const credential = credentialFor(++generation);
+      tokens.push(credential.accessToken, credential.refreshToken);
+      scope.pin(credential);
+      return credential;
+    }, log);
     const model = new FetchingModel(
       [
         () =>
@@ -506,30 +564,122 @@ describe('screening follows credential rotation', () => {
             content: '',
             tool_calls: [call('c1', READ_TOOL, { mode: 'file', path: 'notes/plan.md' })],
           }),
-        // The second response repeats both the current and the previous generation's tokens.
         () => new AIMessage({ id: 'm2', content: `now ${tokens.join(' and ')}` }),
       ],
       terminal,
     );
-    const saver = new MemorySaver();
-    const agent = createExecutionAgent({
-      runId: '00000000-0000-4000-8000-00000000abcd',
-      model,
-      checkpointer: saver,
-      workspace,
-      contentPolicy: () => createContentPolicy(screen.matcher()),
-      operations: new MemoryLedger(),
-    });
-    const settled = await new InvocationExecutor(new KeyedSerializer()).start({
-      runId: '00000000-0000-4000-8000-00000000abcd',
-      agent,
-      input: { kind: 'initial', goal: 'Go.' },
-      budgetMax: 5,
-    }).settled;
-    expect(settled).toEqual({ kind: 'finished' });
-    expect(tokens).toHaveLength(4);
+    const { saver, running } = run(model, screen, scope);
+    expect(await running.settled).toEqual({ kind: 'finished' });
+    expect(log).toEqual(['resolved:1', 'sent', 'resolved:2', 'sent']);
     const persisted = persistedText(saver);
     for (const token of tokens) expect(persisted).not.toContain(token);
     expect(persisted).toContain(REDACTION);
+  });
+
+  /** One run's response arrives only after the HTTP exchange ended and many other generations were used. */
+  async function delayedEchoUnderRotation(pin: (screen: CredentialScreen, scope: ScreenScope) => void) {
+    const screen = new CredentialScreen();
+    const scope = new ScreenScope(screen);
+    const first = credentialFor(1);
+    let respond: () => void = () => {};
+    const responded = new Promise<void>((resolve) => {
+      respond = resolve;
+    });
+    const model = new FetchingModel(
+      [
+        async () => {
+          await responded;
+          return new AIMessage({ id: 'm1', content: `echo ${first.accessToken} ${first.refreshToken}` });
+        },
+      ],
+      terminalWith(() => {
+        pin(screen, scope);
+        return first;
+      }),
+    );
+    const { saver, running } = run(model, screen, scope);
+    while (model.calls.length === 0) await Bun.sleep(1);
+    // Other requests rotate through four times the screen's capacity while this response is still pending.
+    for (let generation = 2; generation <= SCREEN_CAPACITY * 4 + 1; generation++) {
+      screen.lease(credentialFor(generation)).release();
+    }
+    respond();
+    return { settled: await running.settled, persisted: persistedText(saver), screen, first };
+  }
+
+  test('a delayed response is still screened against its generation after many rotations', async () => {
+    const { settled, persisted, screen, first } = await delayedEchoUnderRotation((_screen, scope) =>
+      scope.pin(credentialFor(1)),
+    );
+    expect(settled).toEqual({ kind: 'finished' });
+    expect(persisted).not.toContain(first.accessToken);
+    expect(persisted).not.toContain(first.refreshToken);
+    expect(persisted).toContain(REDACTION);
+    // Once the response was sanitized the call released its lease, so the generation can now make room.
+    for (let generation = 10_000; generation < 10_000 + SCREEN_CAPACITY; generation++) {
+      screen.lease(credentialFor(generation)).release();
+    }
+    expect(createContentPolicy(screen.matcher()).detect(first.accessToken)).toBeUndefined();
+  });
+
+  test('control: coverage that ended with the HTTP exchange would let the same response through', async () => {
+    const { settled, persisted, first } = await delayedEchoUnderRotation((screen) =>
+      screen.lease(credentialFor(1)).release(),
+    );
+    expect(settled).toEqual({ kind: 'finished' });
+    expect(persisted).toContain(first.accessToken);
+  });
+
+  function pinnedModel(step: ScriptStep) {
+    const screen = new CredentialScreen(1);
+    const scope = new ScreenScope(screen);
+    const model = new FetchingModel(
+      [step],
+      terminalWith(() => {
+        scope.pin(credentialFor(1));
+        return credentialFor(1);
+      }),
+    );
+    return { screen, scope, model };
+  }
+
+  test('a cancelled model call keeps its lease while pending and releases it when it settles', async () => {
+    const { screen, scope, model } = pinnedModel((_, signal) => untilAborted(signal));
+    const { running } = run(model, screen, scope);
+    while (model.calls.length === 0) await Bun.sleep(1);
+    expect(() => screen.lease(credentialFor(2))).toThrow(ScreenCapacityError);
+    running.cancel(new Error('cancelled'));
+    expect((await running.settled).kind).toBe('failed');
+    expect(() => screen.lease(credentialFor(2)).release()).not.toThrow();
+  });
+
+  test('a failed model call releases its lease', async () => {
+    const { screen, scope, model } = pinnedModel(() => Promise.reject(new Error('model failed')));
+    const { running } = run(model, screen, scope);
+    expect(failureCode(await running.settled)).toBe('model_request_failed');
+    expect(() => screen.lease(credentialFor(2)).release()).not.toThrow();
+  });
+
+  test('a full screen refuses the credential, so nothing is sent', async () => {
+    const screen = new CredentialScreen(1);
+    screen.lease(credentialFor(99));
+    const scope = new ScreenScope(screen);
+    const log: string[] = [];
+    const model = new FetchingModel(
+      [() => new AIMessage({ id: 'm1', content: 'never' })],
+      terminalWith(() => {
+        scope.pin(credentialFor(1));
+        return credentialFor(1);
+      }, log),
+    );
+    const { running } = run(model, screen, scope);
+    const settled = await running.settled;
+    expect(failureCode(settled)).toBe('model_request_failed');
+    expect(settled.kind === 'failed' && executionFailureOf(settled.error)?.evidence).toEqual({
+      kind: 'terminal',
+      code: 'credential_unavailable',
+      reason: 'credential_screen_full',
+    });
+    expect(log).toEqual([]);
   });
 });
