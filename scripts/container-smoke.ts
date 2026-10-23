@@ -2,13 +2,39 @@
 // with fresh volumes, a synthetic workspace, an inert Tailscale namespace holder and internal networks only.
 // It never reads the owner's .env, joins a tailnet or contacts model providers.
 //
+// Runtime facets are exercised with synthetic inputs only: a sealed installation through the optional
+// compose.facets.yaml overlay and a test-built MCP program, both mounted read-only, a credential provisioned while the
+// runtime is stopped, and explicit inspection of the approved server. No tool is granted and no model is involved.
+//
 // It ends with an image-rollback rehearsal: a second image built from the same source snapshot, differing only in
 // the console page's title, replaces the first over the same database and private-state volumes, and the first is
-// then restored. Recorded runs, credentials and activity must be unchanged throughout. This shows a compatible
-// image can be rolled back on preserved storage; it is not a rollback of a live deployment.
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+// then restored. Recorded runs, retained capabilities, credentials and activity must be unchanged throughout. This
+// shows a compatible image can be rolled back on preserved storage; it is not a rollback of a live deployment. A
+// configuration-only rollback then turns capabilities off over the same storage.
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { buildPrograms } from '../packages/mcp-programs/src/builder.ts';
+import { PROGRAMS } from '../packages/mcp-programs/src/programs.ts';
+import { SYNTHETIC_PROGRAMS } from '../packages/mcp-programs/test-support/programs.ts';
+import {
+  CREDENTIAL_SLOT,
+  connectionDigest,
+  INSTALLATION_BYTES,
+  INSTALLATION_SHA256,
+  SERVER,
+  SLOT_VALUE,
+} from '../tests/support/synthetic-installation.ts';
 import { assertSafeLaunch, fixtureEnv, runCommand } from './lib/fixture-env.ts';
 import { repoRoot } from './lib/workspace.ts';
 
@@ -24,23 +50,59 @@ const buildContext = join(fixtureDir, 'build-context');
 const helperDir = join(fixtureDir, 'helper');
 const envFile = join(fixtureDir, 'empty.env');
 const configFile = join(fixtureDir, 'config.json');
+const programsDir = join(fixtureDir, 'programs');
+const installationFile = join(fixtureDir, 'installation.json');
 const PUBLIC_HOST = 'agent-runtime.smoke.invalid';
 const TITLE = '<title>Agent runtime</title>';
 const NEXT_TITLE = '<title>Agent runtime (rollback fixture)</title>';
+const BUNDLE_PATH = '/etc/agent-runtime/facets/installation.json';
+const FIXTURE_PROGRAMS = '/opt/agent-runtime/mcp-fixture';
+const SERVER_DIR = `/var/lib/agent-runtime/mcp/${SERVER}`;
 await Bun.write(join(workspaceDir, 'README.md'), 'synthetic workspace fixture\n');
 await Bun.write(envFile, '');
-await Bun.write(
-  configFile,
-  JSON.stringify({
-    version: 1,
-    workspace: { id: 'smoke', label: 'Smoke workspace', root: '/workspace' },
-    providers: {
-      anthropic: { authMode: 'subscription', model: 'smoke-model', profileId: 'claude-cli-2.1.280' },
-      openai: { authMode: 'subscription', model: 'smoke-model', profileId: 'codex-responses-v1' },
-    },
-    defaultProvider: 'anthropic',
-  }),
-);
+
+// Synthetic capability inputs: the test-only server program and the sealed installation declaring it.
+const built = await buildPrograms({
+  programs: SYNTHETIC_PROGRAMS,
+  packageRoot: join(repoRoot, 'packages', 'mcp-programs'),
+  outDir: programsDir,
+  lockfile: join(repoRoot, 'bun.lock'),
+});
+const program = built.programs.find((entry) => entry.id === SERVER);
+if (program === undefined) throw new Error('the synthetic MCP program was not built');
+const programFile = join(programsDir, program.path);
+chmodSync(programsDir, 0o755);
+chmodSync(dirname(programFile), 0o755);
+writeFileSync(installationFile, INSTALLATION_BYTES, { mode: 0o644 });
+
+const nativeConfig = {
+  version: 1,
+  workspace: { id: 'smoke', label: 'Smoke workspace', root: '/workspace' },
+  providers: {
+    anthropic: { authMode: 'subscription', model: 'smoke-model', profileId: 'claude-cli-2.1.280' },
+    openai: { authMode: 'subscription', model: 'smoke-model', profileId: 'codex-responses-v1' },
+  },
+  defaultProvider: 'anthropic',
+};
+// The synthetic server's connection is approved for discovery only: no tool is granted.
+const capabilityConfig = {
+  ...nativeConfig,
+  capabilities: {
+    installation: { path: BUNDLE_PATH, sha256: INSTALLATION_SHA256 },
+    localPrograms: { [SERVER]: { bundlePath: `${FIXTURE_PROGRAMS}/${program.path}`, sha256: program.sha256 } },
+    servers: [
+      {
+        serverId: SERVER,
+        programId: SERVER,
+        credentialEnv: { REPO_TOKEN: CREDENTIAL_SLOT },
+        approval: { kind: 'approved', serverDigest: connectionDigest(program), tools: [] },
+      },
+    ],
+  },
+};
+/** Rewrites the mounted configuration in place (a bind-mounted file keeps its inode); read at the next start. */
+const writeConfig = (config: object) => writeFileSync(configFile, JSON.stringify(config));
+writeConfig(capabilityConfig);
 
 /** Copies what the Docker build context admits (see .dockerignore) into a disposable snapshot. */
 function snapshotBuildContext() {
@@ -71,11 +133,14 @@ const env = fixtureEnv(process.env, {
   AGENT_RUNTIME_CONFIG: configFile,
   AGENT_RUNTIME_PUBLIC_HOST: PUBLIC_HOST,
   AGENT_RUNTIME_IMAGE: image,
+  AGENT_RUNTIME_FACETS: installationFile,
+  AGENT_RUNTIME_FIXTURE_PROGRAMS: programsDir,
   POSTGRES_PASSWORD: Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('hex'),
 });
 const composeBase = ['docker', 'compose', '--project-name', project, '--env-file', envFile, '-f', 'compose.yaml'];
-const composeSmoke = [...composeBase, '-f', 'tests/container/compose.smoke.yaml'];
-const run = (cmd: string[], allowFailure = false) => runCommand(cmd, { env, cwd: repoRoot, allowFailure });
+const composeSmoke = [...composeBase, '-f', 'compose.facets.yaml', '-f', 'tests/container/compose.smoke.yaml'];
+const run = (cmd: string[], allowFailure = false, stdin?: string) =>
+  runCommand(cmd, { env, cwd: repoRoot, allowFailure, ...(stdin === undefined ? {} : { stdin }) });
 /** The same, with Compose selecting `runtimeImage` for the runtime service. */
 const runWith = (runtimeImage: string, cmd: string[]) =>
   runCommand(cmd, { env: { ...env, AGENT_RUNTIME_IMAGE: runtimeImage }, cwd: repoRoot });
@@ -171,6 +236,40 @@ try {
     assert(rendered.services.runtime?.network_mode === 'service:tailscale', 'runtime does not share the namespace');
   });
 
+  await check(
+    'the base deployment needs no facet bundle; the facet overlay requires one and mounts it read-only',
+    async () => {
+      const { AGENT_RUNTIME_FACETS: _bundle, ...withoutBundle } = env;
+      const render = (files: string[], renderEnv: Record<string, string>) =>
+        runCommand([...files, 'config', '--format', 'json'], { env: renderEnv, cwd: repoRoot, allowFailure: true });
+      type Rendered = {
+        services: {
+          runtime: {
+            volumes: { target: string; source: string; read_only?: boolean; bind?: Record<string, unknown> }[];
+          };
+        };
+      };
+      const base = await render(composeBase, withoutBundle);
+      assert(base.code === 0, `the base deployment did not render without a bundle: ${base.stderr.trim()}`);
+      const baseVolumes = (JSON.parse(base.stdout) as Rendered).services.runtime.volumes;
+      assert(!baseVolumes.some((volume) => volume.target === BUNDLE_PATH), 'the base deployment mounts a facet bundle');
+      const overlay = [...composeBase, '-f', 'compose.facets.yaml'];
+      const unset = await render(overlay, withoutBundle);
+      assert(
+        unset.code !== 0 && unset.stderr.includes('AGENT_RUNTIME_FACETS'),
+        'the overlay rendered without a bundle',
+      );
+      const selected = await render(overlay, env);
+      const mount = (JSON.parse(selected.stdout) as Rendered).services.runtime.volumes.find(
+        (volume) => volume.target === BUNDLE_PATH,
+      );
+      assert(
+        mount?.source === installationFile && mount.read_only === true && mount.bind?.create_host_path === false,
+        `unexpected facet bundle mount: ${JSON.stringify(mount)}`,
+      );
+    },
+  );
+
   console.log(`building images ${image} and ${nextImage} from one source snapshot`);
   snapshotBuildContext();
   await run(['docker', 'build', '--tag', image, buildContext]);
@@ -217,6 +316,31 @@ try {
     }
   });
 
+  await check('the image ships only its selected MCP programs, digest-named, and no test server', async () => {
+    const script = `const root = '/opt/agent-runtime/mcp';
+      const manifest = await Bun.file(root + '/manifest.json').json();
+      const files = [...new Bun.Glob('**/*').scanSync({ cwd: root, onlyFiles: true, dot: true })].sort();
+      const problems = [];
+      for (const entry of manifest.programs) {
+        const bytes = await Bun.file(root + '/' + entry.path).bytes();
+        const digest = new Bun.CryptoHasher('sha256').update(bytes).digest('hex');
+        if (digest !== entry.sha256 || entry.path !== entry.id + '/' + entry.sha256 + '.js') problems.push(entry.id);
+      }
+      console.log(JSON.stringify({ ids: manifest.programs.map((p) => p.id).sort(),
+        paths: manifest.programs.map((p) => p.path), files, problems }));`;
+    const shipped = JSON.parse(
+      (await run(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'bun', firstId, '-e', script])).stdout,
+    ) as { ids: string[]; paths: string[]; files: string[]; problems: string[] };
+    const selected = PROGRAMS.map((entry) => entry.id).sort();
+    assert(JSON.stringify(shipped.ids) === JSON.stringify(selected), `shipped programs: ${shipped.ids.join(', ')}`);
+    assert(!shipped.ids.includes(SERVER), 'the synthetic test server shipped in the image');
+    assert(shipped.problems.length === 0, `programs with a wrong digest or path: ${shipped.problems.join(', ')}`);
+    assert(
+      JSON.stringify(shipped.files) === JSON.stringify(['manifest.json', ...shipped.paths].sort()),
+      `unexpected files beside the programs: ${shipped.files.join(', ')}`,
+    );
+  });
+
   console.log(`starting isolated project ${project}`);
   await run([...composeSmoke, 'up', '--detach', '--wait', '--wait-timeout', '180']);
 
@@ -246,6 +370,9 @@ try {
   await check('writes are limited to private state and scratch space', async () => {
     assert((await exec('runtime', 'touch', '/app/probe')).code !== 0, 'application directory is writable');
     assert((await exec('runtime', 'touch', '/workspace/probe')).code !== 0, 'workspace is writable');
+    for (const path of ['/opt/agent-runtime/mcp/probe', `${FIXTURE_PROGRAMS}/probe`, BUNDLE_PATH]) {
+      assert((await exec('runtime', 'touch', path)).code !== 0, `${path} is writable`);
+    }
     assert((await exec('runtime', 'cat', '/workspace/README.md')).stdout.includes('synthetic'), 'workspace unreadable');
     for (const path of ['/var/lib/agent-runtime/probe', '/tmp/probe']) {
       const result = await exec('runtime', 'sh', '-c', `touch ${path} && rm ${path}`);
@@ -258,7 +385,13 @@ try {
   await check('service state is not cross-mounted', async () => {
     const runtime = await inspect('runtime');
     const destinations = runtime.Mounts.map((mount) => mount.Destination).sort();
-    const expected = ['/etc/agent-runtime/config.json', '/var/lib/agent-runtime', '/workspace'];
+    const expected = [
+      '/etc/agent-runtime/config.json',
+      BUNDLE_PATH,
+      FIXTURE_PROGRAMS,
+      '/var/lib/agent-runtime',
+      '/workspace',
+    ];
     assert(
       JSON.stringify(destinations) === JSON.stringify([...expected, '/tmp'].sort()) ||
         JSON.stringify(destinations) === JSON.stringify(expected.sort()),
@@ -267,6 +400,9 @@ try {
     assert(runtime.Mounts.find((m) => m.Destination === '/workspace')?.RW === false, 'workspace mount is writable');
     const config = runtime.Mounts.find((m) => m.Destination === '/etc/agent-runtime/config.json');
     assert(config?.RW === false, 'configuration mount is writable');
+    for (const destination of [BUNDLE_PATH, FIXTURE_PROGRAMS]) {
+      assert(runtime.Mounts.find((m) => m.Destination === destination)?.RW === false, `${destination} is writable`);
+    }
   });
 
   await check('loopback health and readiness respond inside the namespace', async () => {
@@ -348,6 +484,199 @@ try {
     );
   });
 
+  const helper = await Bun.build({
+    entrypoints: ['rollback-state.ts', 'mcp-state.ts'].map((file) => join(repoRoot, 'tests', 'container', file)),
+    target: 'bun',
+    outdir: helperDir,
+    naming: '[name].[ext]',
+  });
+  if (!helper.success) throw new Error(`the fixture helpers did not build: ${helper.logs.join('\n')}`);
+  chmodSync(helperDir, 0o755);
+  for (const file of ['rollback-state.js', 'mcp-state.js']) chmodSync(join(helperDir, file), 0o644);
+  /** Runs a helper in a one-off container of `runtimeImage`, on the runtime's own volumes, mounts and namespace. */
+  const runHelper = async (runtimeImage: string, file: string, args: string[]) => {
+    const result = await runWith(runtimeImage, [
+      ...composeSmoke,
+      'run',
+      '--rm',
+      '--no-deps',
+      '-T',
+      '--volume',
+      `${helperDir}:/fixture:ro`,
+      '--entrypoint',
+      'bun',
+      'runtime',
+      `/fixture/${file}`,
+      ...args,
+    ]);
+    assert(!result.stdout.includes(SLOT_VALUE) && !result.stderr.includes(SLOT_VALUE), `${file} printed a credential`);
+    return JSON.parse(result.stdout.trim().split('\n').at(-1) ?? '') as unknown;
+  };
+  const fixtureState = (runtimeImage: string, mode: 'seed' | 'inspect') =>
+    runHelper(runtimeImage, 'rollback-state.js', [mode]);
+
+  // --- Runtime facets: a sealed bundle and a test-built program, read-only -------------------------------------
+
+  const publicHost = { host: PUBLIC_HOST };
+  const sameOrigin = { ...publicHost, origin: `https://${PUBLIC_HOST}`, 'content-type': 'application/json' };
+  const capabilities = async () =>
+    JSON.parse((await request('/api/v1/capabilities', { headers: publicHost })).body) as {
+      kind: string;
+      catalogRevision?: string;
+    };
+  const discover = () =>
+    request(`/api/v1/capabilities/servers/${SERVER}/discover`, {
+      method: 'POST',
+      headers: sameOrigin,
+      body: JSON.stringify({ catalogRevision: INSTALLATION_SHA256 }),
+    });
+  /** What the synthetic server itself recorded in its private home directory. */
+  const witness = async () => {
+    const log = await exec('runtime', 'cat', `${SERVER_DIR}/home/witness.log`);
+    const lines = log.code === 0 ? log.stdout.trim().split('\n') : [];
+    return {
+      spawns: lines.filter((line) => line.startsWith('spawn ')).map((line) => line.slice('spawn '.length)),
+      lists: lines.filter((line) => line === 'list').length,
+      calls: lines.filter((line) => line.startsWith('call ')).length,
+    };
+  };
+  /** The operator's `auth mcp` command in a one-off runtime container. */
+  const mcpAuth = (args: string[], stdin?: string) =>
+    run(
+      [...composeSmoke, 'run', '--rm', '--no-deps', '-T', 'runtime', 'bun', 'dist/auth.js', 'mcp', ...args],
+      true,
+      stdin,
+    );
+  const slotDigest = async () =>
+    (await exec('runtime', 'sha256sum', `/var/lib/agent-runtime/mcp-credentials/${CREDENTIAL_SLOT}.json`)).stdout.split(
+      ' ',
+    )[0];
+  const startRuntime = async () => {
+    await run([...composeSmoke, 'up', '--detach', '--wait', '--wait-timeout', '120', '--no-deps', 'runtime']);
+    await awaitPersistenceReady(120_000);
+  };
+  interface ServerState {
+    launch: { command: string; args: string[]; cwd: string };
+    reported: { cwd: string; home: string; tmpdir: string; names: string[] };
+    directories: Record<'root' | 'home' | 'tmp', { mode: string; uid: number }>;
+    uid: number;
+    recalled?: string;
+    spawns: number;
+  }
+  /** Where the server ran and with what environment; the same for every connection. */
+  function assertPlacement(state: ServerState) {
+    const programPath = `${FIXTURE_PROGRAMS}/${program?.path}`;
+    assert(
+      state.launch.command.endsWith('/bun') &&
+        JSON.stringify(state.launch.args) ===
+          JSON.stringify(['--config=/dev/null', '--no-install', '--no-env-file', programPath]),
+      `unexpected launch: ${JSON.stringify(state.launch)}`,
+    );
+    assert(state.launch.cwd === SERVER_DIR && state.reported.cwd === SERVER_DIR, `cwd: ${state.reported.cwd}`);
+    assert(state.reported.home === `${SERVER_DIR}/home`, `HOME: ${state.reported.home}`);
+    assert(state.reported.tmpdir === `${SERVER_DIR}/tmp`, `TMPDIR: ${state.reported.tmpdir}`);
+    for (const [name, directory] of Object.entries(state.directories)) {
+      assert(directory.mode === '700' && directory.uid === state.uid, `${name}: ${JSON.stringify(directory)}`);
+    }
+    const names = state.reported.names;
+    for (const name of ['HOME', 'TMPDIR', 'REPO_MODE', 'REPO_TOKEN']) assert(names.includes(name), `${name} missing`);
+    const leaked = names.filter((name) => /^(DATABASE_URL|RUNTIME_|POSTGRES_|ANTHROPIC_|OPENAI_|BUN_)/.test(name));
+    assert(leaked.length === 0, `runtime settings reached the server: ${leaked.join(', ')}`);
+  }
+
+  await check(
+    'the sealed facet bundle is offered from its read-only mount, and reading it starts nothing',
+    async () => {
+      const catalog = await capabilities();
+      assert(catalog.kind === 'ready' && catalog.catalogRevision === INSTALLATION_SHA256, JSON.stringify(catalog));
+      assert((await exec('runtime', 'test', '-e', '/var/lib/agent-runtime/mcp')).code !== 0, 'a server was started');
+    },
+  );
+
+  await check('an MCP credential is stored from standard input only while the runtime is stopped', async () => {
+    const whileRunning = await mcpAuth(['set', CREDENTIAL_SLOT], SLOT_VALUE);
+    assert(
+      whileRunning.code !== 0 && whileRunning.stderr.includes('Stop the runtime first'),
+      `set while running: ${whileRunning.code} ${whileRunning.stderr.trim()}`,
+    );
+    const unchanged = await mcpAuth(['status', CREDENTIAL_SLOT]);
+    assert(unchanged.stdout.trim() === `mcp/${CREDENTIAL_SLOT}: missing`, `status: ${unchanged.stdout.trim()}`);
+    await run([...composeSmoke, 'stop', '--timeout', '10', 'runtime']);
+    const stored = await mcpAuth(['set', CREDENTIAL_SLOT], SLOT_VALUE);
+    assert(stored.code === 0, `set while stopped: ${stored.stderr.trim()}`);
+    const present = await mcpAuth(['status', CREDENTIAL_SLOT]);
+    assert(present.stdout.trim() === `mcp/${CREDENTIAL_SLOT}: present`, `status: ${present.stdout.trim()}`);
+    for (const output of [whileRunning, unchanged, stored, present]) {
+      assert(!`${output.stdout}${output.stderr}`.includes(SLOT_VALUE), 'the credential was echoed');
+    }
+    await startRuntime();
+    const before = await slotDigest();
+    const replaced = await mcpAuth(['set', CREDENTIAL_SLOT], `${SLOT_VALUE}-replacement`);
+    assert(replaced.code !== 0 && (await slotDigest()) === before, 'a running runtime’s credential was replaced');
+  });
+
+  await check('explicit inspection starts the approved server once, and it is gone afterwards', async () => {
+    const inspected = await discover();
+    assert(inspected.status === 200 && inspected.body.includes('list_items'), `discover: ${inspected.status}`);
+    const seen = await witness();
+    assert(seen.spawns.length === 1 && seen.lists === 1 && seen.calls === 0, JSON.stringify(seen));
+    assert((await exec('runtime', 'test', '-e', `/proc/${seen.spawns[0]}`)).code !== 0, 'the server is still running');
+  });
+
+  await check('a tampered or missing program is refused before anything starts', async () => {
+    const original = readFileSync(programFile);
+    writeFileSync(programFile, Buffer.concat([original, Buffer.from('\n// tampered\n')]));
+    const tampered = await discover();
+    writeFileSync(programFile, original);
+    renameSync(programFile, `${programFile}.moved`);
+    const missing = await discover();
+    renameSync(`${programFile}.moved`, programFile);
+    for (const [name, response] of [
+      ['tampered', tampered],
+      ['missing', missing],
+    ] as const) {
+      assert(
+        response.status !== 200 && response.body.includes(`"subject":"mcp:${SERVER}"`),
+        `${name} program: ${response.status} ${response.body}`,
+      );
+    }
+    assert((await witness()).spawns.length === 1, 'a refused program was started');
+    const restored = await discover();
+    assert(restored.status === 200 && (await witness()).spawns.length === 2, 'the restored program was not inspected');
+  });
+
+  await check('a tampered facet bundle makes only the catalog unavailable', async () => {
+    writeFileSync(installationFile, Buffer.concat([Buffer.from(INSTALLATION_BYTES), Buffer.from(' ')]));
+    const tampered = await capabilities();
+    const readiness = await request('/readyz');
+    writeFileSync(installationFile, INSTALLATION_BYTES);
+    assert(tampered.kind === 'unavailable', `catalog: ${JSON.stringify(tampered)}`);
+    assert(readiness.status === 200, `the runtime became unready: ${readiness.body}`);
+    assert((await capabilities()).kind === 'ready', 'the restored bundle is not offered');
+  });
+
+  await check('a missing facet bundle stops the runtime starting instead of mounting an empty path', async () => {
+    const attempt = (bundle: string) =>
+      runCommand([...composeSmoke, 'run', '--rm', '--no-deps', '-T', '--entrypoint', 'true', 'runtime'], {
+        env: { ...env, AGENT_RUNTIME_FACETS: bundle },
+        cwd: repoRoot,
+        allowFailure: true,
+      });
+    const absent = join(fixtureDir, 'absent.json');
+    const refused = await attempt(absent);
+    assert(refused.code !== 0, 'a runtime container started without its facet bundle');
+    assert(!existsSync(absent), 'the missing bundle path was created');
+    const control = await attempt(installationFile);
+    assert(control.code === 0, `the control container did not start: ${control.stderr.trim()}`);
+  });
+
+  const marker = `retained-${id}`;
+  let firstState: ServerState | undefined;
+  await check('the server runs from its private directories with only its own environment', async () => {
+    firstState = (await runHelper(image, 'mcp-state.js', ['remember', marker])) as ServerState;
+    assertPlacement(firstState);
+  });
+
   await check('ordinary network peers cannot reach the runtime listener', async () => {
     const [holder, database] = await Promise.all([inspect('tailscale'), inspect('postgres')]);
     const network = `${project}_backend`;
@@ -397,39 +726,12 @@ try {
     for (const network of inspected) assert(network.Internal, `${network.Name} is not internal`);
   });
 
-  const helper = await Bun.build({
-    entrypoints: [join(repoRoot, 'tests', 'container', 'rollback-state.ts')],
-    target: 'bun',
-    outdir: helperDir,
-    naming: 'rollback-state.js',
-  });
-  if (!helper.success) throw new Error(`the rollback fixture helper did not build: ${helper.logs.join('\n')}`);
-  chmodSync(helperDir, 0o755);
-  chmodSync(join(helperDir, 'rollback-state.js'), 0o644);
-  /** Runs the helper in a one-off container of `runtimeImage`, on the runtime's own volumes and namespace. */
-  const fixtureState = async (runtimeImage: string, mode: 'seed' | 'inspect') => {
-    const result = await runWith(runtimeImage, [
-      ...composeSmoke,
-      'run',
-      '--rm',
-      '--no-deps',
-      '-T',
-      '--volume',
-      `${helperDir}:/fixture:ro`,
-      '--entrypoint',
-      'bun',
-      'runtime',
-      '/fixture/rollback-state.js',
-      mode,
-    ]);
-    return JSON.parse(result.stdout.trim().split('\n').at(-1) ?? '') as unknown;
-  };
-
   interface State {
     fingerprint: string;
     counts: Record<string, number>;
     runs: { runId: string; provider: string; state: string; consumed: number; unconfirmed: number }[];
     credentials: { provider: string; kind: string; generation?: number; lifecycle?: string; sha256: string }[];
+    mcpCredentials: { file: string; sha256: string }[];
   }
   let seeded: Record<string, string> = {};
   let baseline: State | undefined;
@@ -469,18 +771,30 @@ try {
         ]),
       `provider readiness: ${JSON.stringify(readiness)}`,
     );
-    for (const [provider, runId] of Object.entries(seeded)) {
+    for (const [key, runId] of Object.entries(seeded)) {
+      const provider = key === 'command' ? 'anthropic' : key;
       const detail = await request(`/api/v1/runs/${runId}`, { headers: { host: PUBLIC_HOST } });
       const run = (JSON.parse(detail.body) as { run: { provider: string; state: { kind: string } } }).run;
       assert(detail.status === 200, `run ${runId} is not readable (${detail.status})`);
       assert(run.provider === provider && run.state.kind === 'cancelled', `run ${runId}: ${JSON.stringify(run)}`);
     }
+    await assertRetainedCommand();
+  }
+
+  /** The seeded command run's retained capabilities, read from application storage alone. */
+  async function assertRetainedCommand() {
+    const retained = await request(`/api/v1/runs/${seeded.command}/capabilities`, { headers: { host: PUBLIC_HOST } });
+    const view = JSON.parse(retained.body) as { kind: string; command?: { id: string } };
+    assert(
+      retained.status === 200 && view.kind === 'command' && view.command?.id === 'command:triage',
+      `retained capabilities: ${retained.status} ${retained.body}`,
+    );
   }
 
   await check('recorded runs and credentials are prepared on the first image, with nothing dispatched', async () => {
     await run([...composeSmoke, 'stop', '--timeout', '10', 'runtime']);
     seeded = ((await fixtureState(image, 'seed')) as { runs: Record<string, string> }).runs;
-    assert(Object.keys(seeded).sort().join() === 'anthropic,openai', `seeded runs: ${JSON.stringify(seeded)}`);
+    assert(Object.keys(seeded).sort().join() === 'anthropic,command,openai', `seeded: ${JSON.stringify(seeded)}`);
     await run([...composeSmoke, 'up', '--detach', '--wait', '--wait-timeout', '120', '--no-deps', 'runtime']);
     const [runtime, database] = await Promise.all([inspect('runtime'), inspect('postgres')]);
     storage = {
@@ -491,7 +805,15 @@ try {
     assert(storage.runtimeState !== undefined && storage.postgresData !== undefined, 'named volumes not found');
     await awaitPersistenceReady(120_000);
     baseline = (await fixtureState(image, 'inspect')) as State;
-    assert(baseline.counts.runs === 2 && baseline.counts.model_attempts === 0, JSON.stringify(baseline.counts));
+    assert(baseline.counts.runs === 3 && baseline.counts.model_attempts === 0, JSON.stringify(baseline.counts));
+    assert(
+      baseline.counts.capability_snapshots === 1 && baseline.counts.run_capabilities === 1,
+      JSON.stringify(baseline.counts),
+    );
+    assert(
+      baseline.mcpCredentials.length === 1 && baseline.mcpCredentials[0]?.file === `${CREDENTIAL_SLOT}.json`,
+      JSON.stringify(baseline.mcpCredentials),
+    );
     assert(baseline.counts.tool_operations === 0 && baseline.counts.questions === 0, JSON.stringify(baseline.counts));
     assert(
       baseline.runs.every((r) => r.state === 'cancelled' && r.consumed === 0 && r.unconfirmed === 0),
@@ -520,6 +842,48 @@ try {
   await check('rolling back to the earlier image keeps every recorded run, credential and outcome', async () => {
     await switchTo(image);
     await verifyRunning(firstId, TITLE);
+  });
+
+  await check('the server’s private data survives runtime restarts and image replacement', async () => {
+    const state = (await runHelper(image, 'mcp-state.js', ['recall'])) as ServerState;
+    assertPlacement(state);
+    assert(state.recalled === marker, 'the server’s stored data was lost');
+    assert(firstState !== undefined && state.spawns === firstState.spawns + 2, `spawns: ${state.spawns}`);
+  });
+
+  await check(
+    'turning capabilities off in configuration refuses new command runs and keeps retained ones',
+    async () => {
+      writeConfig(nativeConfig);
+      const before = Number(await ownerEpoch());
+      await run([...composeSmoke, 'restart', '--timeout', '10', 'runtime']);
+      await awaitPersistenceReady(120_000);
+      assert(Number(await ownerEpoch()) > before, 'the runtime did not restart');
+      assert((await capabilities()).kind === 'unconfigured', 'capabilities are still offered');
+      const started = await request('/api/v1/runs', {
+        method: 'POST',
+        headers: sameOrigin,
+        body: JSON.stringify({
+          requestId: crypto.randomUUID(),
+          provider: 'anthropic',
+          command: { id: 'command:sync', selectionRevision: 'a'.repeat(64), arguments: 'owner/repo-a' },
+        }),
+      });
+      assert(
+        started.status === 409 && started.body.includes('capability_unavailable'),
+        `command start: ${started.status}`,
+      );
+      const spawns = (await witness()).spawns.length;
+      assert((await discover()).status === 409 && (await witness()).spawns.length === spawns, 'a server was inspected');
+      await assertRetainedCommand();
+      const state = (await fixtureState(image, 'inspect')) as State;
+      assert(state.fingerprint === baseline?.fingerprint, `recorded state changed: ${JSON.stringify(state.counts)}`);
+    },
+  );
+
+  await check('no output of any service contains the synthetic credential', async () => {
+    const logs = await run([...composeSmoke, 'logs', '--no-color']);
+    assert(!`${logs.stdout}${logs.stderr}`.includes(SLOT_VALUE), 'a service logged the credential');
   });
   console.log(
     `rollback rehearsal: ${firstId} → ${nextId} → ${firstId}; state ${baseline?.fingerprint}; ${JSON.stringify(baseline?.counts)}`,

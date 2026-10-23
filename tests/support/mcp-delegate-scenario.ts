@@ -52,13 +52,16 @@ function responsesCalls(id: string, calls: Call[]): string {
   );
 }
 
-const calls = (provider: Provider, id: string, list: Call[]) =>
+/** One scripted model turn issuing the given tool calls, in the provider's own stream format. */
+export const calls = (provider: Provider, id: string, list: Call[]) =>
   provider === 'anthropic' ? sse(toolsTurn(`msg_${id}`, list)) : responsesStream(responsesCalls(`resp_${id}`, list));
-const one = (provider: Provider, id: string, call: Call) =>
+/** One scripted model turn issuing one tool call. */
+export const one = (provider: Provider, id: string, call: Call) =>
   provider === 'anthropic'
     ? sse(toolTurn(`msg_${id}`, call[0], call[1], call[2]))
     : responsesStream(responsesCalls(`resp_${id}`, [call]));
-const text = (provider: Provider, id: string, value: string) =>
+/** One scripted model turn with a final text. */
+export const text = (provider: Provider, id: string, value: string) =>
   provider === 'anthropic' ? sse(textTurn(`msg_${id}`, value)) : responsesStream(responsesText(`resp_${id}`, value));
 
 const LIST = { repository: 'owner/repo-a' };

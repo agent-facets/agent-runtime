@@ -8,6 +8,16 @@ services:
     networks: !override
       - backend
 
+  # Test-built synthetic MCP programs, read-only, beside (never inside) the image's own program directory.
+  runtime:
+    volumes:
+      - type: bind
+        source: ${AGENT_RUNTIME_FIXTURE_PROGRAMS:?set AGENT_RUNTIME_FIXTURE_PROGRAMS}
+        target: /opt/agent-runtime/mcp-fixture
+        read_only: true
+        bind:
+          create_host_path: false
+
 networks:
   egress:
     internal: true

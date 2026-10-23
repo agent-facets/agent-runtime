@@ -76,7 +76,7 @@ export interface WorkspacePolicy {
   readonly id: string;
   readonly label: string;
   readonly root: string;
-  readonly limits: typeof WORKSPACE_LIMITS;
+  readonly limits: Readonly<Record<keyof typeof WORKSPACE_LIMITS, number>>;
   readonly excludedNames: ReadonlySet<string>;
   readonly excludedPatterns: readonly RegExp[];
   /** Relative path prefixes, as component arrays. */

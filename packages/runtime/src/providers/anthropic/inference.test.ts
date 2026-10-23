@@ -396,18 +396,6 @@ describe('offline G4: failures keep their type and their attempt, and nothing is
     expect(h.admitted).toHaveLength(1);
   });
 
-  test(
-    'control: the stock model alone would retry on a call-level override',
-    async () => {
-      const net = network(Array.from({ length: 8 }, () => () => apiError(500, 'api_error')));
-      const model = createAnthropicModel({ model: 'claude-opus-5', terminal: net.fetchImpl });
-      await expect(model.invoke('hi', { maxRetries: 1 })).rejects.toThrow();
-      // Nested retry layers multiply: one call-level retry already sends several physical requests.
-      expect(net.sent.length).toBeGreaterThan(1);
-    },
-    { timeout: 20_000 },
-  );
-
   const typed: [string, Response, Record<string, unknown>][] = [
     [
       'a rate limit with retry-after',

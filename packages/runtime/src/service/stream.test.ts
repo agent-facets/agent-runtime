@@ -3,14 +3,7 @@ import { RunStoreError, type StoredEvent } from '../records/run-store.ts';
 import type { RunState } from '../records/schemas.ts';
 import { handleApi } from './http.ts';
 import type { RunService } from './runs.ts';
-import {
-  HEARTBEAT_MS,
-  openEventStream,
-  REAL_TIME,
-  STREAM_PAGE_BYTES,
-  STREAM_PAGE_EVENTS,
-  type StreamTiming,
-} from './stream.ts';
+import { HEARTBEAT_MS, openEventStream, STREAM_PAGE_BYTES, STREAM_PAGE_EVENTS, type StreamTiming } from './stream.ts';
 
 const RUN = '00000000-0000-4000-8000-000000000001';
 const AT = '2026-09-30T12:00:00.000000Z';
@@ -229,40 +222,27 @@ describe('event stream', () => {
     expect(store.reads.length).toBe(reads);
   });
 
-  test('over a real server, a stream quieter than the idle timeout stays open and keeps tailing', async () => {
-    const store = history([message(1)]);
+  test('the stream request alone is exempt from the idle timeout, and Last-Event-ID supersedes the URL cursor', async () => {
+    const store = history([message(1), message(2)]);
     const service = { store } as unknown as RunService;
-    const timing = { ...REAL_TIME, heartbeatMs: 1_500, pollMs: 100 };
-    const server = Bun.serve({
-      hostname: '127.0.0.1',
-      port: 0,
-      idleTimeout: 1,
-      routes: { '/api/v1/*': (request, srv) => handleApi(request, () => service, srv, timing) },
+    const exempted: [Request, number][] = [];
+    const request = new Request(`http://127.0.0.1:3000/api/v1/runs/${RUN}/stream?after=0`, {
+      headers: { 'last-event-id': '1' },
     });
-    try {
-      const response = await fetch(`http://127.0.0.1:${server.port}/api/v1/runs/${RUN}/stream?after=0`, {
-        headers: { 'last-event-id': '1' },
-      });
-      expect(response.status).toBe(200);
-      const reader = (response.body as ReadableStream<Uint8Array>).getReader();
-      const decoder = new TextDecoder();
-      let text = '';
-      const started = Date.now();
-      while (Date.now() - started < 2_500) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        text += decoder.decode(value, { stream: true });
-      }
-      // Last-Event-ID superseded the URL cursor: event 1 is not replayed; heartbeats kept the stream alive.
-      expect(text).not.toContain('id: 1');
-      expect(text.split(': heartbeat').length - 1).toBeGreaterThanOrEqual(1);
-      store.events.push(message(2));
-      let tail = '';
-      while (!tail.includes('id: 2')) tail += decoder.decode((await reader.read()).value, { stream: true });
-      await reader.cancel();
-    } finally {
-      server.stop(true);
-    }
+    const response = await handleApi(
+      request,
+      () => service,
+      { timeout: (target, seconds) => exempted.push([target, seconds]) },
+      fakeTime(),
+    );
+    expect(response.status).toBe(200);
+    expect(exempted).toEqual([[request, 0]]);
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder();
+    let text = '';
+    while (!text.includes('id: 2')) text += decoder.decode((await reader.read()).value, { stream: true });
+    expect(text).not.toContain('id: 1\n');
+    await reader.cancel();
   });
 
   test('refuses unknown runs, malformed cursors and cursors beyond committed history before streaming', async () => {

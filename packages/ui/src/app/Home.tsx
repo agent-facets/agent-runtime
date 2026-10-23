@@ -1,8 +1,9 @@
 // The run list and the form that starts a run.
-import type { Options, Provider, RunSummary } from '@agent-runtime/contracts';
+import type { ContributionView, Options, Provider, RunSummary } from '@agent-runtime/contracts';
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
-import type { ApiClient } from '../api/client.ts';
+import type { ApiClient, StartBody } from '../api/client.ts';
 import { RequestIdentity } from '../api/requests.ts';
+import { type Catalog, InstalledCapabilities, originsLabel, useCatalog } from './Capabilities.tsx';
 import { ConnectAnthropic, ConnectOpenAI } from './Connect.tsx';
 import { formatTime, providerLabel, STATE_LABELS } from './format.ts';
 import { runHref } from './route.ts';
@@ -10,24 +11,35 @@ import { runHref } from './route.ts';
 const LIST_REFRESH_MS = 5_000;
 
 export function Home({ client }: { client: ApiClient }) {
+  const catalog = useCatalog(client);
   return (
     <main>
-      <StartForm client={client} />
+      <StartForm client={client} catalog={catalog} />
+      <InstalledCapabilities client={client} catalog={catalog} />
       <RunList client={client} />
     </main>
   );
 }
 
 type Notice = { tone: 'error' | 'uncertain'; text: string } | undefined;
+type Mode = 'goal' | 'command';
+type StartContent =
+  | { provider: Provider; goal: string }
+  | { provider: Provider; command: { id: string; selectionRevision: string; arguments: string } };
 
-export function StartForm({ client }: { client: ApiClient }) {
+export function StartForm({ client, catalog }: { client: ApiClient; catalog: Catalog }) {
   const [options, setOptions] = useState<Options | undefined>();
   const [optionsError, setOptionsError] = useState(false);
+  const [mode, setMode] = useState<Mode>('goal');
   const [goal, setGoal] = useState('');
+  const [commandId, setCommandId] = useState('');
+  const [args, setArgs] = useState('');
   const [provider, setProvider] = useState<Provider | undefined>();
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>();
-  const identity = useRef(new RequestIdentity<{ goal: string; provider: Provider }>());
+  // A start whose acknowledgement was lost: retried exactly as sent, whatever has been refreshed or edited since.
+  const [unsettled, setUnsettled] = useState<StartBody | undefined>();
+  const identity = useRef(new RequestIdentity<StartContent>());
 
   const live = useRef(true);
   const loadOptions = useCallback(async () => {
@@ -48,30 +60,53 @@ export function StartForm({ client }: { client: ApiClient }) {
     };
   }, [loadOptions]);
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (provider === undefined || busy) return;
-    const content = { goal, provider };
+  const ready =
+    catalog.state.kind === 'loaded' && catalog.state.catalog.kind === 'ready' ? catalog.state.catalog : undefined;
+  const commands = ready?.contributions.filter((entry) => entry.kind === 'command') ?? [];
+  const command = commands.find((entry) => entry.id === commandId);
+  const revision = command?.availability.kind === 'ready' ? command.availability.selectionRevision : undefined;
+
+  const send = async (body: StartBody) => {
     setBusy(true);
     setNotice(undefined);
-    const outcome = await client.startRun({ requestId: identity.current.idFor(content), ...content });
+    const outcome = await client.startRun(body);
     const settlement = identity.current.settle(outcome);
     setBusy(false);
+    if (settlement === 'definite') setUnsettled(undefined);
     if (outcome.ok) {
       setGoal('');
+      setArgs('');
       window.location.hash = runHref(outcome.value.run.runId);
       return;
     }
     if (settlement === 'unknown') {
+      setUnsettled(body);
       setNotice({
         tone: 'uncertain',
         text: 'The start may have been recorded, but no reply arrived. Submitting again is safe: it cannot start a second run.',
       });
     } else if (outcome.kind === 'refused') {
+      // A refused command is never turned into a goal run; a changed selection needs a fresh look first.
       setNotice({ tone: 'error', text: outcome.error.message });
+      if (outcome.error.code === 'capability_selection_changed') void catalog.load();
     }
   };
 
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (provider === undefined || busy) return;
+    let content: StartContent;
+    if (mode === 'goal') content = { provider, goal };
+    else {
+      if (command === undefined || revision === undefined) return;
+      content = { provider, command: { id: command.id, selectionRevision: revision, arguments: args } };
+    }
+    await send({ requestId: identity.current.idFor(content), ...content } as StartBody);
+  };
+
+  const commandReady =
+    command !== undefined && revision !== undefined && (command.arguments?.required !== true || /\S/.test(args));
+  const canStart = provider !== undefined && !busy && (mode === 'goal' ? /\S/.test(goal) : commandReady);
   const selected = options?.providers.find((entry) => entry.provider === provider);
   return (
     <section className="panel">
@@ -81,18 +116,49 @@ export function StartForm({ client }: { client: ApiClient }) {
         <p className="notice error">The workspace “{options.workspace.label}” is not available.</p>
       )}
       <form onSubmit={submit}>
-        <label>
-          Goal
-          <textarea
-            name="goal"
-            value={goal}
-            rows={4}
-            required
-            onChange={(event) => {
-              setGoal(event.target.value);
-            }}
+        <fieldset className="mode">
+          <legend>Start from</legend>
+          <label className="choice">
+            <input type="radio" name="mode" checked={mode === 'goal'} onChange={() => setMode('goal')} />
+            Free-form task
+          </label>
+          <label className="choice">
+            <input
+              type="radio"
+              name="mode"
+              checked={mode === 'command'}
+              onChange={() => {
+                setMode('command');
+                if (catalog.state.kind === 'idle') void catalog.load();
+              }}
+            />
+            Installed command
+          </label>
+        </fieldset>
+        {mode === 'goal' ? (
+          <label>
+            Goal
+            <textarea
+              name="goal"
+              value={goal}
+              rows={4}
+              required
+              onChange={(event) => {
+                setGoal(event.target.value);
+              }}
+            />
+          </label>
+        ) : (
+          <CommandFields
+            catalog={catalog}
+            commands={commands}
+            command={command}
+            commandId={commandId}
+            setCommandId={setCommandId}
+            args={args}
+            setArgs={setArgs}
           />
-        </label>
+        )}
         <div className="row">
           <label>
             Provider
@@ -116,7 +182,7 @@ export function StartForm({ client }: { client: ApiClient }) {
                 ` · Deployment limit: ${options.modelRequestCeiling} model requests`}
             </span>
           )}
-          <button type="submit" disabled={busy || provider === undefined || !/\S/.test(goal)}>
+          <button type="submit" disabled={!canStart}>
             {busy ? 'Starting…' : identity.current.pending ? 'Submit again' : 'Start'}
           </button>
         </div>
@@ -127,6 +193,14 @@ export function StartForm({ client }: { client: ApiClient }) {
           </p>
         )}
         {notice !== undefined && <p className={`notice ${notice.tone}`}>{notice.text}</p>}
+        {unsettled !== undefined && (
+          <p>
+            <button type="button" className="secondary" disabled={busy} onClick={() => void send(unsettled)}>
+              Retry same start
+            </button>{' '}
+            <span className="hint">Sends exactly what was submitted, with the same request identity.</span>
+          </p>
+        )}
       </form>
       {/* Its own form, outside the task form: the code is never part of a task. */}
       {selected !== undefined &&
@@ -137,6 +211,80 @@ export function StartForm({ client }: { client: ApiClient }) {
           <ConnectOpenAI client={client} readiness={selected.readiness} onConnected={() => void loadOptions()} />
         ))}
     </section>
+  );
+}
+
+function CommandFields(props: {
+  catalog: Catalog;
+  commands: ContributionView[];
+  command: ContributionView | undefined;
+  commandId: string;
+  setCommandId: (id: string) => void;
+  args: string;
+  setArgs: (args: string) => void;
+}) {
+  const { catalog, commands, command } = props;
+  const { state } = catalog;
+  const refresh = (
+    <button type="button" className="secondary" onClick={() => void catalog.load()}>
+      Refresh commands
+    </button>
+  );
+  if (state.kind === 'idle' || state.kind === 'loading') return <p className="hint">Loading installed commands…</p>;
+  if (state.kind === 'error') {
+    return <p className="notice error">The installed commands could not be loaded. {refresh}</p>;
+  }
+  if (state.catalog.kind === 'unconfigured') {
+    return (
+      <p className="notice">No runtime facets are configured for this deployment. Start a free-form task instead.</p>
+    );
+  }
+  if (state.catalog.kind === 'unavailable') {
+    return (
+      <p className="notice error">
+        The installed commands cannot be read ({state.catalog.reason.replaceAll('_', ' ')}). Start a free-form task, or{' '}
+        {refresh}
+      </p>
+    );
+  }
+  return (
+    <>
+      <div className="row">
+        <label>
+          Command
+          <select name="command" value={props.commandId} onChange={(event) => props.setCommandId(event.target.value)}>
+            <option value="">Choose a command…</option>
+            {commands.map((entry) => (
+              <option key={entry.id} value={entry.id} disabled={entry.availability.kind !== 'ready'}>
+                {entry.name}
+                {entry.availability.kind === 'ready'
+                  ? ''
+                  : ` (unavailable: ${entry.availability.reason.replaceAll('_', ' ')})`}
+              </option>
+            ))}
+          </select>
+        </label>
+        {refresh}
+      </div>
+      {commands.length === 0 && <p className="hint">No commands are installed.</p>}
+      {command !== undefined && (
+        <>
+          <p className="hint">
+            {command.name} · {originsLabel(command.origins)}
+          </p>
+          {command.description !== undefined && <p className="text">{command.description}</p>}
+          <label>
+            Arguments {command.arguments?.required === true ? '(required)' : '(optional)'}
+            <textarea
+              name="arguments"
+              value={props.args}
+              rows={3}
+              onChange={(event) => props.setArgs(event.target.value)}
+            />
+          </label>
+        </>
+      )}
+    </>
   );
 }
 

@@ -158,10 +158,13 @@ never approves runtime access to it, and the facet's `command` is never run.
 ## Server programs, approvals and credentials
 
 A declared server's `command` is never run. The deployment supplies each server as a self-contained Bun bundle,
-built from an explicitly selected entry in `packages/mcp-programs` (none is selected), and operator configuration
-binds the server to that bundle and its SHA-256 (`capabilities.localPrograms`). Connection approval, tool grants
-and argument restrictions also live only in operator configuration; credentials live in private slots provisioned
-with `auth mcp set` while the runtime is stopped. See
+built from an explicitly selected entry in `packages/mcp-programs` (none is selected). The image ships the selected
+bundles read-only at `/opt/agent-runtime/mcp/<programId>/<sha256>.js` with their `manifest.json`, and operator
+configuration binds the server to that bundle and its SHA-256 (`capabilities.localPrograms`). Connection approval,
+tool grants and argument restrictions also live only in operator configuration; credentials live in private slots
+provisioned with `auth mcp set` while the runtime is stopped. The sealed `installation.json` reaches the container
+through the optional `compose.facets.yaml` overlay. See
+[Runtime facets in a deployment](../../../README.md#runtime-facets-in-a-deployment),
 [Capability configuration](../../../README.md#capability-configuration) and the MCP server notes under
 [Authority boundaries](../../../README.md#authority-boundaries).
 

@@ -93,8 +93,11 @@ async function harness(
      * issuer answering with `issuer` in order, and the given profile (the current one by default).
      */
     openai?: { authorized?: boolean; isDefault?: boolean; issuer?: Response[]; profileId?: string };
+    /** A deployment-wide model-request ceiling, with its own database (the ceiling counts every run in one). */
+    ceiling?: { modelRequestCeiling: number; persistence: Persistence };
   } = {},
 ): Promise<Harness> {
+  const records = options.ceiling?.persistence ?? persistence;
   const base = join(scratch, `case-${++counter}`);
   const stateDir = join(base, 'state');
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
@@ -116,6 +119,7 @@ async function harness(
     },
     defaultProvider: options.openai?.isDefault === true ? 'openai' : 'anthropic',
     stepBudget: options.stepBudget ?? 10,
+    ...(options.ceiling === undefined ? {} : { modelRequestCeiling: options.ceiling.modelRequestCeiling }),
   });
   writeFileSync(configFile, source);
   const operator = parseOperatorConfig(source, { stateDir, configFile });
@@ -167,7 +171,11 @@ async function harness(
     inferenceTransport: net.fetchImpl,
     authTransport,
   });
-  const store = new RunStore(persistence.app, persistence.ownership);
+  const store = new RunStore(
+    records.app,
+    records.ownership,
+    options.ceiling === undefined ? {} : { modelRequestCeiling: options.ceiling.modelRequestCeiling },
+  );
   const h: Harness = {
     net,
     tokens,
@@ -199,7 +207,7 @@ async function harness(
   h.service = new RunService({
     operator,
     locations: { stateDir, configFile },
-    persistence,
+    persistence: records,
     assembly,
     failStop: () => {
       h.failStops++;
@@ -606,6 +614,30 @@ describe('cancelling runs', () => {
     const { runId } = await waitingRun(h);
     const accepted = await h.call('POST', `/api/v1/runs/${runId}/cancel`, { requestId: crypto.randomUUID() });
     expect([accepted.status, accepted.body.run.state.kind]).toEqual([202, 'cancelled']);
+  });
+});
+
+describe('the deployment ceiling', () => {
+  test('stops model requests across runs, even when each run has budget left', async () => {
+    const own = await createScratchDatabase();
+    const ownPersistence = await openPersistence({ url: own.url, onFault: () => {} });
+    try {
+      const read = () => sse(toolTurn('msg_read', 'toolu_read', 'mcp_Read', { mode: 'file', path: 'notes/plan.md' }));
+      const h = await harness({
+        replies: [read, doneReply('Read it.')],
+        ceiling: { modelRequestCeiling: 2, persistence: ownPersistence },
+      });
+      const first = (await h.start()).body.run.runId as string;
+      await waitFor(h, first, 'succeeded');
+      // The deployment admitted its two requests; the next run has budget left but is refused before sending.
+      const second = (await h.start('Read it again.')).body.run.runId as string;
+      const stopped = await waitFor(h, second, 'failed');
+      expect(stopped.run.state.failure).toMatchObject({ category: 'step_limit', reason: 'request_ceiling_reached' });
+      expect(h.net.sent).toHaveLength(2);
+    } finally {
+      await ownPersistence.close();
+      await own.drop();
+    }
   });
 });
 

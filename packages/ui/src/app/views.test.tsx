@@ -1,20 +1,34 @@
 import { describe, expect, test } from 'bun:test';
-import type { FailureCategory, RunEvent, RunState } from '@agent-runtime/contracts';
+import type { CatalogView, FailureCategory, RunCapabilitiesView, RunEvent, RunState } from '@agent-runtime/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ApiClient } from '../api/client.ts';
 import type { Connection } from '../state/sync.ts';
 import { RunTimeline } from '../state/timeline.ts';
 import { AT, answered, asked, attempt, message, QUESTION, RUN, snapshot, status } from '../test-support/fixtures.ts';
+import { type Catalog, InstalledCapabilities } from './Capabilities.tsx';
 import { FAILURE_LABELS, STATE_LABELS } from './format.ts';
 import { RunPage } from './RunDetail.tsx';
 
 const client = new ApiClient({ fetch: async () => new Response('{}') });
 
-function page(state: RunState, events: RunEvent[] = [], connection: Connection = 'live', extra = {}, through = '0') {
+function page(
+  state: RunState,
+  events: RunEvent[] = [],
+  connection: Connection = 'live',
+  extra = {},
+  through = '0',
+  capabilities?: RunCapabilitiesView,
+) {
   const timeline = new RunTimeline(snapshot(through, state, extra));
   timeline.applyEvents(events);
   return renderToStaticMarkup(
-    <RunPage client={client} view={timeline.view()} connection={connection} refresh={() => {}} />,
+    <RunPage
+      client={client}
+      view={timeline.view()}
+      connection={connection}
+      refresh={() => {}}
+      {...(capabilities === undefined ? {} : { capabilities })}
+    />,
   );
 }
 
@@ -211,5 +225,188 @@ describe('run views', () => {
     expect(html).toContain('type="radio"');
     expect(html).toContain('Reconnecting');
     expect(html).toContain(STATE_LABELS.waiting);
+  });
+
+  test('a delegate’s pending question names the delegate that asked', () => {
+    const question = {
+      questionId: QUESTION,
+      prompt: 'Which repository?',
+      input: { kind: 'text' as const, minLength: 1, maxLength: 100 },
+    };
+    const waiting = { kind: 'waiting' as const, questionId: QUESTION };
+    const asked = (asker?: unknown) =>
+      page(waiting, [], 'live', { pendingQuestion: { ...question, ...(asker ? { asker } : {}) } });
+    expect(asked({ kind: 'delegate', delegationId: 'b'.repeat(64), agentId: 'agent:helper' })).toContain(
+      'Delegate agent:helper · bbbbbbbb asks',
+    );
+    expect(asked({ kind: 'root' })).toContain('The root agent asks');
+    expect(asked()).toContain('The agent asks');
+  });
+});
+
+const ORIGIN = { facet: 'workflows', version: '1.0.0', integrity: 'sha256:abc' };
+
+describe('capability views', () => {
+  const RETAINED: RunCapabilitiesView = {
+    kind: 'command',
+    throughSeq: '9',
+    snapshotDigest: QUESTION,
+    command: {
+      id: 'command:triage',
+      name: 'triage',
+      origins: [ORIGIN],
+      selectionRevision: QUESTION,
+      arguments: '<b>owner/repo-a</b>',
+      renderedGoal: 'Triage owner/repo-a',
+    },
+    bound: {
+      skills: [
+        { id: 'skill:review', name: 'review', origins: [ORIGIN] },
+        { id: 'skill:unused', name: 'unused', origins: [ORIGIN] },
+      ],
+      agents: [{ id: 'agent:helper', name: 'helper', origins: [ORIGIN] }],
+      tools: [{ serverId: 'github', toolName: 'list_issues', definitionDigest: QUESTION, origins: [ORIGIN] }],
+    },
+    used: {
+      operations: [
+        {
+          kind: 'mcp',
+          subject: 'github/list_issues',
+          ok: 1,
+          refused: 1,
+          error: 0,
+          uncertain: 1,
+          pending: 0,
+          codes: ['argument_out_of_scope'],
+        },
+      ],
+      loadedSkills: [{ skillId: 'skill:review', actor: { kind: 'root' } }],
+      delegations: [{ delegationId: 'b'.repeat(64), agentId: 'agent:helper', state: 'failed' }],
+    },
+    limits: { maxDelegations: 8, delegationDepth: 1 },
+    permissions: {
+      captured: {
+        native: ['mcp_Read'],
+        skills: ['skill:review'],
+        agents: ['agent:helper'],
+        servers: [
+          {
+            serverId: 'github',
+            serverDigest: QUESTION,
+            grants: [
+              {
+                tool: 'list_issues',
+                definitionDigest: QUESTION,
+                argumentEquals: { repository: { kind: 'value', value: 'owner/repo-a' }, token: { kind: 'withheld' } },
+              },
+            ],
+          },
+        ],
+      },
+      current: {
+        kind: 'configured',
+        skills: [],
+        agents: [],
+        servers: [{ serverId: 'github', connection: 'approved_otherwise', grants: [] }],
+      },
+    },
+  };
+
+  test('a command run shows bound versus used, outcomes, limits and both permission sets, as text', () => {
+    const html = page({ kind: 'working' }, [], 'live', {}, '0', RETAINED);
+    expect(html).toContain('Skill <code>skill:review</code> <span class="hint">(workflows 1.0.0)</span> — loaded');
+    expect(html).toContain('Skill <code>skill:unused</code> <span class="hint">(workflows 1.0.0)</span> — not used');
+    expect(html).toContain('github / list_issues');
+    expect(html).toContain('1 refused');
+    expect(html).toContain('1 with an unknown outcome');
+    expect(html).toContain('argument out of scope');
+    expect(html).toContain('Delegate agent:helper · bbbbbbbb — failed');
+    expect(html).toContain('Up to 8 delegations, depth 1');
+    expect(html).toContain('(withheld)');
+    expect(html).toContain('approved otherwise');
+    expect(html).toContain('&lt;b&gt;owner/repo-a&lt;/b&gt;');
+    expect(html).not.toContain('<b>owner');
+  });
+
+  test('history names the facet a tool came from; goal runs and unreadable retained data are told apart', () => {
+    const tool: RunEvent = {
+      runId: RUN,
+      seq: '1',
+      recordedAt: AT,
+      kind: 'tool.operation',
+      payload: {
+        operationId: QUESTION,
+        toolName: 'mcp_github_list_issues',
+        disposition: { kind: 'started' },
+        binding: { kind: 'mcp', serverId: 'github', toolName: 'list_issues', definitionDigest: QUESTION },
+      },
+    };
+    expect(page({ kind: 'working' }, [tool], 'live', {}, '0', RETAINED)).toContain(
+      '<code>github / list_issues</code><span class="hint"> (workflows 1.0.0)</span>',
+    );
+    expect(page({ kind: 'working' }, [], 'live', {}, '0', { kind: 'native', throughSeq: '0' })).not.toContain(
+      'Capabilities',
+    );
+    expect(
+      page({ kind: 'working' }, [], 'live', {}, '0', {
+        kind: 'unavailable',
+        reason: 'snapshot_unreadable',
+        throughSeq: '0',
+      }),
+    ).toContain('cannot be read (snapshot unreadable)');
+  });
+
+  test('the installed catalog shows refusals, approval state and inspection only for approved servers', () => {
+    const catalog: CatalogView = {
+      kind: 'ready',
+      catalogRevision: QUESTION,
+      contributions: [
+        {
+          id: 'command:triage',
+          kind: 'command',
+          name: 'triage',
+          description: '<img src=x onerror=alert(1)>',
+          origins: [ORIGIN],
+          availability: { kind: 'ready', selectionRevision: QUESTION },
+          arguments: { required: true },
+        },
+        {
+          id: 'skill:broken',
+          kind: 'skill',
+          name: 'broken',
+          origins: [ORIGIN],
+          availability: { kind: 'refused', reason: 'prerequisite_refused', subject: 'skill:absent' },
+          allowed: true,
+        },
+      ],
+      servers: [
+        {
+          serverId: 'github',
+          origins: [ORIGIN],
+          transport: 'stdio',
+          connection: { kind: 'approved', currentDigest: QUESTION },
+          grants: [],
+        },
+        {
+          serverId: 'other',
+          origins: [ORIGIN],
+          transport: 'stdio',
+          connection: { kind: 'reapproval_required', currentDigest: 'e'.repeat(64) },
+          grants: [],
+        },
+      ],
+    };
+    const state: Catalog = {
+      state: { kind: 'loaded', catalog },
+      load: async () => {},
+      replaceServer: () => {},
+    };
+    const html = renderToStaticMarkup(<InstalledCapabilities client={client} catalog={state} />);
+    expect(html).toContain('refused: prerequisite refused (skill:absent)');
+    expect(html).toContain('needs approval again');
+    expect(html).toContain('e'.repeat(64));
+    expect((html.match(/Inspect server/g) ?? []).length).toBe(1);
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    expect(html).not.toContain('<img');
   });
 });

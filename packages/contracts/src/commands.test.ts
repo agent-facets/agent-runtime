@@ -130,7 +130,7 @@ describe('start-run request with exclusive goal or command modes', () => {
     }
   });
 
-  test('the public goal-only parser still refuses the command form until command starts are enabled', () => {
+  test('the goal parser alone refuses the command form; only the start-request parser accepts it', () => {
     expect(parseStartRun({ requestId, provider: 'anthropic', command })).toMatchObject({
       ok: false,
       code: 'invalid_request',

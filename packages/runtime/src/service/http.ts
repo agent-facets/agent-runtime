@@ -11,7 +11,7 @@ import {
   type ErrorCode,
   parseAnswerSubmission,
   parseCancelRun,
-  parseStartRun,
+  parseStartRunRequest,
   REQUEST_BODY_MAX_BYTES,
 } from '@agent-runtime/contracts';
 import { FAILURE_MESSAGES, type LoginOutcome } from './auth.ts';
@@ -43,6 +43,9 @@ export type ServiceProvider = () => RunService | { unavailable: string };
 
 type Route =
   | { name: 'options' }
+  | { name: 'capabilities' }
+  | { name: 'discover'; serverId: string }
+  | { name: 'runCapabilities'; runId: string }
   | { name: 'runs' }
   | { name: 'run'; runId: string }
   | { name: 'events'; runId: string }
@@ -55,6 +58,9 @@ type Route =
 const ALLOWED: Record<Route['name'], 'GET' | 'POST' | 'GET, POST'> = {
   login: 'POST',
   options: 'GET',
+  capabilities: 'GET',
+  discover: 'POST',
+  runCapabilities: 'GET',
   runs: 'GET, POST',
   run: 'GET',
   events: 'GET',
@@ -66,6 +72,9 @@ const ALLOWED: Record<Route['name'], 'GET' | 'POST' | 'GET, POST'> = {
 const SEGMENT = '([^/]{1,128})';
 const ROUTES: [RegExp, (match: RegExpExecArray) => Route][] = [
   [/^\/options$/, () => ({ name: 'options' })],
+  [/^\/capabilities$/, () => ({ name: 'capabilities' })],
+  [new RegExp(`^/capabilities/servers/${SEGMENT}/discover$`), (m) => ({ name: 'discover', serverId: m[1] as string })],
+  [new RegExp(`^/runs/${SEGMENT}/capabilities$`), (m) => ({ name: 'runCapabilities', runId: m[1] as string })],
   [/^\/runs$/, () => ({ name: 'runs' })],
   [new RegExp(`^/runs/${SEGMENT}$`), (m) => ({ name: 'run', runId: m[1] as string })],
   [new RegExp(`^/runs/${SEGMENT}/events$`), (m) => ({ name: 'events', runId: m[1] as string })],
@@ -194,13 +203,20 @@ export async function handleApi(
     case 'runs': {
       if (method === 'GET')
         return jsonResponse(await service.listRuns({ limit: query.get('limit'), cursor: query.get('cursor') }));
-      const command = parseStartRun(body);
+      const command = parseStartRunRequest(body);
       if (!command.ok)
         return jsonResponse(refusal(COMMAND_ERRORS[command.code].code, COMMAND_ERRORS[command.code].message));
       return jsonResponse(await service.createRun(command.value));
     }
     case 'run':
       return jsonResponse(await service.detail(target.runId));
+    // Reading capabilities starts nothing; only the explicit discovery action can start a (trusted) server process.
+    case 'capabilities':
+      return jsonResponse(await service.capabilities.catalog());
+    case 'discover':
+      return jsonResponse(await service.capabilities.discover(target.serverId, body));
+    case 'runCapabilities':
+      return jsonResponse(await service.capabilities.run(target.runId));
     case 'events':
       return jsonResponse(
         await service.events(target.runId, {

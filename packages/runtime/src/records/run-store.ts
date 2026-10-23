@@ -118,6 +118,19 @@ export interface RunCapabilities {
   snapshot: CapabilitySnapshot;
 }
 
+/**
+ * What a run retained and recorded about its capabilities, read in one consistent view with the history boundary it
+ * includes. The retained snapshot is returned as stored, still to be verified; nothing private to execution (saved
+ * checkpoint bindings, task digests, arguments, results) is included.
+ */
+export interface CapabilityRecord {
+  throughSeq: string;
+  binding?: { input: unknown; snapshotDigest: string; maxDelegations: number; payload: unknown };
+  delegates: { delegationId: string; agentId: string; state: DelegateState }[];
+  operations: { actorKey: string; binding: ToolBinding | undefined; disposition: ToolDisposition }[];
+  loadedSkills: { actorKey: string; skillId: string; agentId: string | null }[];
+}
+
 export interface RunSummary {
   runId: string;
   goal: string;
@@ -1557,6 +1570,58 @@ export class RunStore {
     if (row === undefined) return undefined;
     const event = eventSchema.parse({ kind: row.kind, payload: parseJsonText(row.payload) });
     return { runId, seq: row.seq, recordedAt: row.recorded_at, event, sourceKey };
+  }
+
+  /** A run's retained capabilities and recorded use, in one consistent view (see CapabilityRecord). */
+  async readCapabilityRecord(runId: string): Promise<CapabilityRecord> {
+    return this.db.readOnly(async (tx) => {
+      const [run] = await tx`select last_seq::text as last_seq from runtime.runs where run_id = ${runId}`;
+      if (run === undefined) throw new RunStoreError('run_not_found', 'no such run');
+      const [binding] = await tx`
+        select c.input::text as input, c.snapshot_digest, c.max_delegations, s.payload::text as payload
+        from runtime.run_capabilities c join runtime.capability_snapshots s on s.digest = c.snapshot_digest
+        where c.run_id = ${runId}`;
+      const delegates = await tx`
+        select actor_key, agent_id, state::text as state from runtime.run_actors
+        where run_id = ${runId} and kind = 'delegate' order by created_at, actor_key`;
+      const operations = await tx`
+        select actor_key, tool_binding::text as tool_binding, disposition::text as disposition
+        from runtime.tool_operations where run_id = ${runId} order by created_at, operation_id`;
+      const loaded = await tx`
+        select l.actor_key, l.skill_id, a.agent_id from runtime.loaded_skills l
+        join runtime.run_actors a on a.run_id = l.run_id and a.actor_key = l.actor_key
+        where l.run_id = ${runId} order by l.actor_key, l.skill_id`;
+      return {
+        throughSeq: run.last_seq,
+        ...(binding === undefined
+          ? {}
+          : {
+              binding: {
+                input: parseJsonText(binding.input),
+                snapshotDigest: binding.snapshot_digest,
+                maxDelegations: Number(binding.max_delegations),
+                payload: parseJsonText(binding.payload),
+              },
+            }),
+        delegates: (delegates as { actor_key: string; agent_id: string; state: string }[]).map((row) => ({
+          delegationId: row.actor_key,
+          agentId: row.agent_id,
+          state: delegateStateSchema.parse(parseJsonText(row.state)),
+        })),
+        operations: (operations as { actor_key: string; tool_binding: string | null; disposition: string }[]).map(
+          (row) => ({
+            actorKey: row.actor_key,
+            binding: row.tool_binding === null ? undefined : (parseJsonText(row.tool_binding) as ToolBinding),
+            disposition: toolDispositionSchema.parse(parseJsonText(row.disposition)),
+          }),
+        ),
+        loadedSkills: (loaded as { actor_key: string; skill_id: string; agent_id: string | null }[]).map((row) => ({
+          actorKey: row.actor_key,
+          skillId: row.skill_id,
+          agentId: row.agent_id,
+        })),
+      };
+    }, 'repeatable read');
   }
 
   /** A consistent view of one run: state, budget, pending question and the history boundary, from one snapshot. */

@@ -17,8 +17,8 @@ The trial runs **locally**: the built runtime started directly on the owner's ma
 with a dedicated database. Real Tailscale Serve HTTPS and a second-device journey are not part of it; they are
 verified separately (task 16.7), and the G4 evidence says so.
 
-The trial is rehearsed offline with the same fixture and pass conditions
-(`tests/browser/acceptance-rehearsal.browser.test.ts`, run by `bun run test:browser`).
+The trial's fixture and pass conditions (`tests/acceptance/anthropic-trial.ts`) are tested offline by
+`scripts/acceptance-anthropic.test.ts`, run with the repository checks.
 
 ## Limits the runtime enforces
 

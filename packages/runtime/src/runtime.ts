@@ -30,6 +30,8 @@ export interface RuntimeOptions {
   ownership?: OwnershipOptions;
   /** Loads the console's files; tests substitute a fixed set. */
   loadConsole?: () => Promise<ConsoleFiles>;
+  /** Opens persistence; tests substitute one that fails without waiting out a connection timeout. */
+  openPersistence?: typeof openPersistence;
 }
 
 /** The readiness state reported for a failed persistence startup. */
@@ -120,7 +122,7 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
   const started =
     url === undefined
       ? Promise.resolve()
-      : openPersistence({ url, onFault, ownership: options.ownership }).then(
+      : (options.openPersistence ?? openPersistence)({ url, onFault, ownership: options.ownership }).then(
           async (opened) => {
             if (stopping !== undefined) {
               await opened.close();

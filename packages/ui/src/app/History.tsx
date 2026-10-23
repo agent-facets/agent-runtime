@@ -1,5 +1,6 @@
 // A run's recorded history, in sequence order. Every value is rendered as text.
-import type { ActorRef, RunEvent, RunState } from '@agent-runtime/contracts';
+import type { ActorRef, RunCapabilitiesView, RunEvent, RunState, ToolBinding } from '@agent-runtime/contracts';
+import { originsLabel } from './Capabilities.tsx';
 import {
   actorLabel,
   DELEGATION_OUTCOME_LABELS,
@@ -10,7 +11,16 @@ import {
   STATE_LABELS,
 } from './format.ts';
 
-export function History({ events, state }: { events: readonly RunEvent[]; state: RunState }) {
+export function History({
+  events,
+  state,
+  capabilities,
+}: {
+  events: readonly RunEvent[];
+  state: RunState;
+  /** The run's retained capabilities, when known: they name the facet each contribution came from. */
+  capabilities?: RunCapabilitiesView | undefined;
+}) {
   const resultSeq = state.kind === 'succeeded' ? state.resultSeq : undefined;
   // A model turn that only called a tool has no text; its tool events say what happened. A result is always shown.
   const shown = events.filter(
@@ -23,7 +33,7 @@ export function History({ events, state }: { events: readonly RunEvent[]; state:
           <time dateTime={event.recordedAt} title={event.recordedAt}>
             {formatTime(event.recordedAt)}
           </time>
-          <EventBody event={event} final={event.seq === resultSeq} />
+          <EventBody event={event} final={event.seq === resultSeq} capabilities={capabilities} />
         </li>
       ))}
     </ol>
@@ -56,7 +66,56 @@ function toolStatus(disposition: Extract<RunEvent, { kind: 'tool.operation' }>['
   }
 }
 
-function EventBody({ event, final }: { event: RunEvent; final: boolean }) {
+/** The facet a bound contribution came from, from the run's retained definitions. */
+function originOf(binding: ToolBinding | undefined, capabilities: RunCapabilitiesView | undefined): string | undefined {
+  if (binding === undefined || capabilities?.kind !== 'command') return undefined;
+  const { bound } = capabilities;
+  switch (binding.kind) {
+    case 'mcp': {
+      const tool = bound.tools.find(
+        (candidate) => candidate.serverId === binding.serverId && candidate.toolName === binding.toolName,
+      );
+      return tool === undefined ? undefined : originsLabel(tool.origins);
+    }
+    case 'skill_load':
+    case 'skill_reference': {
+      const skill = bound.skills.find((candidate) => candidate.id === binding.skillId);
+      return skill === undefined ? undefined : originsLabel(skill.origins);
+    }
+    case 'delegation': {
+      const agent = bound.agents.find((candidate) => candidate.id === binding.agentId);
+      return agent === undefined ? undefined : originsLabel(agent.origins);
+    }
+    case 'native':
+      return undefined;
+  }
+}
+
+function toolLabel(payload: Extract<RunEvent, { kind: 'tool.operation' }>['payload']): string {
+  const { binding, toolName } = payload;
+  switch (binding?.kind) {
+    case 'mcp':
+      return `${binding.serverId} / ${binding.toolName}`;
+    case 'skill_load':
+      return `load skill ${binding.skillId}`;
+    case 'skill_reference':
+      return `read ${binding.skillId} / ${binding.path}`;
+    case 'delegation':
+      return `delegate to ${binding.agentId}`;
+    default:
+      return toolName;
+  }
+}
+
+function EventBody({
+  event,
+  final,
+  capabilities,
+}: {
+  event: RunEvent;
+  final: boolean;
+  capabilities: RunCapabilitiesView | undefined;
+}) {
   switch (event.kind) {
     case 'run.created':
       return (
@@ -105,13 +164,14 @@ function EventBody({ event, final }: { event: RunEvent; final: boolean }) {
         </div>
       );
     case 'tool.operation': {
-      const { toolName, disposition, binding } = event.payload;
+      const { disposition, binding } = event.payload;
+      const origin = originOf(binding, capabilities);
       return (
         <div className="tool">
           <p>
             <Actor actor={event.payload.actor} />
-            Tool <code>{binding?.kind === 'mcp' ? `${binding.serverId} / ${binding.toolName}` : toolName}</code>:{' '}
-            {toolStatus(disposition)}
+            Tool <code>{toolLabel(event.payload)}</code>
+            {origin !== undefined && <span className="hint"> ({origin})</span>}: {toolStatus(disposition)}
           </p>
           {disposition.kind === 'completed' && (
             <details>
@@ -153,7 +213,11 @@ function EventBody({ event, final }: { event: RunEvent; final: boolean }) {
     case 'run.command':
       return (
         <p className="command">
-          Command <code>{event.payload.commandId}</code> selected
+          Command <code>{event.payload.commandId}</code>
+          {capabilities?.kind === 'command' && capabilities.command.id === event.payload.commandId && (
+            <span className="hint"> ({originsLabel(capabilities.command.origins)})</span>
+          )}{' '}
+          selected
           {event.payload.arguments === '' ? '.' : ' with arguments:'}
           {event.payload.arguments !== '' && <span className="text"> {event.payload.arguments}</span>}
         </p>

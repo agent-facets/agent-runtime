@@ -8,7 +8,11 @@ import {
   answerAcceptedSchema,
   authAttemptSchema,
   type CancellationAccepted,
+  type CatalogView,
   cancellationAcceptedSchema,
+  catalogViewSchema,
+  type DiscoveryResult,
+  discoveryResultSchema,
   type ErrorEnvelope,
   type EventPage,
   errorEnvelopeSchema,
@@ -16,11 +20,22 @@ import {
   type Options,
   optionsSchema,
   type Provider,
+  type RunCapabilitiesView,
   type RunList,
   type RunSnapshot,
+  runCapabilitiesSchema,
   runListSchema,
   runSnapshotSchema,
 } from '@agent-runtime/contracts';
+
+/** A start request: exactly one of a free-form goal or an installed command with its raw argument text. */
+export type StartBody =
+  | { requestId: string; provider: Provider; goal: string }
+  | {
+      requestId: string;
+      provider: Provider;
+      command: { id: string; selectionRevision: string; arguments: string };
+    };
 
 /** Any contract schema: the console only needs to validate with it. */
 interface Schema<T> {
@@ -81,8 +96,27 @@ export class ApiClient {
     return this.#get(`/api/v1/runs/${encodeURIComponent(runId)}/events?${query}`, eventPageSchema);
   }
 
-  startRun(command: { requestId: string; goal: string; provider: Provider }): Promise<ApiOutcome<RunSnapshot>> {
-    return this.#post('/api/v1/runs', command, runSnapshotSchema);
+  startRun(body: StartBody): Promise<ApiOutcome<RunSnapshot>> {
+    return this.#post('/api/v1/runs', body, runSnapshotSchema);
+  }
+
+  /** The installed catalog, configured grants and remembered inspections. Reading it starts nothing. */
+  capabilities(): Promise<ApiOutcome<CatalogView>> {
+    return this.#get('/api/v1/capabilities', catalogViewSchema);
+  }
+
+  /** Inspects one approved server: it is started briefly to list its tools. Nothing is called or approved. */
+  discoverServer(serverId: string, catalogRevision: string): Promise<ApiOutcome<DiscoveryResult>> {
+    return this.#post(
+      `/api/v1/capabilities/servers/${encodeURIComponent(serverId)}/discover`,
+      { catalogRevision },
+      discoveryResultSchema,
+    );
+  }
+
+  /** What one run retained and used. Reading it starts nothing. */
+  runCapabilities(runId: string): Promise<ApiOutcome<RunCapabilitiesView>> {
+    return this.#get(`/api/v1/runs/${encodeURIComponent(runId)}/capabilities`, runCapabilitiesSchema);
   }
 
   answer(runId: string, questionId: string, answer: unknown): Promise<ApiOutcome<AnswerAccepted>> {
