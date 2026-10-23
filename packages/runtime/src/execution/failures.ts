@@ -20,6 +20,8 @@ export type ExecutionFailureCode =
   | 'tool_handling_failed'
   /** The run no longer permits new work (cancellation or a lost binding); nothing was dispatched. */
   | 'dispatch_refused'
+  /** Agent activity could not be recorded in the run's history, so it was not used. */
+  | 'history_unrecorded'
   /** A runtime invariant was violated. */
   | 'invariant_violation';
 
@@ -31,6 +33,7 @@ const MESSAGES: Record<ExecutionFailureCode, string> = {
   tool_call_unrepresentable: 'A tool call could not be identified safely and was not executed.',
   tool_handling_failed: 'A tool call could not be handled safely; the requested action was not performed.',
   dispatch_refused: 'The run no longer permits new work; nothing was dispatched.',
+  history_unrecorded: 'Agent activity could not be recorded, so it was not used.',
   invariant_violation: 'The runtime detected an internal inconsistency.',
 };
 

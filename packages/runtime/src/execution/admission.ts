@@ -3,6 +3,7 @@
 // budget; the request is then started while the gate is still held, so cancellation accepted under the same gate
 // can never fall between the check and the dispatch. Every later state of the attempt is recorded durably.
 
+import type { ActorRef } from '@agent-runtime/contracts';
 import type { KeyedSerializer } from '../persistence/keyed-serializer.ts';
 import type { OwnerFence } from '../persistence/ownership.ts';
 import { type RunStore, RunStoreError } from '../records/run-store.ts';
@@ -21,6 +22,11 @@ export interface RunAdmissionOptions {
   owner: Pick<OwnerFence, 'assertHeld' | 'verify'>;
   runId: string;
   invocationId: string;
+  /**
+   * The agent this admission dispatches for; the root by default. A delegate's requests share the run's budget,
+   * ordinals, invocation and dispatch gate, and are attributed to it.
+   */
+  actor?: ActorRef;
   /** Observes every attempt's ID and the credential generation it used (for rejection attribution). */
   onAttempt?: (attempt: { attemptId: string; credentialGeneration: number }) => void;
 }
@@ -39,7 +45,7 @@ export function runAdmission(options: RunAdmissionOptions): RequestAdmission {
         }
         let attemptId: string;
         try {
-          ({ attemptId } = await store.reserveAttempt(runId, options.invocationId));
+          ({ attemptId } = await store.reserveAttempt(runId, options.invocationId, options.actor));
         } catch (error) {
           if (error instanceof RunStoreError) {
             if (error.code === 'budget_exhausted') throw new AdmissionRefused('step_budget_exhausted');

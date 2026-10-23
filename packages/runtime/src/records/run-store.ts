@@ -5,6 +5,12 @@ import {
   type CapabilitySnapshot,
   type CommandRunInput,
   commandRunInputSchema,
+  type DelegateOutcome,
+  type DelegateState,
+  delegateOutcomeSchema,
+  delegateStateSchema,
+  type LoadedSkill,
+  loadedSkillSchema,
   openSnapshot,
   sealSnapshot,
 } from '../capabilities/records.ts';
@@ -559,6 +565,185 @@ export class RunStore {
   }
 
   /**
+   * Begins (or, on parent-tool re-entry, finds) a delegation (design Decision 8), atomically: the root's started
+   * delegation operation, the active delegate it identifies, consumption of one delegation within the run's captured
+   * limit and the start event. Re-entry finds the same delegate and consumes nothing; a delegate whose recorded
+   * identity differs is an invariant failure. Only the run's current working invocation may begin one.
+   */
+  async beginDelegation(input: {
+    runId: string;
+    invocationId: string;
+    delegationId: string;
+    agentId: string;
+    task: string;
+    checkpointNs: string;
+  }): Promise<{ kind: 'active' } | { kind: 'limit_reached' } | { kind: 'not_dispatchable' }> {
+    const taskDigest = digestOf(input.task);
+    return withOwnerFence(this.db, this.owner, async (tx) => {
+      const run = await this.#lockRun(tx, input.runId);
+      if (run.state.kind !== 'working' || run.state.invocationId !== input.invocationId) {
+        return { kind: 'not_dispatchable' };
+      }
+      const [operation] = await tx`
+        select actor_key, tool_binding::text as tool_binding, disposition ->> 'kind' as disposition
+        from runtime.tool_operations where run_id = ${input.runId} and operation_id = ${input.delegationId}`;
+      if (
+        operation === undefined ||
+        operation.actor_key !== 'root' ||
+        operation.disposition !== 'started' ||
+        canonicalJson(parseJsonText(operation.tool_binding ?? 'null')) !==
+          canonicalJson({ kind: 'delegation', agentId: input.agentId })
+      ) {
+        throw new RunStoreError('invariant_violation', 'the delegation operation is not a started root delegation');
+      }
+      const [existing] = await tx`
+        select agent_id, task_digest, checkpoint_ns, state ->> 'kind' as state from runtime.run_actors
+        where run_id = ${input.runId} and actor_key = ${input.delegationId}`;
+      if (existing !== undefined) {
+        if (
+          existing.agent_id !== input.agentId ||
+          existing.task_digest !== taskDigest ||
+          existing.checkpoint_ns !== input.checkpointNs
+        ) {
+          throw new RunStoreError('invariant_violation', 'the delegation was re-entered with a different identity');
+        }
+        return existing.state === 'active' ? { kind: 'active' } : { kind: 'not_dispatchable' };
+      }
+      const [limits] = await tx`
+        select c.max_delegations,
+          (select count(*)::int from runtime.run_actors a where a.run_id = c.run_id and a.kind = 'delegate') as used
+        from runtime.run_capabilities c where c.run_id = ${input.runId}`;
+      if (limits === undefined) throw new RunStoreError('invariant_violation', 'only a command run can delegate');
+      if (Number(limits.used) >= Number(limits.max_delegations)) return { kind: 'limit_reached' };
+      await tx`insert into runtime.run_actors (run_id, actor_key, kind, parent_actor, agent_id, task_digest,
+          checkpoint_ns, state)
+        values (${input.runId}, ${input.delegationId}, 'delegate', 'root', ${input.agentId}, ${taskDigest},
+          ${input.checkpointNs}, ${jsonText({ kind: 'active' })}::text::jsonb)`;
+      await this.#append(tx, input.runId, [
+        {
+          event: {
+            kind: 'delegation.started',
+            payload: {
+              delegationId: input.delegationId,
+              agentId: input.agentId,
+              parentActor: { kind: 'root' },
+              task: input.task,
+            },
+          },
+          sourceKey: `delegation:${input.delegationId}:started`,
+        },
+      ]);
+      return { kind: 'active' };
+    });
+  }
+
+  /**
+   * Completes a delegation atomically, before its caller can see the result: the delegate's outcome, its end event
+   * and the parent delegation operation's recorded outcome. Only the current working invocation may complete it, so
+   * a result arriving after cancellation was accepted changes nothing. Recording the same completion again is
+   * idempotent.
+   */
+  async completeDelegation(input: {
+    runId: string;
+    invocationId: string;
+    delegationId: string;
+    toolName: string;
+    outcome: DelegateOutcome;
+    toolOutcome: RecordedToolOutcome;
+  }): Promise<void> {
+    const outcome = delegateOutcomeSchema.parse(input.outcome);
+    const state = { kind: 'completed' as const, outcome };
+    const disposition = toolDispositionSchema.parse({
+      kind: 'completed',
+      outcome: input.toolOutcome.outcome,
+      result: input.toolOutcome,
+    });
+    await withOwnerFence(this.db, this.owner, async (tx) => {
+      const run = await this.#lockRun(tx, input.runId);
+      if (run.state.kind !== 'working' || run.state.invocationId !== input.invocationId) {
+        throw new RunStoreError('not_dispatchable', 'the run no longer permits this delegation to complete');
+      }
+      const [actor] = await tx`select state::text as state from runtime.run_actors
+        where run_id = ${input.runId} and actor_key = ${input.delegationId} and kind = 'delegate'`;
+      if (actor === undefined) throw new RunStoreError('invariant_violation', 'no such delegation');
+      const current = parseJsonText(actor.state) as { kind: string };
+      if (current.kind === 'completed') {
+        if (canonicalJson(current) !== canonicalJson(state)) {
+          throw new RunStoreError('invariant_violation', 'the delegation already has a different outcome');
+        }
+        return;
+      }
+      if (current.kind !== 'active') throw new RunStoreError('not_dispatchable', 'the delegate is not running');
+      await tx`update runtime.run_actors set state = ${jsonText(state)}::text::jsonb
+        where run_id = ${input.runId} and actor_key = ${input.delegationId}`;
+      const updated = await tx`update runtime.tool_operations set disposition = ${jsonText(disposition)}::text::jsonb
+        where run_id = ${input.runId} and operation_id = ${input.delegationId} and disposition ->> 'kind' = 'started'
+        returning tool_binding::text as tool_binding`;
+      if (updated.length !== 1)
+        throw new RunStoreError('invariant_violation', 'the delegation operation is not started');
+      await this.#append(tx, input.runId, [
+        {
+          event: {
+            kind: 'delegation.finished',
+            payload: { delegationId: input.delegationId, outcome: outcome.kind, operationId: input.delegationId },
+          },
+          sourceKey: `delegation:${input.delegationId}:finished`,
+        },
+        {
+          event: {
+            kind: 'tool.operation',
+            payload: {
+              operationId: input.delegationId,
+              toolName: input.toolName,
+              disposition,
+              ...(await this.#attribution(tx, input.runId, 'root')),
+              binding: parseJsonText(updated[0].tool_binding) as ToolBinding,
+            },
+          },
+          sourceKey: `tool:${input.delegationId}:completed`,
+        },
+      ]);
+    });
+  }
+
+  /** A run's delegate, as recorded; undefined when there is none with that delegation ID. */
+  async readDelegate(
+    runId: string,
+    delegationId: string,
+  ): Promise<{ agentId: string; checkpointNs: string; taskDigest: string; state: DelegateState } | undefined> {
+    const [row] = await this.db.readOnly(
+      (tx) => tx`
+      select agent_id, checkpoint_ns, task_digest, state::text as state from runtime.run_actors
+      where run_id = ${runId} and actor_key = ${delegationId} and kind = 'delegate'`,
+    );
+    if (row === undefined) return undefined;
+    return {
+      agentId: row.agent_id,
+      checkpointNs: row.checkpoint_ns,
+      taskDigest: row.task_digest,
+      state: delegateStateSchema.parse(parseJsonText(row.state)),
+    };
+  }
+
+  /** An actor's loaded-skill membership, in skill order. */
+  async readLoadedSkills(runId: string, actorKey: string): Promise<LoadedSkill[]> {
+    const rows = await this.db.readOnly(
+      (tx) => tx`
+      select actor_key, skill_id, operation_id, definition_digest from runtime.loaded_skills
+      where run_id = ${runId} and actor_key = ${actorKey} order by skill_id`,
+    );
+    return (rows as { actor_key: string; skill_id: string; operation_id: string; definition_digest: string }[]).map(
+      (row) =>
+        loadedSkillSchema.parse({
+          actorKey: row.actor_key,
+          skillId: row.skill_id,
+          operationId: row.operation_id,
+          definitionDigest: row.definition_digest,
+        }),
+    );
+  }
+
+  /**
    * Makes a settled, inspected question answerable (Decision 6), all in one transaction: the invocation settles,
    * the question's tool operation pauses on it, the exact question and its saved-state binding are recorded, and
    * the run moves from working to waiting with its question and status events. Only the run's current working
@@ -588,6 +773,18 @@ export class RunStore {
           where run_id = ${input.runId} and operation_id = ${input.questionId} and disposition ->> 'kind' = 'started'
           returning operation_id`;
         if (paused.length !== 1) throw new RunStoreError('invariant_violation', 'the question call was not started');
+        if (actorKey !== 'root') {
+          // The delegate waits on its own question; its parent delegation stays started, never paused.
+          const waiting = await tx`update runtime.run_actors
+            set state = ${jsonText({ kind: 'waiting', questionId: input.questionId })}::text::jsonb
+            where run_id = ${input.runId} and actor_key = ${actorKey} and state_kind = 'active'
+            returning actor_key`;
+          const [parent] = await tx`select disposition ->> 'kind' as kind from runtime.tool_operations
+            where run_id = ${input.runId} and operation_id = ${actorKey}`;
+          if (waiting.length !== 1 || parent?.kind !== 'started') {
+            throw new RunStoreError('invariant_violation', 'the asking delegate is not running under its delegation');
+          }
+        }
         await tx`insert into runtime.questions (run_id, question_id, operation_id, prompt, input, binding,
             payload_digest, binding_digest, disposition, actor_key)
           values (${input.runId}, ${input.questionId}, ${input.questionId}, ${input.prompt},
@@ -689,6 +886,9 @@ export class RunStore {
           where run_id = ${input.runId} and question_id = ${input.questionId} and disposition_kind = 'pending'
           returning question_id`;
         if (updated.length !== 1) throw new RunStoreError('stale_revision', 'the question is no longer pending');
+        // A delegate that asked runs again; only the answer invocation can continue it.
+        await tx`update runtime.run_actors set state = ${jsonText({ kind: 'active' })}::text::jsonb
+          where run_id = ${input.runId} and state_kind = 'waiting' and state ->> 'questionId' = ${input.questionId}`;
         await tx`insert into runtime.invocations (run_id, invocation_id, owner_epoch, kind, question_id, disposition)
           values (${input.runId}, ${invocationId}, ${ownerEpoch}, 'answer', ${input.questionId}, 'active')`;
       },
@@ -733,6 +933,8 @@ export class RunStore {
         const disposition = { kind: 'closed', reason: input.failure.reason, closedAt };
         await tx`update runtime.questions set disposition = ${jsonText(disposition)}::text::jsonb
           where run_id = ${input.runId} and question_id = ${input.questionId} and disposition_kind = 'pending'`;
+        // A delegate waiting on the closed question cannot continue either.
+        await this.#settleActors(tx, input.runId, input.failure.reason);
       },
       events: () => [
         {
@@ -1161,7 +1363,7 @@ export class RunStore {
    * not have taken effect, and is never retried), and a delegate still running or waiting is abandoned. Completed
    * outcomes are untouched. Each change is recorded in history.
    */
-  async #settleActors(tx: TransactionSQL, runId: string, reason: 'interrupted' | 'unfinished' | 'cancelled') {
+  async #settleActors(tx: TransactionSQL, runId: string, reason: string) {
     const intents = await tx`
       select operation_id, tool_name, actor_key, tool_binding::text as tool_binding from runtime.tool_operations
       where run_id = ${runId} and disposition ->> 'kind' = 'dispatching' order by created_at, operation_id`;

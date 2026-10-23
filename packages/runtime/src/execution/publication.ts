@@ -4,12 +4,11 @@
 // If any step fails, nothing is published: an orphan checkpoint interrupt never becomes an answerable question.
 import type { BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
 import type { KeyedSerializer } from '../persistence/keyed-serializer.ts';
-import { digestOf } from '../records/canonical.ts';
 import { type RunStore, RunStoreError } from '../records/run-store.ts';
 import type { QuestionBinding } from '../records/schemas.ts';
 import type { ExecutionAgent } from './agent.ts';
 import type { InvocationSettlement } from './invocation.ts';
-import { inspectSavedQuestion, type SavedStateInspection } from './saved-state.ts';
+import { type BindingInspection, inspectQuestionBinding } from './saved-state.ts';
 
 export type PublicationOutcome =
   | { kind: 'published'; questionId: string; revision: string }
@@ -43,30 +42,19 @@ export async function publishSettledQuestion(
   const questionId = candidate.value?.questionId;
   if (typeof questionId !== 'string') return { kind: 'not_published', reason: 'saved_state_unusable' };
 
-  let inspection: SavedStateInspection = { kind: 'unavailable' };
+  let inspection: BindingInspection = { kind: 'unavailable' };
   const attempts = deps.inspectionAttempts ?? 3;
   for (let attempt = 1; attempt <= attempts; attempt++) {
-    inspection = await inspectSavedQuestion(deps.agent, deps.saver, run.runId, questionId);
+    inspection = await inspectQuestionBinding(deps.agent, deps.saver, run.runId, questionId);
     if (inspection.kind !== 'unavailable') break;
     if (attempt < attempts) await Bun.sleep(deps.inspectionRetryMs ?? 250);
   }
   if (inspection.kind === 'unavailable') return { kind: 'not_published', reason: 'saved_state_unavailable' };
-  if (inspection.kind !== 'question' || inspection.question.interruptId !== candidate.id) {
+  if (inspection.kind !== 'question' || inspection.interruptId !== candidate.id) {
     return { kind: 'not_published', reason: 'saved_state_unusable' };
   }
-  const saved = inspection.question;
-  const binding: QuestionBinding = {
-    threadId: run.runId,
-    checkpointNs: saved.checkpointNs,
-    checkpointId: saved.checkpointId,
-    taskId: saved.taskId,
-    interruptId: saved.interruptId,
-    ordinal: 0,
-    operationId: questionId,
-    payloadDigest: digestOf(saved.payload),
-    requiredStateDigest: saved.requiredStateDigest,
-    definitionDigest: deps.definitionDigest,
-  };
+  const saved = { payload: inspection.payload };
+  const binding = { ...inspection.binding, definitionDigest: deps.definitionDigest } as QuestionBinding;
 
   try {
     const outcome = await deps.store.withCommitCertainty(

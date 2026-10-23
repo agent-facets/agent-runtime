@@ -39,6 +39,7 @@ const EXECUTION_REASONS: Partial<Record<ExecutionFailureCode, FailureReason>> = 
   model_output_unstorable: 'unsupported_response',
   tool_call_unrepresentable: 'tool_call_unrepresentable',
   tool_handling_failed: 'tool_handling_failed',
+  history_unrecorded: 'persistence_failure',
   invariant_violation: 'invariant_violation',
 };
 

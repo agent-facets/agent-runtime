@@ -140,6 +140,19 @@ cancellation, or a finished invocation — a recorded dispatch intent becomes `u
 retried) and a running or waiting delegate becomes `abandoned`, each with its history event. Completed outcomes are
 never changed. Cancelling a run that waits on a delegated question abandons that delegate at once.
 
+Delegate lifecycle (`run-store.ts`, each step one owner-fenced transaction under the run lock):
+
+| Step | Records that change together |
+|---|---|
+| Begin | Root's started delegation operation verified; delegate inserted `active` within the limit; `delegation.started` (re-entry finds the same delegate and changes nothing) |
+| Delegated question | Delegate's question call paused; delegate `waiting` on it; question with its version-2 delegate binding; invocation settled; run `waiting`. The parent delegation operation stays `started` |
+| Answer | Question answered; delegate `active` again; new answer invocation; run `working` |
+| Complete | Delegate `completed` with its outcome; `delegation.finished`; the parent operation's sanitized outcome — before the caller sees it, and only by the current working invocation |
+| Refused continuation | Question closed; a waiting delegate `abandoned`; run `failed` |
+
+A delegate's binding records its own leaf saved state plus the root's checkpoint and task and the parent operation;
+its required-state digest covers both saved heads and the asker's loaded-skill membership.
+
 Upgrades are forward only. A build that knows fewer migrations refuses the newer history before changing either
 schema; there is no down-migration, and snapshots, credentials and history are never deleted by an upgrade.
 

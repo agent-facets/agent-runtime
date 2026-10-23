@@ -32,6 +32,7 @@ import { type CodeManifest, currentCodeManifest } from '../execution/code-manife
 import { verifyContinuation } from '../execution/continuation.ts';
 import { FailStop, RunController } from '../execution/controller.ts';
 import { executionDefinition } from '../execution/definition.ts';
+import { type DelegateRef, delegateMessageRecorder, runDelegationPort } from '../execution/delegation.ts';
 import { InFlight, trackedSaver } from '../execution/in-flight.ts';
 import { InvocationExecutor, type InvocationInput } from '../execution/invocation.ts';
 import { runOperationLedger } from '../execution/operations.ts';
@@ -43,7 +44,13 @@ import type { Persistence } from '../persistence/persistence.ts';
 import type { ProviderAssembly } from '../providers/assembly.ts';
 import type { ProviderReadiness } from '../providers/registry.ts';
 import { canonicalJson, parseSequence } from '../records/canonical.ts';
-import { creationInputDigest, type RecordedQuestion, RunStore, RunStoreError } from '../records/run-store.ts';
+import {
+  creationInputDigest,
+  type RecordedQuestion,
+  type RunCapabilities,
+  RunStore,
+  RunStoreError,
+} from '../records/run-store.ts';
 import type { Provider, ProviderBinding } from '../records/schemas.ts';
 import { type ContentPolicy, screenOwnerInput } from '../security/content-policy.ts';
 import { formatDiagnostic } from '../security/diagnostics.ts';
@@ -216,15 +223,18 @@ export class RunService {
         if (context === undefined) throw new WiringUnavailable('no admitted workspace for this invocation');
         return createExecutionAgent(
           this.#agentOptions(wiring.runId, wiring.invocationId, wiring.binding, context, {
-            admission: runAdmission({
-              store: this.store,
-              gates: this.gates,
-              owner: options.persistence.ownership,
-              runId: wiring.runId,
-              invocationId: wiring.invocationId,
-            }),
+            admission: (actor) =>
+              runAdmission({
+                store: this.store,
+                gates: this.gates,
+                owner: options.persistence.ownership,
+                runId: wiring.runId,
+                invocationId: wiring.invocationId,
+                ...(actor === undefined ? {} : { actor }),
+              }),
             signal: wiring.signal,
             inflight: wiring.inflight,
+            ...(wiring.capabilities === undefined ? {} : { capabilities: wiring.capabilities }),
           }),
         );
       },
@@ -490,7 +500,8 @@ export class RunService {
                 {
                   reconstruct: (binding) => assembly.registry.reconstruct(binding),
                   workspacePolicyDigest: () => policy.digest,
-                  agentFor: (id, binding) => this.#inspection(id, binding, policy),
+                  agentFor: async (id, binding) =>
+                    this.#inspection(id, binding, policy, await this.store.readCapabilities(id)),
                   saver: persistence.checkpoints.saver,
                   code: this.#code,
                 },
@@ -662,18 +673,49 @@ export class RunService {
     invocationId: string,
     binding: ProviderBinding,
     context: InvocationContext,
-    wiring: { admission: RequestAdmission; signal: () => AbortSignal; inflight: InFlight },
+    wiring: {
+      /** The admission for one actor's model requests (the root's when undefined), all on this invocation. */
+      admission: (actor?: DelegateRef) => RequestAdmission;
+      signal: () => AbortSignal;
+      inflight: InFlight;
+      capabilities?: RunCapabilities;
+    },
+    /** A delegate of a command run; the root when undefined. */
+    actor?: DelegateRef,
   ): ExecutionAgentOptions {
     const { assembly, persistence } = this.#deps;
+    // Each actor has its own model handle (its screening scope and failure reports belong to its calls), all on
+    // the run's stored binding, invocation, signal and tracked work.
     const wired = assembly.wire({
       binding,
       runId,
-      admission: wiring.admission,
+      admission: wiring.admission(actor),
       signal: wiring.signal,
       track: (work) => wiring.inflight.track(work),
     });
     if ('unavailable' in wired) throw new WiringUnavailable(wired.unavailable);
+    const { capabilities } = wiring;
+    const scope =
+      capabilities === undefined
+        ? {}
+        : actor !== undefined
+          ? { scope: { actor, capabilities }, recordMessage: delegateMessageRecorder(this.store, runId, actor) }
+          : {
+              scope: {
+                actor: { kind: 'root' as const },
+                capabilities,
+                delegation: runDelegationPort({
+                  store: this.store,
+                  gates: this.gates,
+                  runId,
+                  invocationId,
+                  child: (child) =>
+                    createExecutionAgent(this.#agentOptions(runId, invocationId, binding, context, wiring, child)),
+                }),
+              },
+            };
     return {
+      ...scope,
       runId,
       model: wired.model,
       checkpointer: trackedSaver(persistence.checkpoints.saver, wiring.inflight),
@@ -689,13 +731,18 @@ export class RunService {
   }
 
   /** The agent a run's binding and workspace produce, for definitions and inspection only; it never dispatches. */
-  #inspection(runId: string, binding: ProviderBinding, policy: WorkspacePolicy) {
+  #inspection(runId: string, binding: ProviderBinding, policy: WorkspacePolicy, capabilities?: RunCapabilities) {
     const options = this.#agentOptions(
       runId,
       crypto.randomUUID(),
       binding,
       { policy },
-      { admission: refuseInspection, signal: () => AbortSignal.abort(), inflight: new InFlight() },
+      {
+        admission: () => refuseInspection,
+        signal: () => AbortSignal.abort(),
+        inflight: new InFlight(),
+        ...(capabilities === undefined ? {} : { capabilities }),
+      },
     );
     return { agent: createExecutionAgent(options), params: executionAgentParams(options) };
   }

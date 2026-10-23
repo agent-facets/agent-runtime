@@ -2,8 +2,8 @@
 // JSON line, and then waits to be killed. Every physical model request it makes is reported too, so the parent
 // has an independent record of dispatch. Test-only.
 import { openPersistence } from '../../src/persistence/persistence.ts';
-import type { ScriptStep } from '../scripted-model.ts';
-import { ask, createWiring, final } from './wiring.ts';
+import { AIMessage, type ScriptStep } from '../scripted-model.ts';
+import { ask, commandFixture, createWiring, final } from './wiring.ts';
 
 const report = (event: Record<string, unknown>) => process.stdout.write(`${JSON.stringify(event)}\n`);
 const forever = () => new Promise<never>(() => {});
@@ -32,7 +32,22 @@ const transport = (async () => {
   return new Response('{"ok":true}');
 }) as unknown as typeof fetch;
 
+const toolCall =
+  (id: string, name: string, args: Record<string, unknown>): ScriptStep =>
+  () =>
+    new AIMessage({ id: `m-${id}`, content: '', tool_calls: [{ id: `c-${id}`, name, args, type: 'tool_call' }] });
+// A command run whose root delegates; the delegate reads once, then asks the owner.
+const delegateAsks: ScriptStep[] = [
+  toolCall('root-1', 'mcp_Delegate', { agent: 'agent:helper', task: 'Read the plan, then ask.' }),
+  toolCall('child-1', 'mcp_Read', { mode: 'file', path: 'notes/plan.md' }),
+  toolCall('child-2', 'mcp_AskUser', {
+    prompt: 'Proceed?',
+    input: { kind: 'choice', multiple: false, options: [{ label: 'No', value: false }] },
+  }),
+];
+
 const scripts: Record<string, ScriptStep[][]> = {
+  'delegate-waiting': [delegateAsks],
   working: [[blockInModel]],
   'admission-gap': [[final]],
   'orphan-interrupt': [[ask]],
@@ -57,7 +72,7 @@ try {
       },
     },
   });
-  const run = await wiring.createRun();
+  const run = await wiring.createRun(10, scenario === 'delegate-waiting' ? commandFixture() : undefined);
   runId = run.runId;
   report({ w: 'run', runId });
 
@@ -71,8 +86,8 @@ try {
     await barrier('cancelling', { accepted: result.kind, state: result.state.kind });
   }
 
-  const state = await wiring.controller.run(runId, run.invocationId, { kind: 'initial', goal: 'Decide.' });
-  if (scenario === 'waiting') await barrier('published', { state: state.kind });
+  const state = await wiring.controller.run(runId, run.invocationId, { kind: 'initial', goal: run.goal });
+  if (scenario === 'waiting' || scenario === 'delegate-waiting') await barrier('published', { state: state.kind });
   if (scenario === 'answer-accepted') {
     const snapshot = await wiring.store.snapshot(runId);
     const questionId = snapshot.pendingQuestion?.questionId ?? '';

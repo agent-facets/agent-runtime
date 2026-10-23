@@ -143,6 +143,9 @@ describe('execution code manifest', () => {
     for (const manifest of [anthropic, openai]) {
       for (const root of EXECUTION_ROOTS) expect(paths(manifest)).toContain(root);
       expect(paths(manifest)).toContain('src/execution/tools.ts');
+      // Delegation is resume-critical: it is reached through the agent and covered for both providers.
+      expect(paths(manifest)).toContain('src/execution/delegation.ts');
+      expect(paths(manifest)).toContain('src/capabilities/records.ts');
       expect(paths(manifest)).toContain('src/security/pre-graph.ts');
       expect(paths(manifest).some((path) => path.startsWith('src/server') || path.includes('/ui/'))).toBe(false);
       for (const name of [

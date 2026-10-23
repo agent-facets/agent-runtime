@@ -6,8 +6,9 @@
 import { canonicalJson, digestOf, sha256Hex } from '../records/canonical.ts';
 import type { ProviderBinding } from '../records/schemas.ts';
 import type { ExecutionAgent, executionAgentParams } from './agent.ts';
-import { SYSTEM_PROMPT } from './agent.ts';
+import { agentScope, SYSTEM_PROMPT } from './agent.ts';
 import type { CodeManifest } from './code-manifest.ts';
+import { DELEGATION_PROTOCOL_VERSION } from './delegation.ts';
 import { QUESTION_PROTOCOL_VERSION } from './tools.ts';
 
 export const PROTOCOL_VERSIONS = Object.freeze({
@@ -40,7 +41,18 @@ export async function executionDefinition(input: {
   workspacePolicyDigest: string;
   runtimeVersion?: string;
 }): Promise<ExecutionDefinition> {
+  // A command run continues from its retained definitions: their content address and the delegation protocol are
+  // part of how it continues. Current owner grants are not; they are checked at dispatch. Native runs have neither.
+  const scope = agentScope(input.agent);
   const manifest = {
+    ...(scope === undefined
+      ? {}
+      : {
+          capabilities: {
+            snapshotDigest: scope.capabilities.snapshotDigest,
+            delegationProtocol: DELEGATION_PROTOCOL_VERSION,
+          },
+        }),
     protocolVersion: PROTOCOL_VERSIONS,
     runtimeVersion: input.runtimeVersion ?? Bun.version,
     packages: input.code.packages,

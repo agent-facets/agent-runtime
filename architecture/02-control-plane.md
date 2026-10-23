@@ -33,6 +33,34 @@ lifetime, state inspection, application transactions and history projection — 
   with documented exceptions, see [05](05-model-authentication.md#phase-1-as-built-mvp-01)).
 - **Not yet done:** the phase's final acceptance of both providers together (later tasks of MVP 01).
 
+## Phase 2 delegation as built (MVP 02)
+
+The [MVP 02 design](../openspec/changes/mvp-02-facet-backed-capabilities/design.md) (Decisions 1, 7 and 8) adds
+bounded named delegation to command runs without reviving the manager/scheduler design below. The root stays one
+stock `createAgent`; delegation is an ordinary tool of it (`packages/runtime/src/execution/delegation.ts`):
+
+- **Tool-invoked children.** `mcp_Delegate` invokes a freshly built stock child `createAgent` from inside the tool
+  call, inheriting the call's configuration: the run's thread, the framework's checkpoint namespace for that task,
+  the official saver and the invocation's signal, tracked work and admission. The delegation's identity is its
+  parent tool operation; the child's first message has a stable ID derived from it, so re-entering the parent tool
+  (it is entered again on resume) reattaches to the saved child rather than starting another. There is no child
+  thread, child run, second budget, custom model loop or outer handoff graph.
+- **Sequential and one level deep.** The caller waits; a delegation must be the only call in its response. A child
+  has no delegation tool. Each actor's tools are the caller's narrowed by restrictions; a call outside them is
+  refused at dispatch, not just left unadvertised. The run's captured limit (default 8, at most 32) is consumed when
+  a delegation begins, never on re-entry.
+- **Shared accounting.** Each actor has its own model handle on the run's stored provider binding, so its screening
+  scope and failure reports belong to its own calls, but every handle admits through the same invocation, dispatch
+  gate, run-wide budget and ordinal sequence.
+- **Explicit child inspection.** The root's subgraph enumeration does not find a tool-invoked child. When a
+  delegate's question interrupts the run, the runtime matches the root's sole pending call to the recorded
+  delegation, rebuilds that delegate from its retained definition, reads its saved state at the recorded namespace
+  through the public graph state API, and requires both saved heads to agree before publishing or accepting. The
+  answer is still sent to the root by interrupt ID. Nothing is invoked during inspection.
+- **Outcomes.** A delegate's result, or a typed recoverable failure, completes the parent call atomically with the
+  delegate's record and returns to the caller; run-ending failures (budget, provider, storage, unsafe state) still
+  end the run, and only a new final root message can succeed.
+
 The historical design follows.
 
 The control plane owns orchestration. It decides what runs, tracks what
