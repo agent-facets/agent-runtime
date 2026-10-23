@@ -136,13 +136,6 @@ export interface CompletionCheck {
   readonly complete: boolean;
   /** The body has already shown it cannot end successfully (for example, an error event). */
   readonly failed: boolean;
-  /**
-   * Set once the response is complete before the body ends: the offset in the chunk just observed where it ended.
-   * The body is passed on up to there, and nothing after it is read (as the provider's reference client does).
-   */
-  readonly endAt?: number;
-  /** Told when the terminal judges the response incomplete, before it fails the body. */
-  onIncomplete?(): void;
 }
 
 /** A classified unsuccessful response, reported for the model boundary's failure evidence. */
@@ -534,32 +527,16 @@ function trackBody(
       if (!chunk.done) {
         check?.observe(chunk.value);
         if (check?.failed) {
-          check.onIncomplete?.();
           // Stop before the SDK can turn the failure into an untyped error of its own.
           await reader.cancel().catch(() => {});
           await end('failed').catch(() => {});
           controller.error(failure('incomplete_response'));
           return;
         }
-        const endAt = check?.endAt;
-        if (endAt !== undefined) {
-          // Complete: pass on the response up to its end and read nothing more.
-          if (endAt > 0) controller.enqueue(chunk.value.subarray(0, endAt));
-          await reader.cancel().catch(() => {});
-          try {
-            await end(ok ? 'ok' : 'failed');
-          } catch {
-            controller.error(failure('persistence_failure'));
-            return;
-          }
-          controller.close();
-          return;
-        }
         controller.enqueue(chunk.value);
         return;
       }
       if (check !== undefined && !check.complete) {
-        check.onIncomplete?.();
         await end('failed').catch(() => {});
         controller.error(failure('incomplete_response'));
         return;

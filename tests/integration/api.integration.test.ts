@@ -2,18 +2,22 @@
 // workspace admission, credential screening, provider assembly, controller and PostgreSQL records. The model
 // network and token endpoint are fakes and are the independent witnesses of what was dispatched.
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseOperatorConfig } from '../../packages/runtime/src/config/operator.ts';
 import { CredentialStore } from '../../packages/runtime/src/credentials/store.ts';
+import { failureFor } from '../../packages/runtime/src/domain/failures.ts';
 import { openPersistence, type Persistence } from '../../packages/runtime/src/persistence/persistence.ts';
 import { createProviderAssembly } from '../../packages/runtime/src/providers/assembly.ts';
+import { digestOf } from '../../packages/runtime/src/records/canonical.ts';
 import { RunStore } from '../../packages/runtime/src/records/run-store.ts';
+import { operationIdFor } from '../../packages/runtime/src/records/schemas.ts';
 import { handleApi } from '../../packages/runtime/src/service/http.ts';
 import { RunService, type RunServiceOptions } from '../../packages/runtime/src/service/runs.ts';
 import { REAL_TIME } from '../../packages/runtime/src/service/stream.ts';
+import { admitWorkspace } from '../../packages/runtime/src/workspace/admission.ts';
+import type { WorkspacePolicy } from '../../packages/runtime/src/workspace/policy.ts';
 import { createFixture } from '../../packages/runtime/test-support/workspace.ts';
 import {
   inferenceNetwork,
@@ -49,6 +53,8 @@ type Body = any;
 const NOW = Date.now();
 const ACCESS = 'sk-ant-oat01-api-suite-access-token-0001';
 const REFRESH = 'sk-ant-ort01-api-suite-refresh-token-0001';
+const OPENAI_ACCESS = 'synthetic-api-suite-openai-access-token';
+const OPENAI_REFRESH = 'synthetic-api-suite-openai-refresh-token';
 const GOAL = 'Summarize notes/plan.md.';
 let counter = 0;
 
@@ -56,10 +62,10 @@ interface Harness {
   service: RunService;
   net: ReturnType<typeof inferenceNetwork>;
   tokens: ReturnType<typeof tokenNetwork>;
-  /** Paths requested from OpenAI's issuer, in order. */
-  openaiSent: string[];
   stateDir: string;
   failStops: number;
+  /** The configured workspace as the service admits it. */
+  workspace(): Promise<WorkspacePolicy>;
   call(
     method: string,
     path: string,
@@ -79,8 +85,8 @@ async function harness(
     admit?: RunServiceOptions['admit'];
     /** Token endpoint replies, for console logins. */
     tokens?: Response[];
-    /** Configures OpenAI too; its issuer answers with these replies in order. */
-    openai?: Response[];
+    /** Configures OpenAI too, as the default provider if asked, with a usable stored authorization if asked. */
+    openai?: { authorized?: boolean; isDefault?: boolean };
   } = {},
 ): Promise<Harness> {
   const base = join(scratch, `case-${++counter}`);
@@ -96,7 +102,7 @@ async function harness(
         ? {}
         : { openai: { authMode: 'subscription', model: 'gpt-5.6-sol', profileId: 'codex-0.151.0' } }),
     },
-    defaultProvider: 'anthropic',
+    defaultProvider: options.openai?.isDefault === true ? 'openai' : 'anthropic',
     stepBudget: options.stepBudget ?? 10,
   });
   writeFileSync(configFile, source);
@@ -116,30 +122,41 @@ async function harness(
       account: {},
     });
   }
+  if (options.openai?.authorized === true) {
+    await CredentialStore.forStateDir(stateDir).replace({
+      version: 1,
+      provider: 'openai',
+      authMode: 'subscription',
+      slot: 'default',
+      generation: 2,
+      updatedAtMs: NOW,
+      lifecycle: 'usable',
+      accessToken: OPENAI_ACCESS,
+      refreshToken: OPENAI_REFRESH,
+      expiresAtMs: NOW + 3_600_000,
+      account: { accountId: 'acct_api_suite' },
+    });
+  }
+  // Both networks record every request they are given, whatever its address: the independent witnesses.
   const net = inferenceNetwork(options.replies ?? []);
   const tokens = tokenNetwork(options.tokens);
-  const openaiReplies = [...(options.openai ?? [])];
-  const openaiSent: string[] = [];
-  const authTransport = (async (url: string, init: RequestInit) => {
-    if (new URL(url).origin !== 'https://auth.openai.com') return tokens.fetchImpl(url, init);
-    openaiSent.push(new URL(url).pathname);
-    const reply = openaiReplies.shift();
-    if (reply === undefined) throw new Error('unscripted OpenAI authorization request');
-    return reply;
-  }) as unknown as typeof fetch;
   const assembly = createProviderAssembly({
     config: operator,
     stateDir,
     inferenceTransport: net.fetchImpl,
-    authTransport,
+    authTransport: tokens.fetchImpl,
   });
   const store = new RunStore(persistence.app, persistence.ownership);
   const h: Harness = {
     net,
     tokens,
-    openaiSent,
     stateDir,
     failStops: 0,
+    async workspace() {
+      const admission = await admitWorkspace(operator.workspace, { stateDir, configFile });
+      if (!admission.ok) throw new Error(admission.code);
+      return admission.policy;
+    },
     service: undefined as unknown as RunService,
     async call(method, path, body, headers = {}) {
       const response = await handleApi(
@@ -793,87 +810,204 @@ describe('connecting Anthropic from the console', () => {
   });
 });
 
-describe('connecting OpenAI from the console', () => {
-  const LOGIN = '/api/v1/auth/openai';
-  const b64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
-  const jwt = (claims: Record<string, unknown>) => `${b64({ alg: 'RS256' })}.${b64(claims)}.c3ludGhldGlj`;
-  const VERIFIER = 'synthetic-api-suite-verifier-0123456789abcdefghijklmn';
-  const NEW_ACCESS = jwt({ exp: Math.floor(NOW / 1000) + 864_000, sub: 'api-suite-openai-access' });
-  const NEW_REFRESH = 'synthetic-api-suite-openai-refresh-token';
-  const deviceCode = () =>
-    Response.json({ device_auth_id: 'deviceauth_api_suite', user_code: 'APIS-13579', interval: '5' });
-  const approval = () =>
-    Response.json({
-      authorization_code: 'synthetic-api-suite-authorization-code',
-      code_verifier: VERIFIER,
-      code_challenge: createHash('sha256').update(VERIFIER).digest('base64url'),
-    });
-  const issued = () =>
-    Response.json({
-      id_token: jwt({ 'https://api.openai.com/auth': { chatgpt_account_id: 'acct_api_suite' } }),
-      access_token: NEW_ACCESS,
-      refresh_token: NEW_REFRESH,
-    });
+describe('a configured OpenAI in a build without its integration', () => {
+  const openaiRecord = (h: Harness) => join(h.stateDir, 'credentials', 'openai', 'default.json');
+  const openaiRuns = async (h: Harness) =>
+    ((await h.call('GET', '/api/v1/runs?limit=100')).body.runs as Body[]).filter((run) => run.provider === 'openai')
+      .length;
 
-  const settledAttempt = async (h: Harness, attemptId: string) => {
-    for (let index = 0; index < 200; index++) {
-      const status = await h.call('POST', `${LOGIN}/status`, { attemptId });
-      if (status.body.state !== 'awaiting_approval' && status.body.state !== 'completing') return status;
-      await Bun.sleep(5);
-    }
-    throw new Error('the login did not settle');
-  };
-
-  test('begin shows the code; approval is noticed and stored; no run or model request is made', async () => {
-    const h = await harness({ openai: [deviceCode(), approval(), issued()] });
-    const openai = async () =>
-      ((await h.call('GET', '/api/v1/options')).body.providers as Body[]).find((entry) => entry.provider === 'openai');
-    expect((await openai())?.readiness).toBe('reauthorization_required');
-
-    const begun = await h.call('POST', `${LOGIN}/begin`, {});
-    expect(begun.status).toBe(200);
-    expect(begun.body).toMatchObject({
-      provider: 'openai',
-      state: 'awaiting_approval',
-      authorizationUrl: 'https://auth.openai.com/codex/device',
-      userCode: 'APIS-13579',
-    });
-    const done = await settledAttempt(h, begun.body.attemptId);
-    expect([done.status, done.body.state]).toEqual([200, 'connected']);
-    expect((await openai())?.readiness).toBe('ready');
-    expect(h.openaiSent).toEqual([
-      '/api/accounts/deviceauth/usercode',
-      '/api/accounts/deviceauth/token',
-      '/oauth/token',
+  test('is reported unavailable even when authorized, and a start is refused before anything is sent', async () => {
+    const h = await harness({ openai: { authorized: true } });
+    const before = readFileSync(openaiRecord(h));
+    const openaiBefore = await openaiRuns(h);
+    const options = (await h.call('GET', '/api/v1/options')).body;
+    expect(options.defaultProvider).toBe('anthropic');
+    expect(options.providers).toEqual([
+      { provider: 'anthropic', authMode: 'subscription', model: 'claude-opus-5', readiness: 'ready' },
+      { provider: 'openai', authMode: 'subscription', model: 'gpt-5.6-sol', readiness: 'integration_unavailable' },
     ]);
+
+    const refused = await h.call('POST', '/api/v1/runs', {
+      requestId: crypto.randomUUID(),
+      goal: GOAL,
+      provider: 'openai',
+    });
+    expect([refused.status, refused.body.error.code]).toEqual([409, 'provider_unavailable']);
+    expect(refused.body.error.message).toBe(
+      'This build has no integration for that provider (or for its configured profile), so it cannot run tasks. Signing in would not change that.',
+    );
+    // The suites share one database, so the witness is the number of OpenAI runs before and after.
+    expect(await openaiRuns(h)).toBe(openaiBefore);
+    await h.settled();
     expect(h.net.sent).toEqual([]);
     expect(h.tokens.sent).toEqual([]);
-    for (const body of [begun.body, done.body]) {
-      const text = JSON.stringify(body);
-      for (const secret of [NEW_ACCESS, NEW_REFRESH, VERIFIER, 'synthetic-api-suite-authorization-code']) {
-        expect(text).not.toContain(secret);
-      }
+    expect(readFileSync(openaiRecord(h)).equals(before)).toBe(true);
+    expect(JSON.stringify([options, refused.body])).not.toContain('synthetic');
+  });
+
+  test('its retained authorization is still screened out of owner input, without being used', async () => {
+    const h = await harness({ openai: { authorized: true } });
+    const before = readFileSync(openaiRecord(h));
+    for (const secret of [OPENAI_ACCESS, OPENAI_REFRESH]) {
+      const refused = await h.start(`Use ${secret} for this task.`);
+      expect([refused.status, refused.body.error.code]).toEqual([400, 'credential_in_input']);
+      expect(JSON.stringify(refused.body)).not.toContain(secret);
     }
-    await h.service.openaiLogin.stop();
+    await h.settled();
+    expect(h.net.sent).toEqual([]);
+    expect(h.tokens.sent).toEqual([]);
+    expect(readFileSync(openaiRecord(h)).equals(before)).toBe(true);
   });
 
-  test('there is nothing to paste back, and OpenAI must be configured', async () => {
-    const configured = await harness({ openai: [] });
-    expect(
-      (await configured.call('POST', `${LOGIN}/complete`, { attemptId: crypto.randomUUID(), code: 'x' })).status,
-    ).toBe(404);
-    const unconfigured = await harness();
-    const refused = await unconfigured.call('POST', `${LOGIN}/begin`, {});
-    expect([refused.status, refused.body.error.code]).toEqual([409, 'provider_unavailable']);
-    expect(refused.body.error.message).toBe('OpenAI is not configured for this runtime.');
+  test('an OpenAI default stays the default: nothing switches to Anthropic', async () => {
+    const h = await harness({ openai: { authorized: true, isDefault: true } });
+    const options = (await h.call('GET', '/api/v1/options')).body;
+    expect(options.defaultProvider).toBe('openai');
+    expect(options.providers.find((entry: Body) => entry.provider === 'openai').readiness).toBe(
+      'integration_unavailable',
+    );
+    const refused = await h.call('POST', '/api/v1/runs', {
+      requestId: crypto.randomUUID(),
+      goal: GOAL,
+      provider: 'openai',
+    });
+    expect(refused.body.error.code).toBe('provider_unavailable');
+    await h.settled();
+    expect(h.net.sent).toEqual([]);
+    expect(h.tokens.sent).toEqual([]);
   });
 
-  test('cancelling while waiting closes the attempt', async () => {
-    const h = await harness({ openai: [deviceCode(), new Response(null, { status: 403 })] });
-    const begun = await h.call('POST', `${LOGIN}/begin`, {});
-    const cancelled = await h.call('POST', `${LOGIN}/cancel`, { attemptId: begun.body.attemptId });
-    expect(cancelled.body.state).toBe('cancelled');
-    await h.service.openaiLogin.stop();
-    expect((await h.call('POST', `${LOGIN}/status`, { attemptId: begun.body.attemptId })).body.state).toBe('cancelled');
+  test('the retired OpenAI login operations no longer exist', async () => {
+    const h = await harness({ openai: { authorized: true } });
+    const before = readFileSync(openaiRecord(h));
+    for (const action of ['begin', 'status', 'cancel', 'complete']) {
+      const body =
+        action === 'begin' ? {} : { attemptId: crypto.randomUUID(), ...(action === 'complete' ? { code: 'x' } : {}) };
+      const response = await h.call('POST', `/api/v1/auth/openai/${action}`, body);
+      expect([response.status, response.body.error.code]).toEqual([404, 'not_found']);
+    }
+    expect((await h.call('GET', '/api/v1/auth/openai/begin')).status).toBe(404);
+    expect(h.net.sent).toEqual([]);
+    expect(h.tokens.sent).toEqual([]);
+    expect(readFileSync(openaiRecord(h)).equals(before)).toBe(true);
+  });
+});
+
+describe('OpenAI runs recorded by an earlier build', () => {
+  const RETIRED = {
+    provider: 'openai',
+    authMode: 'subscription',
+    model: 'gpt-5.6-sol',
+    profileId: 'codex-0.151.0',
+    credentialSlot: 'default',
+  } as const;
+  const hex = (seed: string) => digestOf({ seed });
+
+  /** A run as the retired OpenAI integration recorded it, written through the store alone. */
+  async function retiredRun(h: Harness) {
+    const policy = await h.workspace();
+    const { snapshot } = await h.service.store.createRun({
+      requestId: crypto.randomUUID(),
+      goal: 'Summarize the plan with OpenAI.',
+      provider: 'openai',
+      workspace: { id: 'main', label: policy.label, root: policy.root, policyDigest: policy.digest },
+      binding: RETIRED,
+      definition: { digest: hex('retired-definition'), manifest: { recordedBy: 'an earlier build' } },
+      budgetMax: 6,
+    });
+    if (snapshot.state.kind !== 'working') throw new Error('expected a working run');
+    return { runId: snapshot.runId, invocationId: snapshot.state.invocationId };
+  }
+
+  async function waitingRetiredRun(h: Harness) {
+    const { runId, invocationId } = await retiredRun(h);
+    const questionId = operationIdFor(runId, 'msg_retired', 'call_retired');
+    const args = { prompt: YES_NO_QUESTION.prompt, input: YES_NO_QUESTION.input };
+    await h.service.store.startToolOperation(runId, invocationId, {
+      operationId: questionId,
+      modelMessageId: 'msg_retired',
+      providerToolCallId: 'call_retired',
+      toolName: 'mcp_AskUser',
+      arguments: args,
+      argumentDigest: digestOf(args),
+    });
+    await h.service.store.publishQuestion({
+      runId,
+      expectedRevision: (await h.service.store.snapshot(runId)).revision,
+      invocationId,
+      questionId,
+      prompt: YES_NO_QUESTION.prompt,
+      input: YES_NO_QUESTION.input as Parameters<RunStore['publishQuestion']>[0]['input'],
+      binding: {
+        threadId: runId,
+        checkpointNs: '',
+        checkpointId: 'retired-checkpoint',
+        taskId: 'retired-task',
+        interruptId: 'retired-interrupt',
+        ordinal: 0,
+        operationId: questionId,
+        payloadDigest: hex('payload'),
+        requiredStateDigest: hex('required-state'),
+        definitionDigest: hex('retired-definition'),
+      },
+    });
+    return { runId, questionId };
+  }
+
+  test('a finished OpenAI run stays readable and finished, with no provider configured', async () => {
+    const h = await harness();
+    const { runId, invocationId } = await retiredRun(h);
+    await h.service.store.finishInvocation({
+      runId,
+      invocationId,
+      outcome: { kind: 'failed', failure: failureFor('incomplete_response', { provider: 'openai' }) },
+    });
+
+    const detail = await h.call('GET', `/api/v1/runs/${runId}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.run).toMatchObject({
+      provider: 'openai',
+      model: 'gpt-5.6-sol',
+      state: { kind: 'failed', failure: { reason: 'incomplete_response' } },
+    });
+    const history = await h.call('GET', `/api/v1/runs/${runId}/events`);
+    expect(history.status).toBe(200);
+    expect(history.body.events.length).toBeGreaterThan(0);
+
+    const cancelled = await h.call('POST', `/api/v1/runs/${runId}/cancel`, { requestId: crypto.randomUUID() });
+    expect(cancelled.status).toBe(409);
+    expect((await h.call('GET', `/api/v1/runs/${runId}`)).body.run.state.kind).toBe('failed');
+    expect(h.net.sent).toEqual([]);
+    expect(h.tokens.sent).toEqual([]);
+  });
+
+  test('a waiting OpenAI run shows its question; an answer is refused before acceptance, and nothing is sent', async () => {
+    const h = await harness({ openai: { authorized: true } });
+    const record = join(h.stateDir, 'credentials', 'openai', 'default.json');
+    const before = readFileSync(record);
+    const { runId, questionId } = await waitingRetiredRun(h);
+
+    const detail = await h.call('GET', `/api/v1/runs/${runId}`);
+    expect(detail.body.run).toMatchObject({
+      provider: 'openai',
+      state: { kind: 'waiting' },
+      pendingQuestion: { questionId, prompt: YES_NO_QUESTION.prompt },
+    });
+
+    const refused = await h.call('POST', `/api/v1/runs/${runId}/questions/${questionId}/answer`, { answer: false });
+    expect([refused.status, refused.body.error.code]).toEqual([409, 'continuation_unavailable']);
+    await h.settled();
+    const after = await h.call('GET', `/api/v1/runs/${runId}`);
+    expect(after.body.run.state).toMatchObject({
+      kind: 'failed',
+      failure: { category: 'continuation_unavailable', reason: 'run_binding_unavailable' },
+    });
+    const question = await h.service.store.readQuestion(runId, questionId);
+    expect(question?.disposition).toMatchObject({ kind: 'closed', reason: 'run_binding_unavailable' });
+    // The stored binding is kept as recorded; nothing was rebuilt with another provider or the current settings.
+    expect(question?.run.binding).toEqual(RETIRED);
+    expect(h.net.sent).toEqual([]);
+    expect(h.tokens.sent).toEqual([]);
+    expect(readFileSync(record).equals(before)).toBe(true);
   });
 });

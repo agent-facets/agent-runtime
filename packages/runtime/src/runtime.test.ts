@@ -66,7 +66,7 @@ describe('runtime lifecycle', () => {
         }),
         JSON.stringify({
           event: 'provider_readiness',
-          reason: 'reauthorization_required',
+          reason: 'integration_unavailable',
           provider: 'openai',
           operation: 'startup',
         }),
@@ -98,12 +98,17 @@ describe('runtime lifecycle', () => {
         account: { accountId: 'acct_synthetic' },
       });
       const lines = await readiness();
-      // Expired access is still ready: renewal happens on use, never at startup.
-      expect(lines).toEqual(
-        (['anthropic', 'openai'] as const).map((provider) =>
-          JSON.stringify({ event: 'provider_readiness', reason: 'ready', provider, operation: 'startup' }),
-        ),
-      );
+      // Expired access is still ready: renewal happens on use, never at startup. A stored OpenAI authorization does
+      // not make OpenAI usable: this build has no integration for it.
+      expect(lines).toEqual([
+        JSON.stringify({ event: 'provider_readiness', reason: 'ready', provider: 'anthropic', operation: 'startup' }),
+        JSON.stringify({
+          event: 'provider_readiness',
+          reason: 'integration_unavailable',
+          provider: 'openai',
+          operation: 'startup',
+        }),
+      ]);
       expect(lines.join('\n')).not.toContain('synthetic');
     } finally {
       rmSync(stateDir, { recursive: true, force: true });

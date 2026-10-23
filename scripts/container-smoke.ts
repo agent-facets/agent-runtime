@@ -228,6 +228,36 @@ try {
     }
   });
 
+  await check('the image ships none of the retired OpenAI integration', async () => {
+    // Addresses, identifiers and headers only the removed Codex login and inference code used. The provider's name
+    // alone is not a marker: history and configuration still name it.
+    const markers = [
+      'auth.openai.com',
+      'api.openai.com',
+      'chatgpt.com/backend-api',
+      'app_EMoamEEZ73f0CkXaXp7hrann',
+      'deviceauth',
+      'codex_exec',
+      'x-codex',
+      '/auth/openai/',
+    ];
+    const scan = await exec(
+      'runtime',
+      'bun',
+      '-e',
+      `const markers = ${JSON.stringify(markers)}; const hits = []; let files = 0;
+       for (const path of new Bun.Glob('**/*').scanSync({ cwd: '/app', onlyFiles: true })) {
+         files++;
+         const text = await Bun.file('/app/' + path).text();
+         for (const marker of markers) if (text.includes(marker)) hits.push(path + ': ' + marker);
+       }
+       console.log(JSON.stringify({ files, hits }));`,
+    );
+    const result = JSON.parse(scan.stdout) as { files: number; hits: string[] };
+    assert(result.files > 0, 'no application files were scanned');
+    assert(result.hits.length === 0, `retired OpenAI code shipped: ${result.hits.join(', ')}`);
+  });
+
   await check('ordinary network peers cannot reach the runtime listener', async () => {
     const [holder, database] = await Promise.all([inspect('tailscale'), inspect('postgres')]);
     const network = `${project}_backend`;

@@ -1,17 +1,19 @@
 # agent-runtime
 
 A personal agent runtime: start a repository task from a browser, leave, return, answer the agent's
-questions, and collect the result using an existing Anthropic or OpenAI subscription.
+questions, and collect the result using an existing Anthropic subscription. (OpenAI support was withdrawn; see
+[Providers](#providers).)
 
 > **Status: the Anthropic browser slice works against a real Claude subscription,** locally and in the shipped
 > Docker deployment over Tailscale Serve (see [G4 live](architecture/integration-evidence/mvp-01/g4-anthropic-live.md)
 > and [G4 Docker/tailnet](architecture/integration-evidence/mvp-01/g4-anthropic-docker-tailnet.md)). The
 > [browser console](#browser-console-and-api), its REST/SSE API, controlled agent execution (see
 > [Agent execution](#agent-execution)), PostgreSQL persistence, the confined read/search tools, credential storage
-> and the [providers](#providers) exist: Anthropic and OpenAI subscription login (from the console or a terminal),
-> renewal and inference. They are verified against scripted provider networks, including real-browser journeys,
-> and the Anthropic journey also live. OpenAI has not yet run against the real service; a live OpenAI journey, a
-> real token renewal and the remaining acceptance work are delivered by the remaining tasks in
+> and the Anthropic [provider](#providers) exist: subscription login (from the console or a terminal), renewal and
+> inference, verified against scripted provider networks, including real-browser journeys, and live. The earlier
+> OpenAI integration failed its live journey and has been **removed**; a configured OpenAI is shown as unavailable
+> until a replacement is separately designed and verified. That replacement and the remaining acceptance work are
+> tracked in
 > [`openspec/changes/mvp-01-interactive-agent-execution`](openspec/changes/mvp-01-interactive-agent-execution/tasks.md).
 
 Further reading:
@@ -53,6 +55,8 @@ Boundaries enforced by tests:
   Other packages import it only through its public entry. Server records, saved-graph bindings and credential
   references stay in the runtime; the API sends explicit projections.
 - The console depends only on the contracts and React; its bundle contains no server code (a test checks it).
+- No package depends on or imports an OpenAI client, and production sources and the shipped image contain none of
+  the removed Codex login or inference code.
 
 ## Setup
 
@@ -67,9 +71,8 @@ mise exec -- bun install --frozen-lockfile  # reproduces bun.lock exactly
 
 Pinned tools: Bun 1.3.14 (`mise.toml` and `packageManager`), Turbo 2.10.4, TypeScript 5.9.3, Biome 2.4.15.
 Bun is configured to add exact versions. The runtime pins LangChain 1.5.14, `@langchain/core` 1.2.13, LangGraph
-1.4.13 with its PostgreSQL checkpointer, and the provider models `@langchain/anthropic` 1.5.11 (with
-`@anthropic-ai/sdk` 0.122.0) and `@langchain/openai` 1.6.0 (with `openai` 7.25.0), all in
-`packages/runtime/package.json`. Their Bun compatibility is verified by the offline suites, not by live use. The
+1.4.13 with its PostgreSQL checkpointer, and the provider model `@langchain/anthropic` 1.5.11 (with
+`@anthropic-ai/sdk` 0.122.0), all in `packages/runtime/package.json`. Their Bun compatibility is verified by the offline suites, not by live use. The
 console pins React and React DOM 19.3.0 (`packages/ui`); browser journeys use Playwright 1.63.0 (root development
 dependency) with its headless Chromium, installed once with `bun run browser:install`.
 
@@ -191,12 +194,13 @@ endpoint, API key or other unsupported option can never be silently ignored:
 ```
 
 - Replace `your-model-id` and `your-profile-id`: models and request profiles are the owner's explicit choice, and
-  there are no built-in defaults. The implemented profiles are `claude-cli-2.1.280` (Anthropic) and
-  `codex-0.151.0` (OpenAI); see [Providers](#providers). Only `authMode: "subscription"` exists — there is no
-  API-key mode and no billed fallback. At startup the runtime logs each configured provider's readiness
-  (`provider_readiness`): Anthropic is `ready` with a usable stored credential (an expired access token still
-  counts; it renews on use) and `reauthorization_required` without one, and the same holds for OpenAI; a profile
-  ID this build does not implement makes the provider `integration_unavailable`.
+  there are no built-in defaults. The implemented profile is `claude-cli-2.1.280` (Anthropic); see
+  [Providers](#providers). Only `authMode: "subscription"` exists — there is no API-key mode and no billed
+  fallback. At startup the runtime logs each configured provider's readiness (`provider_readiness`): Anthropic is
+  `ready` with a usable stored credential (an expired access token still counts; it renews on use) and
+  `reauthorization_required` without one. A profile ID this build does not implement, or an `openai` entry (this
+  build has no OpenAI integration), makes the provider `integration_unavailable`, whatever authorization is stored.
+  Such configuration is still accepted, and the configured default provider is never silently replaced.
 - `credentialSlot` (default `default`) names the provider's credential record; the `auth` command uses the
   configured slot unless given `--slot`.
 - The workspace root must be a normalized absolute path that neither contains nor lies inside the runtime state
@@ -213,11 +217,11 @@ endpoint, API key or other unsupported option can never be silently ignored:
 
 The runtime (and the `auth` command) refuses to start, before loading any framework or provider code, if the
 environment enables LangSmith/LangChain tracing, sets an HTTP(S)/ALL proxy, overrides a provider base URL or
-enables the LangSmith gateway (`LANGSMITH_GATEWAY`), sets an OpenAI organization or project
-(`OPENAI_ORGANIZATION`, `OPENAI_ORG_ID`, `OPENAI_PROJECT`, `OPENAI_PROJECT_ID`), disables or replaces TLS
-verification (`NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_*`), or turns on request logging
-(`ANTHROPIC_LOG`/`OPENAI_LOG` below `warn`, `BUN_CONFIG_VERBOSE_FETCH`, `DEBUG`). Ambient API keys such as
+enables the LangSmith gateway (`LANGSMITH_GATEWAY`), disables or replaces TLS verification
+(`NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_*`), or turns on request logging
+(`ANTHROPIC_LOG` below `warn`, `BUN_CONFIG_VERBOSE_FETCH`, `DEBUG`). Ambient API keys such as
 `ANTHROPIC_API_KEY` are ignored: nothing reads them, and providers are selected only from this configuration.
+`OPENAI_*` settings are ignored too: no OpenAI client is included.
 
 ## Authority boundaries
 
@@ -423,8 +427,8 @@ The API (`/api/v1`, JSON only):
 
 ## Providers
 
-Both providers use the stock LangChain chat model for their API (`ChatAnthropic`, `ChatOpenAI` in streaming
-Responses mode) with its SDK `fetch` set to the guarded terminal. The runtime owns credentials (storage, locking,
+Anthropic uses the stock LangChain chat model for its API (`ChatAnthropic`) with its SDK `fetch` set to the guarded
+terminal. The runtime owns credentials (storage, locking,
 refresh, screening), admission and the one renewal retry; provider code only adapts requests, classifies failures
 and checks that a response ended completely. Responses are never rewritten. Each model is built per run from the
 run's stored model and profile, with an inert sentinel API key (so no ambient key is ever looked up), an explicit
@@ -468,46 +472,29 @@ reauthorization, and later runs fail with authorization guidance without sending
 real renewal can be exercised deliberately; ordinary use never needs it, because access renews itself within five
 minutes of expiry. Like any renewal, one whose outcome is unknown marks the slot as needing a new login.
 
-**OpenAI** (profile `codex-0.151.0`). Requests use the measured Codex backend profile (allowlisted headers,
-stateless replay of encrypted reasoning and function calls with matching IDs), token and account always from one
-credential generation, and completion only on `response.completed`: as in the Codex client, the response ends with
-that event and nothing after it is read, while `response.failed`, `response.incomplete` or `error` before it fail
-the run. A response judged incomplete is logged as `model_stream_incomplete` with the names of the events received
-(never their content). Requests use Bun's own `fetch`, which a test shows adds no browser-style headers. The profile's body settings and client version were captured from one model
-(`gpt-5.6-sol`) at Codex 0.151.0; if OpenAI stops accepting them, runs fail as an unsupported model/profile and the
-profile needs re-capturing as a new profile ID.
+**OpenAI: withdrawn.** An earlier build reached OpenAI by imitating the Codex CLI: its device login, request
+profile and response handling were reimplemented here. Login and renewal worked, but every real model request
+failed as incomplete, and the cause was never recorded
+([evidence](architecture/integration-evidence/mvp-01/g5-openai-live.md)). That code has been removed rather than
+kept as a fallback. A configured `openai` provider is reported as `integration_unavailable`, with no Connect
+button; starting a task with it is refused before any work, and nothing switches to another provider. OpenAI runs
+recorded earlier stay readable; a question they left waiting cannot be answered (answering closes the run as
+`continuation_unavailable`). A saved OpenAI authorization is left untouched in private storage: it is neither
+renewed nor used, but while OpenAI stays configured its tokens are still kept out of task input and answers, as
+every configured provider's are. `auth openai …` reports that the integration is unavailable without reading
+anything. A replacement will use a supported library and a browser-only login, and needs its own design and
+verification.
 
-**Log in from the console**: select OpenAI, then **Connect OpenAI**. The console shows a short code and a link to
-OpenAI's sign-in page (`https://auth.openai.com/codex/device`); sign in there with your ChatGPT account, enter the
-code and approve. Nothing is pasted back: the runtime notices the approval by itself and the panel switches to
-connected. How it behaves:
-
-- This is OpenAI's device login as the Codex CLI speaks it (reimplemented in
-  `packages/runtime/src/providers/openai/auth.ts`): the runtime polls OpenAI at the interval it asks for (at least
-  every second, by default every five) for up to fifteen minutes. A poll answered "not yet" (HTTP 403/404), throttled
-  or lost is simply followed by the next one; these never count as a model or authorization failure.
-- Waiting holds no credential lock. Once approved, the runtime checks the PKCE pair OpenAI supplies, exchanges it
-  **once** and stores the result as the slot's next generation, with the ChatGPT account ID from the ID token
-  issued alongside (decoded, not signature-checked: it routes requests, it grants nothing).
-- Cancel stops the polling. Pressing Connect again (after a reload) returns the login in progress. Unfinished logins
-  live only in memory; a restart forgets them.
-- The browser receives only the code to type and the page link; tokens stay on the server.
-
-From a terminal, `bun dist/auth.js openai login` prints the same page and code and waits; `openai status` and
-`openai renew` work as for Anthropic.
-
-Offline verification runs the stock models inside the stock agent against scripted provider streams
-(`src/providers/*/inference.test.ts`, and the production assembly on the official saver in
+Offline verification runs the stock model inside the stock agent against scripted provider streams
+(`src/providers/anthropic/inference.test.ts`, and the production assembly on the official saver in
 `tests/integration/provider-assembly.integration.test.ts`); results are recorded in the dated
-[G2](architecture/integration-evidence/mvp-01/g2-anthropic-boundary.md),
-[G4 offline](architecture/integration-evidence/mvp-01/g4-anthropic-offline.md) and
-[G5 offline](architecture/integration-evidence/mvp-01/g5-openai-offline.md) evidence. Anthropic has also been
+[G2](architecture/integration-evidence/mvp-01/g2-anthropic-boundary.md) and
+[G4 offline](architecture/integration-evidence/mvp-01/g4-anthropic-offline.md) evidence. Anthropic has also been
 verified live: console login, profile `claude-cli-2.1.280` with `claude-opus-5-5`, and the full
-read/question/restart/answer/result journey ([G4 live](architecture/integration-evidence/mvp-01/g4-anthropic-live.md));
-a real token renewal has not yet occurred. OpenAI login, renewal and the read/question/answer/result journey are
-verified offline only (`src/providers/openai/credentials.test.ts`, `src/service/openai-auth.test.ts`, the
-integration and browser suites); OpenAI has not run against the real service. Live checks happen only with the
-owner's fresh authorization.
+read/question/restart/answer/result journey ([G4 live](architecture/integration-evidence/mvp-01/g4-anthropic-live.md)),
+and a real token renewal (`auth anthropic renew`, generation 2 → 3) in the Docker deployment on 2026-10-03
+([recorded with the OpenAI attempts](architecture/integration-evidence/mvp-01/g5-openai-live.md)). Live checks
+happen only with the owner's fresh authorization.
 
 ## Deployment
 
@@ -554,9 +541,10 @@ part of readiness: an unauthorized provider is shown in the console and refuses 
 | Symptom | Cause and remedy |
 |---|---|
 | The console answers `403` | The address is not `RUNTIME_PUBLIC_ORIGIN`, or a change came from another page. Use exactly the configured tailnet name. |
-| Starting a run reports the provider unavailable | No usable authorization: press **Connect Anthropic** or **Connect OpenAI** on the start form (or run the `auth … login` command); `auth … status` shows the slot's state. |
+| Starting a run reports the provider unavailable | No usable authorization: press **Connect Anthropic** on the start form (or run the `auth anthropic login` command); `auth anthropic status` shows the slot's state. |
+| OpenAI shows “integration unavailable” | This build has no OpenAI integration; signing in cannot change that. Use Anthropic. See [Providers](#providers). |
 | The console login says the code is not from this sign-in | The pasted text is from another (older) sign-in, or only part of the code was copied. Copy the whole code from the tab this login opened. |
-| The console login failed or expired | Press **Connect Anthropic** (or **Connect OpenAI**) again for a new sign-in. A failed login never retries its code. |
+| The console login failed or expired | Press **Connect Anthropic** again for a new sign-in. A failed login never retries its code. |
 | Input is refused as unscreenable | A credential record cannot be read or is invalid. Check `auth … status`, and log in again. |
 | The page shows “Reconnecting” | The connection dropped; the run is unaffected and the page catches up when it reconnects. |
 | `503 acceptance_unknown` | Storage could not confirm a change. Repeat the same action; it cannot be applied twice. |
@@ -564,9 +552,9 @@ part of readiness: an unauthorized provider is shown in the console and refuses 
 
 ## Limitations
 
-- The Anthropic slice has passed bounded live trials locally and in the Docker deployment over Tailscale Serve; a
-  real token renewal has not yet occurred. OpenAI is implemented and verified offline but has not yet run against
-  the real service.
+- The Anthropic slice has passed bounded live trials locally and in the Docker deployment over Tailscale Serve,
+  including one deliberate real token renewal. OpenAI is not supported: the earlier integration was removed after
+  its live journey failed, and a replacement is not yet designed.
 - No application accounts: anyone your tailnet policy admits to the machine can use the console.
 - No backup, retention or restore tooling; ordinary restarts preserve the database volume, nothing more.
 - Read-only mounts and path checks are not a sandbox against hostile processes on the host; the workspace is

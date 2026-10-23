@@ -25,6 +25,8 @@ This is phase 1 of [the framework MVP roadmap](../../roadmaps/framework-mvp.md).
 
 **Owner-approved browser-auth refinement.** Pause the local Anthropic live trial while adding this desktop-first login experience using the existing subscription protocol and private credential store. This addition does not include demo hardening, mobile-specific changes, OpenAI auth expansion or a different provider callback protocol. Tailnet verification remains deferred as separately recorded in the task plan. Implementation and synthetic verification precede a fresh live-authorization review for the revised build; the earlier terminal-login allowance SHALL NOT authorize the changed browser-login trial.
 
+**OpenAI removal-first revision (2026-10-06).** The next increment SHALL remove the bespoke OpenAI Codex authentication and inference implementation, console login and unused dependencies, without adding a replacement. Anthropic and provider-neutral execution/security controls SHALL remain. Configured OpenAI SHALL be visibly unavailable, with no auth, refresh, inference or provider/billing fallback. Existing runs, private credentials and historical evidence SHALL be preserved; retired credentials SHALL NOT be reused for another authorization scheme. OpenAI restoration and phase exit remain blocked pending a separately approved, library-backed integration. Required owner-side setup SHALL use only a normal browser, without helpers, extensions, CLI commands, tunnels or credential-file transfers. Future integration SHALL prefer supported library configuration over custom protocol code.
+
 ## Capabilities
 
 ### New Capabilities
