@@ -437,7 +437,7 @@ Revision recorded 2026-10-15: after the first 14.8 run failed in `check:verify` 
 - [x] 16.5 Implement: Complete README deployment/commands, `.env.example`, `deploy/runtime/config.example.json`, facet setup guidance and third-party notices; validate documented install/seal/mount/discover/grant/provision steps on synthetic inputs and explicitly document finishing/cancelling old waiting runs before upgrade, preserved history and owner-directed recovery with no automatic deletion/restore.
 
 ### Step 116 - Verify: Check isolated deployment and preserved state
-- [ ] 16.6 Verify: Run `bun run check:verify`, `bun run test:integration`, `bun run test:browser` and `bun run test:container`; report image identities, read-only mount assertions and preserved-storage evidence without touching the live deployment.
+- [x] 16.6 Verify: Run `bun run check:verify`, `bun run test:integration`, `bun run test:browser` and `bun run test:container`; report image identities, read-only mount assertions and preserved-storage evidence without touching the live deployment.
 
 ### Step 117 - Pause: Switch model for exploration
 - [ ] 16.7 Pause: Switch model for exploration; completion requires the fixed pause notice and an affirmative continuation, with no question tool.
