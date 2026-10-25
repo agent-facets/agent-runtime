@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
 import { MemorySaver } from '@langchain/langgraph';
 import { capabilitiesFor, commandFixture } from '../../test-support/lifecycle/wiring.ts';
 import { withMcp } from '../../test-support/mcp-snapshot.ts';
@@ -23,6 +23,7 @@ import { mcpBindings, retainedMcpToolsFor } from './mcp.ts';
 import { identityFor } from './operations.ts';
 
 const fixture = createFixture();
+afterAll(() => fixture.cleanup());
 const RUN = '00000000-0000-4000-8000-000000000003';
 const SERVER = 'e'.repeat(64);
 const policy = createContentPolicy(NO_KNOWN_CREDENTIALS);

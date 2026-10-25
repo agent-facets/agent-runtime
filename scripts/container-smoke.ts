@@ -24,21 +24,19 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { buildPrograms } from '../packages/mcp-programs/src/builder.ts';
-import { PROGRAMS } from '../packages/mcp-programs/src/programs.ts';
-import { SYNTHETIC_PROGRAMS } from '../packages/mcp-programs/test-support/programs.ts';
-import {
-  CREDENTIAL_SLOT,
-  connectionDigest,
-  INSTALLATION_BYTES,
-  INSTALLATION_SHA256,
-  SERVER,
-  SLOT_VALUE,
-} from '../tests/support/synthetic-installation.ts';
 import { assertSafeLaunch, fixtureEnv, runCommand } from './lib/fixture-env.ts';
 import { repoRoot } from './lib/workspace.ts';
 
 assertSafeLaunch('test:container', process.argv.slice(2), process.env);
+
+// The program builder and synthetic installation are loaded only after the launch is known to be safe.
+const [{ buildPrograms }, { PROGRAMS }, { SYNTHETIC_PROGRAMS }, synthetic] = await Promise.all([
+  import('../packages/mcp-programs/src/builder.ts'),
+  import('../packages/mcp-programs/src/programs.ts'),
+  import('../packages/mcp-programs/test-support/programs.ts'),
+  import('../tests/support/synthetic-installation.ts'),
+]);
+const { CREDENTIAL_SLOT, connectionDigest, INSTALLATION_BYTES, INSTALLATION_SHA256, SERVER, SLOT_VALUE } = synthetic;
 
 const id = crypto.randomUUID().slice(0, 8);
 const project = `agent-runtime-smoke-${id}`;

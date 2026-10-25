@@ -19,6 +19,8 @@ jobs:
             - v1-mise-{{ arch }}-{{ checksum "mise.toml" }}
       - run:
           name: Install the pinned Bun with mise
+          environment:
+            MISE_ENV: ci
           command: |
             [ -x "$HOME/.local/bin/mise" ] || curl -fsSL https://mise.run | MISE_VERSION=v2026.3.8 sh
             "$HOME/.local/bin/mise" trust

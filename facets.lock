@@ -1,6 +1,129 @@
 {
   "lockfileVersion": 0.4,
   "facets": {
+    "@agentfacets/circleci-cli": {
+      "source": {
+        "kind": "registry",
+        "registry": "https://api.agentfacets.io"
+      },
+      "version": "0.1.0",
+      "integrity": "sha256:f18c3210496aca0ea30a7652329c790e36a3a33b1a7bff18757271a4b8f3f355",
+      "assets": [
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "circleci-ci-operations",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/circleci-ci-operations/SKILL.md",
+              "integrity": "sha256:d8097051b1b4df703ff7b029729dd74635df05867e6e35e7a128a0482cecab87"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "circleci-config-and-orbs",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/circleci-config-and-orbs/SKILL.md",
+              "integrity": "sha256:a58d74016ef69fbb497d1c87136d791897e52b2c074b2ff276c7201e2c190fec"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "circleci-project-admin",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/circleci-project-admin/SKILL.md",
+              "integrity": "sha256:6afa31a19359077813a0fe63307f070e525912ed58023f9ade3464e6feb38976"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "circleci-runners-and-deployments",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/circleci-runners-and-deployments/SKILL.md",
+              "integrity": "sha256:5e6a62d5f7108fac4e720266d6ee2b83896cfd7404284245acf3b9ccb7d4713d"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "circleci-secrets-and-policy",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/circleci-secrets-and-policy/SKILL.md",
+              "integrity": "sha256:396512f991837c7fc38903b735998b68410e807e80a8f5dd5444434b8456f951"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "using-circleci",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/using-circleci/SKILL.md",
+              "integrity": "sha256:378589aa37f507e9cb20bf45f65362902379aeb15e31b9805116c4fa3405bb1f"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "circleci-connect",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/circleci-connect.md",
+              "integrity": "sha256:92b53ef396b408ed6862d2aa201a1dbb322b0353e11c74cd9777d301eae0ffe0"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "command",
+          "name": "circleci-install",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "commands/circleci-install.md",
+              "integrity": "sha256:91247a50c9fe725fbc5334656b0b679c0b3a7791693da92beae9e5e146e0ecab"
+            }
+          ]
+        }
+      ],
+      "servers": []
+    },
     "@agentfacets/graphite-submit-branch": {
       "source": {
         "kind": "registry",

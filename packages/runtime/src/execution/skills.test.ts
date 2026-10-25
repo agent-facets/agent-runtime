@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
 import { AIMessage, type BaseMessage, ToolMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import { capabilitiesFor, commandFixture } from '../../test-support/lifecycle/wiring.ts';
@@ -21,6 +21,7 @@ import {
 } from './skills.ts';
 
 const fixture = createFixture();
+afterAll(() => fixture.cleanup());
 fixture.write('notes/plan.md', 'alpha\n');
 const RUN = '00000000-0000-4000-8000-000000000002';
 const SECRET = 'synthetic-skill-reference-secret-01';

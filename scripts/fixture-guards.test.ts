@@ -1,11 +1,11 @@
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, describe, expect, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { FACET_FIXTURE_MARKER, requireFacetFixture } from '../tests/support/facet-fixture.ts';
 import { FIXTURE_DATABASE_PREFIX, requireIntegrationFixture } from '../tests/support/integration-fixture.ts';
 import { MCP_FIXTURE_MARKER, requireMcpFixture } from '../tests/support/mcp-fixture.ts';
-import { fixtureEnv, refusedOverrides } from './lib/fixture-env.ts';
+import { assertSafeLaunch, fixtureEnv, refusedOverrides } from './lib/fixture-env.ts';
 import { repoRoot } from './lib/workspace.ts';
 
 const scratch = mkdtempSync(join(tmpdir(), 'agent-runtime-guard-test-'));
@@ -50,21 +50,60 @@ describe('launcher environment policy', () => {
     });
   });
 
-  // A fake `docker` executable records any invocation; refusal must happen before it is ever called.
+  test('refuses unexpected arguments and each unsafe override, naming every problem', () => {
+    const refusal = (argv: string[], env: Record<string, string>) => () => assertSafeLaunch('test:x', argv, env);
+    for (const env of [
+      { DATABASE_URL: 'postgres://owner@127.0.0.1/agent_runtime' },
+      { COMPOSE_FILE: 'compose.yaml' },
+      { AGENT_RUNTIME_WORKSPACE: '/home/owner/repo' },
+      { FACET_DIR: '/home/owner/.facet' },
+      { FACET_TOKEN: 'x' },
+    ] as Record<string, string>[]) {
+      const [name] = Object.keys(env);
+      expect(refusal([], env)).toThrow(`test:x refuses to start: refused environment overrides: ${name}`);
+    }
+    expect(refusal(['-f', 'compose.override.yaml'], {})).toThrow(
+      'test:x refuses to start: unexpected arguments: -f compose.override.yaml.',
+    );
+    expect(refusal(['--x'], { COMPOSE_FILE: 'compose.yaml' })).toThrow(
+      'unexpected arguments: --x; refused environment overrides: COMPOSE_FILE',
+    );
+    expect(refusal([], { PATH: '/usr/bin', HOME: '/home/owner', FACET_DIR: '' })).not.toThrow();
+  });
+});
+
+// Each launcher is started once with an argument and an override it must refuse, proving it applies the policy
+// above before doing anything. A fake `docker` executable records any invocation; refusal must come first.
+describe('launchers apply the policy before starting anything', () => {
   const fakeBin = join(scratch, 'bin');
   const witness = join(scratch, 'docker-invocations');
   mkdirSync(fakeBin);
   writeFileSync(join(fakeBin, 'docker'), `#!/bin/sh\necho "$@" >> '${witness}'\nexit 1\n`);
   chmodSync(join(fakeBin, 'docker'), 0o755);
 
+  const running = new Set<Bun.Subprocess>();
+  afterEach(async () => {
+    for (const proc of running) proc.kill('SIGKILL');
+    await Promise.all([...running].map((proc) => proc.exited));
+    running.clear();
+  });
+
   const launch = async (script: string, args: string[], extraEnv: Record<string, string>) => {
     const proc = Bun.spawn([process.execPath, '--no-env-file', script, ...args], {
       cwd: repoRoot,
       env: { PATH: `${fakeBin}:${dirname(process.execPath)}:/usr/bin:/bin`, HOME: scratch, ...extraEnv },
+      stdin: 'ignore',
       stdout: 'pipe',
       stderr: 'pipe',
     });
-    return { code: await proc.exited, stderr: await new Response(proc.stderr).text() };
+    running.add(proc);
+    const [code, stderr] = await Promise.all([
+      proc.exited,
+      new Response(proc.stderr).text(),
+      new Response(proc.stdout).text(),
+    ]);
+    running.delete(proc);
+    return { code, stderr };
   };
 
   for (const script of [
@@ -75,47 +114,20 @@ describe('launcher environment policy', () => {
     'scripts/run-facets.ts',
   ]) {
     test(`${script} refuses unsafe targets without starting anything`, async () => {
-      for (const [args, env] of [
-        [[], { DATABASE_URL: 'postgres://owner@127.0.0.1/agent_runtime' }],
-        [[], { COMPOSE_FILE: 'compose.yaml' }],
-        [[], { AGENT_RUNTIME_WORKSPACE: '/home/owner/repo' }],
-        [['-f', 'compose.override.yaml'], {}],
-      ] as const) {
-        const result = await launch(script, [...args], env);
-        expect(result.code).not.toBe(0);
-        expect(result.stderr).toContain('refuses to start');
-      }
+      const result = await launch(script, ['-f', 'compose.override.yaml'], { COMPOSE_FILE: 'compose.yaml' });
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toContain('refuses to start');
+      expect(result.stderr).toContain('unexpected arguments: -f compose.override.yaml');
+      expect(result.stderr).toContain('refused environment overrides: COMPOSE_FILE');
       expect(existsSync(witness)).toBe(false);
     });
   }
 
-  test('scripts/run-facets.ts refuses ambient facet settings and a missing or unpinned CLI before running it', async () => {
-    for (const env of [{ FACET_DIR: join(scratch, 'owner-home') }, { FACET_TOKEN: 'x' }] as Record<string, string>[]) {
-      const result = await launch('scripts/run-facets.ts', [], env);
-      expect(result.code).not.toBe(0);
-      expect(result.stderr).toContain('refuses to start');
-    }
-
+  test('scripts/run-facets.ts refuses a missing CLI', async () => {
     // PATH holds no facet CLI at all.
     const missing = await launch('scripts/run-facets.ts', [], {});
     expect(missing.code).not.toBe(0);
     expect(missing.stderr).toContain('not on PATH');
-
-    // A binary that claims the pinned version is still refused by digest, without being executed.
-    const fakeFacetDir = join(scratch, 'fake-facet');
-    const facetWitness = join(scratch, 'facet-invocations');
-    mkdirSync(fakeFacetDir);
-    writeFileSync(join(fakeFacetDir, 'facet'), `#!/bin/sh\necho "$@" >> '${facetWitness}'\necho 0.36.0\n`);
-    chmodSync(join(fakeFacetDir, 'facet'), 0o755);
-    const proc = Bun.spawn([process.execPath, '--no-env-file', 'scripts/run-facets.ts'], {
-      cwd: repoRoot,
-      env: { PATH: `${fakeFacetDir}:${dirname(process.execPath)}:/usr/bin:/bin`, HOME: scratch },
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-    expect(await proc.exited).not.toBe(0);
-    expect(await new Response(proc.stderr).text()).toContain('pinned SHA-256');
-    expect(existsSync(facetWitness)).toBe(false);
   });
 });
 

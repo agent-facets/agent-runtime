@@ -1,0 +1,2 @@
+[tools]
+"github:CircleCI-Public/circleci-cli" = "1.11.0"

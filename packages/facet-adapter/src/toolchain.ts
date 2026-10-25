@@ -12,8 +12,8 @@ export interface PinnedCli {
 }
 
 export const PINNED_CLI: PinnedCli = Object.freeze({
-  version: '0.36.0',
-  sha256: Object.freeze({ 'linux-x64': 'c7b781b1a7cac5ce459cccb41da4ad12d0e6545d5cc6381a18a90706feb8451a' }),
+  version: '0.36.5',
+  sha256: Object.freeze({ 'linux-x64': 'a52b17172b4e75456a77770cc9e928254dfbd3c9724a260cd8af01864f320fdf' }),
 });
 
 export interface CliIdentity {
@@ -40,6 +40,17 @@ export function checkPinnedCli(identity: CliIdentity, pins: PinnedCli = PINNED_C
   if (identity.sha256 !== expected) {
     throw new ToolchainError(`the facet CLI binary does not match the pinned SHA-256 for ${identity.platform}`);
   }
+}
+
+/** Reports a CLI binary's version and digest, whatever they are. Tests and caches record it; only sealing enforces it. */
+export async function readCliIdentity(binary: string): Promise<CliIdentity> {
+  const file = Bun.file(binary);
+  if (!(await file.exists())) throw new ToolchainError(`the facet CLI was not found at ${binary}`);
+  const sha256 = new Bun.CryptoHasher('sha256').update(await file.arrayBuffer()).digest('hex');
+  const proc = Bun.spawn([binary, '--version'], { stdout: 'pipe', stderr: 'pipe', stdin: 'ignore' });
+  const [output, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  if (code !== 0) throw new ToolchainError('the facet CLI did not report its version');
+  return { version: output.trim(), platform: platformKey(), sha256 };
 }
 
 /**

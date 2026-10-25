@@ -5,17 +5,22 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openPersistence } from '../packages/runtime/src/persistence/persistence.ts';
-import { createFixture } from '../packages/runtime/test-support/workspace.ts';
-import { consoleServer } from '../tests/support/console-server.ts';
-import { scriptedAgent } from '../tests/support/scripted-agent.ts';
 import { assertSafeLaunch } from './lib/fixture-env.ts';
-import { withFixtureDatabase } from './lib/postgres-fixture.ts';
 
 /** Preferred port, so the address stays the same between sessions; any free port if it is taken. */
 const PREFERRED_PORT = 4310;
 
 assertSafeLaunch('console:offline', process.argv.slice(2), process.env);
+
+// The runtime is loaded only after the launch is known to be safe, so a refusal costs nothing.
+const [{ openPersistence }, { createFixture }, { consoleServer }, { scriptedAgent }, { withFixtureDatabase }] =
+  await Promise.all([
+    import('../packages/runtime/src/persistence/persistence.ts'),
+    import('../packages/runtime/test-support/workspace.ts'),
+    import('../tests/support/console-server.ts'),
+    import('../tests/support/scripted-agent.ts'),
+    import('./lib/postgres-fixture.ts'),
+  ]);
 
 const stopped = new Promise<void>((resolve) => {
   process.once('SIGINT', resolve);

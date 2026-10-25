@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
 import { MemorySaver } from '@langchain/langgraph';
 import { capabilitiesFor, commandFixture } from '../../test-support/lifecycle/wiring.ts';
 import { MemoryLedger } from '../../test-support/memory-ledger.ts';
@@ -21,6 +21,7 @@ import {
 import { identityFor } from './operations.ts';
 
 const fixture = createFixture();
+afterAll(() => fixture.cleanup());
 const RUN = '00000000-0000-4000-8000-000000000001';
 const D = 'b'.repeat(64);
 

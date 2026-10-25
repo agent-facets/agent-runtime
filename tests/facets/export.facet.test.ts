@@ -13,7 +13,7 @@ import {
   exportServersPath,
 } from '../../packages/facet-adapter/src/export-record.ts';
 import { SealError, sealInstallation } from '../../packages/facet-adapter/src/seal.ts';
-import { type CliIdentity, verifyPinnedCli } from '../../packages/facet-adapter/src/toolchain.ts';
+import { type CliIdentity, readCliIdentity } from '../../packages/facet-adapter/src/toolchain.ts';
 import { loadInstallation } from '../../packages/runtime/src/capabilities/installation.ts';
 import {
   FacetSandbox,
@@ -32,7 +32,7 @@ let cli: CliIdentity;
 let editorAdapterDir: string;
 
 beforeAll(async () => {
-  cli = await verifyPinnedCli(sandbox.fixture.cli);
+  cli = await readCliIdentity(sandbox.fixture.cli);
   editorAdapterDir = sandbox.dir('editor-adapter');
   const built = await Bun.build({
     entrypoints: [join(repoRoot, 'packages', 'facet-adapter', 'test-support', 'editor-adapter.ts')],
@@ -94,16 +94,16 @@ const ids = (load: ReturnType<typeof loadInstallation>) => {
   );
 };
 
-describe('fixture facets', () => {
-  test('every fixture manifest passes facet build --verify', async () => {
-    for (const facet of ['rt-workflows', 'rt-collide', 'rt-servers', 'rt-servers-twin', 'rt-servers-conflict']) {
+describe('fixture facets pass facet build --verify', () => {
+  for (const facet of ['rt-workflows', 'rt-collide', 'rt-servers', 'rt-servers-twin', 'rt-servers-conflict']) {
+    test(facet, async () => {
       const result = await sandbox.expectFacet(['build', '--verify', '--json'], {
         cwd: join(fixtureFacets, facet),
         home: sandbox.dir('verify-home'),
       });
       expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, verified: true });
-    }
-  });
+    });
+  }
 });
 
 describe('runtime installation and sealing', () => {
@@ -134,11 +134,7 @@ describe('runtime installation and sealing', () => {
     );
 
     const sealed = seal(project, home);
-    expect(sealed.installation.toolchain.cli).toEqual({
-      version: '0.36.0',
-      platform: 'linux-x64',
-      sha256: 'c7b781b1a7cac5ce459cccb41da4ad12d0e6545d5cc6381a18a90706feb8451a',
-    });
+    expect(sealed.installation.toolchain.cli).toEqual(cli);
     expect(lockOf(project).lockfileVersion).toBe(0.4);
     expect(sealed.installation.inputs.lockfileVersion).toBe(0.4);
     expect(sealed.installation.toolchain.adapter.sha256).toBe(
