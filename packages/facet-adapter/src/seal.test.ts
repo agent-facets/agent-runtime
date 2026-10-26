@@ -8,6 +8,7 @@ import { assets } from './adapter.ts';
 import { canonicalJson, sha256Hex } from './canonical.ts';
 import { exportAssetPath, exportServersPath } from './export-record.ts';
 import { type Installation, SealError, sealInstallation } from './seal.ts';
+import { PINNED_CLI } from './toolchain.ts';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -305,7 +306,7 @@ describe('text-asset sealing', () => {
       old.seal();
     } catch (error) {
       expect((error as Error).message).toContain('facet install');
-      expect((error as Error).message).toContain('0.36.0');
+      expect((error as Error).message).toContain(PINNED_CLI.version);
     }
     writeFileSync(
       lockPath,

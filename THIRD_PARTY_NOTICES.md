@@ -73,7 +73,7 @@ license.
 | Transitive dependencies of the two packages above, including `ajv`, `ajv-formats`, `cross-spawn`, `debug` and the optional `extended-eventsource` | Bundled with them as needed | Their own licenses (MIT for those named), as recorded in `bun.lock` |
 | `@agent-facets/protocol@0.32.0` | `packages/facet-adapter` (install-time sealer only: lockfile parsing, server-inventory derivation and declaration fingerprints; not bundled into the adapter or the runtime image) | MIT, Copyright (c) 2026 Agent Facets, Inc.; see the [repository license](https://github.com/agent-facets/facets/blob/main/LICENSE). The npm package carries no `license` field or license file. |
 | Transitive dependencies of `@agent-facets/protocol`: `arktype`, `@ark/schema`, `@ark/util`, `arkregex`, `nanotar`, `comment-json`, `array-timsort`, `esprima` and `yaml@2.9.0` | Install-time sealer only | Their own licenses: MIT, except `esprima` (BSD-2-Clause) and `yaml` (ISC), as recorded in `bun.lock` |
-| `facet` CLI 0.36.0 | Runtime facet installation, installed separately by the owner | The [Agent Facets repository license](https://github.com/agent-facets/facets/blob/main/LICENSE) (MIT); the binary's own terms were not separately verified |
+| `facet` CLI 0.36.5 | Runtime facet installation, installed separately by the owner | The [Agent Facets repository license](https://github.com/agent-facets/facets/blob/main/LICENSE) (MIT); the binary's own terms were not separately verified |
 
 ### Obsidian
 

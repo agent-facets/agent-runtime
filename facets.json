@@ -10,6 +10,7 @@
     "graphite": "0.1.0",
     "voice-to-text": "1.1.1",
     "chrome-devtools-headless": "1.0.1",
-    "@agentfacets/graphite-submit-branch": "1.0.0"
+    "@agentfacets/graphite-submit-branch": "1.0.0",
+    "@agentfacets/circleci-cli": "0.1.0"
   }
 }

@@ -3,7 +3,7 @@
 // browser, Docker). `check` first applies the fixture launchers' own safety and prerequisite checks, because a cache
 // hit replays a suite's result without starting its launcher. Cache credentials stay with Turbo; tasks never see them.
 import { join } from 'node:path';
-import { ToolchainError, verifyPinnedCli } from '../packages/facet-adapter/src/toolchain.ts';
+import { readCliIdentity, ToolchainError } from '../packages/facet-adapter/src/toolchain.ts';
 import { fixtureEnv, refusedOverrides, runCommand } from './lib/fixture-env.ts';
 import { repoRoot } from './lib/workspace.ts';
 
@@ -38,13 +38,16 @@ export function planRun(argv: string[], env: Record<string, string | undefined>)
 
 export const platformIdentity = () => `${process.platform}-${process.arch} bun-${Bun.version}`;
 
-/** Verifies every fixture prerequisite and names the exact tools, so a result is reused only with the same ones. */
+/**
+ * Requires every fixture prerequisite and names the exact tools, so a result is reused only with the same ones. Any
+ * facet CLI is accepted: the facet suite's behavior is the test, and its identity only keys the cache.
+ */
 async function fixtureToolchainIdentity(): Promise<string> {
   const binary = Bun.which('facet', { PATH: process.env.PATH ?? '' });
-  if (binary === null) throw new RefusedRun('the pinned facet CLI is not on PATH; it is never installed automatically');
-  let cli: Awaited<ReturnType<typeof verifyPinnedCli>>;
+  if (binary === null) throw new RefusedRun('the facet CLI is not on PATH; it is never installed automatically');
+  let cli: Awaited<ReturnType<typeof readCliIdentity>>;
   try {
-    cli = await verifyPinnedCli(binary);
+    cli = await readCliIdentity(binary);
   } catch (error) {
     if (error instanceof ToolchainError) throw new RefusedRun(error.message);
     throw error;

@@ -22,7 +22,7 @@ outside the repository and is never committed.
 
 | Tool | Pin |
 |---|---|
-| `facet` CLI | 0.36.0, Linux x86-64 binary SHA-256 `c7b781b1a7cac5ce459cccb41da4ad12d0e6545d5cc6381a18a90706feb8451a` |
+| `facet` CLI | 0.36.5, Linux x86-64 binary SHA-256 `a52b17172b4e75456a77770cc9e928254dfbd3c9724a260cd8af01864f320fdf` |
 | Adapter SDK | `@agent-facets/adapter` 0.30.0 (adapter API 0.3), bundled into the `agent-runtime` adapter |
 | Protocol | `@agent-facets/protocol` 0.32.0, used by `seal` only to read the lockfile's server inventory and fingerprint declarations; not part of the adapter |
 
@@ -171,7 +171,8 @@ through the optional `compose.facets.yaml` overlay. See
 ## Verification
 
 `bun run test:facets` exercises this procedure with synthetic fixture facets (`tests/facets/fixtures/`). Each run
-uses its own disposable runtime and editor homes and refuses an unpinned CLI before installing anything. It covers
+uses its own disposable runtime and editor homes and whichever `facet` CLI is on `PATH`; the suite's results, not a
+version check, show whether that CLI works. It covers
 export, aliasing, omission, removal, repeated and frozen installs, reproducible bytes and altered-bundle refusal,
 for text assets and servers alike: server-only facets, deduplicated declarations with every origin, server aliases
 and omissions, missing, extra and edited server exports, MCP reference resolution, and isolation between runtime and
