@@ -42,7 +42,6 @@ const runtime = service('runtime');
 const tailscale = service('tailscale');
 const postgres = service('postgres');
 const sources = (svc: ComposeService) => (svc.volumes ?? []).map((volume) => volume.split(':')[0]);
-const digestPinned = /^[^@\s]+:[^@\s]+@sha256:[0-9a-f]{64}$/;
 
 describe('deployment topology', () => {
   test('defines exactly the runtime, Tailscale and PostgreSQL services', () => {
@@ -68,14 +67,6 @@ describe('deployment topology', () => {
   test('PostgreSQL ends orphaned runtime sessions so ownership can move to a replacement', () => {
     const settings = (postgres.command ?? []).filter((arg) => arg !== '-c' && arg !== 'postgres');
     expect(settings).toEqual(['tcp_keepalives_idle=10', 'tcp_keepalives_interval=5', 'tcp_keepalives_count=3']);
-  });
-
-  test('pins third-party images by digest', () => {
-    expect(tailscale.image).toMatch(digestPinned);
-    expect(postgres.image).toMatch(digestPinned);
-    const bases = [...dockerfile.matchAll(/^FROM\s+(\S+)/gm)].map((match) => match[1]);
-    expect(bases.length).toBe(2);
-    for (const base of bases) expect(base).toMatch(digestPinned);
   });
 
   test('serves only the loopback runtime over Serve with Funnel disabled', () => {

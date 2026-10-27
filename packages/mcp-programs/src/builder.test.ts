@@ -18,6 +18,16 @@ afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 let counter = 0;
 const outDir = () => join(scratch, `out-${++counter}`);
 
+/** The lockfile's resolved version and integrity for a package, as a recorded dependency. */
+const locked = (name: string) => {
+  const lock = JSON.parse(readFileSync(lockfile, 'utf8').replace(/,(\s*[}\]])/g, '$1')) as {
+    packages: Record<string, [string, string, unknown, string]>;
+  };
+  const entry = lock.packages[name];
+  if (entry === undefined) throw new Error(`${name} is not in bun.lock`);
+  return { name, version: entry[0].slice(entry[0].lastIndexOf('@') + 1), integrity: entry[3] };
+};
+
 // A minimal synthetic server, supplied in memory beside the package so it resolves the pinned SDK.
 const SERVER = `
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -60,12 +70,8 @@ describe('MCP program bundles', () => {
     const bytes = readFileSync(join(out, program.path));
     expect(new Bun.CryptoHasher('sha256').update(bytes).digest('hex')).toBe(program.sha256);
     expect(readdirSync(join(out, 'synthetic'))).toEqual([`${program.sha256}.js`]);
-    expect(program.dependencies).toContainEqual({
-      name: '@modelcontextprotocol/sdk',
-      version: '1.32.1',
-      integrity: 'sha512-2DdE+SJDtzLEEWzY1ZjY7Q+VcPhcV1KisD3zI4u0XZyktsjHum1mwbMI+JaulUBi2OZk+KJAi2uPXzxichPkdw==',
-    });
-    expect(program.dependencies.find((dependency) => dependency.name === 'zod')?.version).toBe('4.6.5');
+    expect(program.dependencies).toContainEqual(locked('@modelcontextprotocol/sdk'));
+    expect(program.dependencies).toContainEqual(locked('zod'));
     // No import is left for the runtime to resolve or install.
     expect(new TextDecoder().decode(bytes)).not.toMatch(/from\s*["']@modelcontextprotocol|from\s*["']zod["']/);
     expect(JSON.parse(readFileSync(join(out, PROGRAM_MANIFEST_FILE), 'utf8'))).toEqual(manifest);

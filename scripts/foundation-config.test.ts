@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 import { join, relative } from 'node:path';
-import { PINNED_CLI } from '../packages/facet-adapter/src/toolchain.ts';
 import { dependencyFields, listWorkspacePackages, type PackageManifest, readJson, repoRoot } from './lib/workspace.ts';
 
 interface RootManifest extends PackageManifest {
@@ -29,31 +28,12 @@ const FIXTURE_SUITES = ['//#test:facets', '//#test:integration', '//#test:browse
 
 const root = await readJson<RootManifest>(join(repoRoot, 'package.json'));
 const turbo = await readJson<TurboConfig>(join(repoRoot, 'turbo.json'));
-const mise = Bun.TOML.parse(await Bun.file(join(repoRoot, 'mise.toml')).text()) as {
-  tools: { bun: string; 'github:agent-facets/facets': { version: string; version_prefix: string } };
-};
 const packages = await listWorkspacePackages();
 
 const exactVersion = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
-describe('pinned toolchain', () => {
-  test('mise pins exactly Bun and the facet CLI', () => {
-    expect(Object.keys(mise.tools).sort()).toEqual(['bun', 'github:agent-facets/facets']);
-  });
-
-  test('Bun is pinned consistently and is the running version', () => {
-    expect(mise.tools.bun).toBe('1.3.14');
-    expect(root.packageManager).toBe(`bun@${mise.tools.bun}`);
-    expect(Bun.version).toBe(mise.tools.bun);
-  });
-
-  test('mise installs the facet CLI release the runtime pins', () => {
-    expect(mise.tools['github:agent-facets/facets']).toEqual({
-      version: PINNED_CLI.version,
-      version_prefix: 'agent-facets@',
-    });
-  });
-
+// The pinned versions themselves are recorded once, in pins.test.ts.
+describe('dependency policy', () => {
   test('every declared dependency is exact or a workspace link', () => {
     const loose: string[] = [];
     for (const manifest of [root, ...packages.map((pkg) => pkg.manifest)]) {
@@ -65,13 +45,6 @@ describe('pinned toolchain', () => {
       }
     }
     expect(loose).toEqual([]);
-  });
-
-  test('installed development tools match their pins', async () => {
-    for (const name of ['turbo', 'typescript', '@biomejs/biome', '@types/bun']) {
-      const installed = await readJson<{ version: string }>(join(repoRoot, 'node_modules', name, 'package.json'));
-      expect(`${name}@${installed.version}`).toBe(`${name}@${root.devDependencies?.[name]}`);
-    }
   });
 
   test('workspace packages resolve to local sources', async () => {
