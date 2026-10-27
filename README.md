@@ -66,7 +66,8 @@ mise install                               # installs the pinned Bun 1.3.14
 mise exec -- bun install --frozen-lockfile  # reproduces bun.lock exactly
 ```
 
-Pinned tools: Bun 1.3.14 (`mise.toml` and `packageManager`), Turbo 2.10.4, TypeScript 5.9.3, Biome 2.4.15.
+Pinned tools: Bun 1.3.14 (`mise.toml` and `packageManager`), the `facet` CLI 0.36.5 (`mise.toml`; its binary digest is
+pinned in `packages/facet-adapter/src/toolchain.ts`), Turbo 2.10.4, TypeScript 5.9.3, Biome 2.4.15.
 Bun is configured to add exact versions. The runtime pins LangChain 1.5.14, `@langchain/core` 1.2.14, LangGraph
 1.4.13 with its PostgreSQL checkpointer, and the provider models `@langchain/anthropic` 1.5.11 (with
 `@anthropic-ai/sdk` 0.122.0) and `@langchain/openai` 1.6.2 (with `openai` 7.28.0), all in

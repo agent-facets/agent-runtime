@@ -14,7 +14,7 @@ const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
-const cli = { version: '0.36.0', platform: 'linux-x64', sha256: 'a'.repeat(64) };
+const cli = { version: '0.36.5', platform: 'linux-x64', sha256: 'a'.repeat(64) };
 const fileHash = (text: string | Uint8Array) => `sha256:${sha256Hex(text)}`;
 
 interface Asset {

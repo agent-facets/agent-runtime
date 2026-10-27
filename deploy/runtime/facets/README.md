@@ -22,13 +22,14 @@ outside the repository and is never committed.
 
 | Tool | Pin |
 |---|---|
-| `facet` CLI | 0.36.5, Linux x86-64 binary SHA-256 `a52b17172b4e75456a77770cc9e928254dfbd3c9724a260cd8af01864f320fdf` |
+| `facet` CLI | 0.36.5 from the GitHub release `facet-linux-x64.tar.gz` (installed by `mise install`), binary SHA-256 `34cb805ceca1774cd53762c9a79eda5c1105dddb02af0fd8eb83f587b80fd5cb` |
 | Adapter SDK | `@agent-facets/adapter` 0.30.0 (adapter API 0.3), bundled into the `agent-runtime` adapter |
 | Protocol | `@agent-facets/protocol` 0.32.0, used by `seal` only to read the lockfile's server inventory and fingerprint declarations; not part of the adapter |
 
 The pins live in `packages/facet-adapter/src/toolchain.ts`. `check` and `seal` hash the CLI binary before running
-it and refuse any other binary or version, and any other platform. Nothing installs, upgrades or repairs the CLI;
-install the pinned release yourself. Changing a pin is a reviewed change.
+it and refuse any other binary or version, and any other platform. The npm package of the same version is a
+different build and is refused. Nothing in the runtime installs, upgrades or repairs the CLI; `mise install` installs
+the pinned release from `mise.toml`, whose version must match. Changing a pin is a reviewed change.
 
 ## Install and seal
 

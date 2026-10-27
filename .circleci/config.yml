@@ -18,14 +18,19 @@ jobs:
           keys:
             - v1-mise-{{ arch }}-{{ checksum "mise.toml" }}
       - run:
-          name: Install the pinned Bun with mise
+          # The facet CLI comes from its GitHub release; `bun run check` verifies its digest before using it.
+          name: Install the pinned Bun and facet CLI with mise
           environment:
             MISE_ENV: ci
           command: |
             [ -x "$HOME/.local/bin/mise" ] || curl -fsSL https://mise.run | MISE_VERSION=v2026.3.8 sh
             "$HOME/.local/bin/mise" trust
             "$HOME/.local/bin/mise" install
-            echo "export PATH=\"$("$HOME/.local/bin/mise" where bun)/bin:\$PATH\"" >> "$BASH_ENV"
+            for tool in bun github:agent-facets/facets; do
+              dir=$("$HOME/.local/bin/mise" where "$tool")
+              [ -d "$dir/bin" ] && dir="$dir/bin"
+              echo "export PATH=\"$dir:\$PATH\"" >> "$BASH_ENV"
+            done
       - save_cache:
           key: v1-mise-{{ arch }}-{{ checksum "mise.toml" }}
           paths:
@@ -41,29 +46,6 @@ jobs:
           key: v1-bun-{{ arch }}-{{ checksum "bun.lock" }}
           paths:
             - ~/.bun/install/cache
-      - restore_cache:
-          keys:
-            - v1-facet-{{ arch }}-{{ checksum "packages/facet-adapter/src/toolchain.ts" }}
-      - run:
-          name: Install the pinned facet CLI
-          command: |
-            pin=$(bun -e "const { PINNED_CLI } = await import('./packages/facet-adapter/src/toolchain.ts'); console.log(PINNED_CLI.version, PINNED_CLI.sha256['linux-x64'])")
-            version=${pin% *}
-            sha256=${pin#* }
-            bin="$HOME/.facet/bin/facet"
-            if ! echo "$sha256  $bin" | sha256sum --check --status 2>/dev/null; then
-              mkdir -p "$(dirname "$bin")"
-              curl -fsSL "https://registry.npmjs.org/@agent-facets/cli-linux-x64/-/cli-linux-x64-${version}.tgz" \
-                | tar -xzOf - package/bin/facet > "$bin.download"
-              echo "$sha256  $bin.download" | sha256sum --check --strict
-              mv "$bin.download" "$bin"
-              chmod 0755 "$bin"
-            fi
-            echo "export PATH=\"$HOME/.facet/bin:\$PATH\"" >> "$BASH_ENV"
-      - save_cache:
-          key: v1-facet-{{ arch }}-{{ checksum "packages/facet-adapter/src/toolchain.ts" }}
-          paths:
-            - ~/.facet/bin/facet
       - restore_cache:
           keys:
             - v1-playwright-{{ arch }}-{{ checksum "bun.lock" }}
