@@ -72,7 +72,7 @@ function bundle(body: string, review: 'ready' | 'refused' = 'ready'): Uint8Array
       format: 2,
       profile: 1,
       toolchain: {
-        cli: { version: '0.36.0', platform: 'linux-x64', sha256: 'c'.repeat(64) },
+        cli: { version: '0.36.5', platform: 'linux-x64', sha256: 'c'.repeat(64) },
         adapter: { name: 'agent-runtime', apiVersion: '0.3', sdkVersion: '0.30.0', sha256: 'a'.repeat(64) },
       },
       inputs: { manifestVersion: 0.2, lockfileVersion: 0.4, manifestSha256: D, lockSha256: D },
