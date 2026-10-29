@@ -1,0 +1,933 @@
+{
+  "format": "configure-agent-facet-capabilities/traceability@1",
+  "normative": false,
+  "sourceChange": "configure-agent-facet-capabilities",
+  "sourceHashes": {
+    "capabilities": { "path": "specs/capabilities/spec.md", "sha256": "c029d22c41da26c99ba383628f0ccb71631558a7dc0776c7e9364f96a707d7cb", "requirements": 30, "scenarios": 148 },
+    "execution": { "path": "specs/execution/spec.md", "sha256": "2b9d440e8592a708b4a3f1457bf97e655f24064714caaa3897eab8d913f85fc2", "requirements": 39, "scenarios": 193 }
+  },
+  "successors": {
+    "01": "admit-portable-facet-contributions",
+    "02": "manage-definition-bound-tool-policy",
+    "03": "resolve-agent-capability-plans",
+    "04": "support-canonical-provider-tool-names",
+    "05": "configure-agent-workspaces-and-sandboxes",
+    "06": "enforce-workspace-critical-approvals",
+    "07": "observe-runtime-message-capacity",
+    "08": "add-run-owned-agent-sessions"
+  },
+  "totals": { "sourceRequirements": 69, "sourceScenarios": 341, "mappedScenarios": 341, "addedScenarios": 16 },
+  "requirements": [
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Facet selection belongs to consuming agents",
+      "primaryOwner": "03",
+      "scenarios": [
+        {"name": "Select a facet without a second contribution allowlist", "owner": "03"},
+        {"name": "Facet selection does not approve a tool", "owner": "03"},
+        {"name": "Agent configuration exceeds the previously proposed count bound", "owner": "05", "targetRequirement": "Owner configuration defines agents directly without fixed agent-count limits"},
+        {"name": "Define an agent directly", "owner": "05", "targetRequirement": "Owner configuration defines agents directly without fixed agent-count limits"},
+        {"name": "Configure the same facet independently for several agents", "owner": "03"},
+        {"name": "Select a facet for one agent only", "owner": "03"},
+        {"name": "Install without selecting", "owner": "03"},
+        {"name": "An agent repeats a selection", "owner": "03"},
+        {"name": "A configured facet reference cannot be resolved", "owner": "03"},
+        {"name": "Installation changes invalidate an existing selection", "owner": "03"},
+        {"name": "An installed contribution has an unavailable prerequisite", "owner": "03"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Delegation targets belong to each configured agent",
+      "primaryOwner": "03",
+      "scenarios": [
+        {"name": "A configured target has its own capabilities", "owner": "03"},
+        {"name": "Facet selection does not authorize delegation", "owner": "03"},
+        {"name": "Target checks apply to nested calls", "owner": "08", "targetRequirement": "Named delegation is bounded"},
+        {"name": "An agent has no delegation targets", "owner": "03"},
+        {"name": "Entry eligibility and delegation permission are separate", "owner": "03"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Consuming configuration changes are explicit",
+      "primaryOwner": "05",
+      "scenarios": [
+        {"name": "Restart applies an owner configuration change", "owner": "05"},
+        {"name": "A task attempts to override selection", "owner": "08", "targetRequirement": "Facets and delegates can only narrow authority"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Superseded flat selections require explicit migration",
+      "primaryOwner": "05",
+      "scenarios": [
+        {"name": "Old flat lists need migration", "owner": "05"},
+        {"name": "Selection migration preserves independent grants", "owner": "05"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Startup skill activation is explicitly configured",
+      "primaryOwner": "03",
+      "scenarios": [
+        {"name": "Load a skill before an agent begins", "owner": "08", "targetRequirement": "Session startup supply is durable and replay-safe"},
+        {"name": "Startup skills appear within new-session history", "owner": "08", "targetRequirement": "Session startup supply is durable and replay-safe"},
+        {"name": "An imperative description does not force activation", "owner": "03"},
+        {"name": "Startup activation respects agent selection", "owner": "03"},
+        {"name": "Startup instructions exceed a supported bound", "owner": "03"},
+        {"name": "A startup skill is requested again", "owner": "08", "targetRequirement": "Session startup supply is durable and replay-safe"},
+        {"name": "Only designated skills are preloaded", "owner": "03"},
+        {"name": "Independently configured startup activation is attributed separately", "owner": "08", "targetRequirement": "Session startup supply is durable and replay-safe"},
+        {"name": "A selection change supplies only missing startup skills", "owner": "08", "targetRequirement": "Session startup supply is durable and replay-safe"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Portable contributions are admitted without runtime declarations",
+      "primaryOwner": "01",
+      "scenarios": [
+        {"name": "Adopt portable instructions without author adaptation", "owner": "01"},
+        {"name": "Other coding-tool settings are not runtime controls", "owner": "01"},
+        {"name": "An invalid explicit block is not portable fallback", "owner": "01"},
+        {"name": "Explicit requirements still bind alongside portable contributions", "owner": "01"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Read-only discussion is distinct from task delegation",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "Consult without a task relationship", "owner": "08"},
+        {"name": "A discussion request contains an action instruction", "owner": "08"},
+        {"name": "Further consultation preserves the restriction", "owner": "08"},
+        {"name": "A privileged role cannot escape discussion mode", "owner": "08"},
+        {"name": "Discussion does not grant information access", "owner": "08"},
+        {"name": "Consultation returns a need for clarification", "owner": "08"},
+        {"name": "Consult a new session of the caller's own configuration", "owner": "08", "targetRequirement": "Discussion targets are exact sessions owned by the current run"},
+        {"name": "Several sessions use one configuration", "owner": "08", "targetRequirement": "Discussion targets are exact sessions owned by the current run"},
+        {"name": "An existing-session target is not replaced", "owner": "08", "targetRequirement": "Discussion targets are exact sessions owned by the current run"},
+        {"name": "Discover sessions without transcripts", "owner": "08", "targetRequirement": "Session discovery exposes scoped identities rather than transcripts"},
+        {"name": "Discovery does not authorize a later call", "owner": "08", "targetRequirement": "Session discovery exposes scoped identities rather than transcripts"},
+        {"name": "Model output cannot widen discovery", "owner": "08", "targetRequirement": "Session discovery exposes scoped identities rather than transcripts"},
+        {"name": "Reuse an idle session within the run", "owner": "08", "targetRequirement": "Discussion targets are exact sessions owned by the current run"},
+        {"name": "A later run cannot address an earlier session", "owner": "08", "targetRequirement": "Discussion targets are exact sessions owned by the current run"},
+        {"name": "A terminal run accepts no new turns", "owner": "08", "targetRequirement": "Discussion targets are exact sessions owned by the current run"},
+        {"name": "Owner inspection does not make a session addressable", "owner": "08", "targetRequirement": "Discussion targets are exact sessions owned by the current run"},
+        {"name": "A discussion turn is read-only after earlier task work", "owner": "08"},
+        {"name": "A session in another workspace is not a target", "owner": "08", "targetRequirement": "Discussion targets are exact sessions owned by the current run"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Only the owner selects the agent of a session",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "The owner selects another retained agent for an idle session", "owner": "08"},
+        {"name": "An agent cannot change the selection", "owner": "08"},
+        {"name": "Selection is limited to retained configurations", "owner": "08"},
+        {"name": "A retry of an earlier change does not replace a later selection", "owner": "08"},
+        {"name": "A selection change does not widen authority", "owner": "08"},
+        {"name": "A discussion turn stays read-only after a selection change", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Effective capabilities follow the selected agent configuration",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "An earlier skill does not authorize a later reference read", "owner": "08"},
+        {"name": "Offered tools follow the selected configuration", "owner": "08"},
+        {"name": "Selected skills are not all preloaded", "owner": "08"},
+        {"name": "Earlier request bindings do not change", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Discussion nesting uses the existing invocation-depth bound",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "A mixed path reaches the common depth bound", "owner": "08"},
+        {"name": "Returning permits another sibling consultation", "owner": "08"},
+        {"name": "Naming an ancestor's configuration does not restore its authority", "owner": "08"},
+        {"name": "A session in the waiting chain is busy", "owner": "08"},
+        {"name": "A reused session gets the depth of its new caller", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Agents know their remaining nesting capacity",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "No child capacity at depth zero", "owner": "08"},
+        {"name": "A task actor can plan one further level", "owner": "08"},
+        {"name": "Discussion capacity does not permit task delegation", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Offered child tools respect depth and mode",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "Both modes omit child tools at the maximum", "owner": "08"},
+        {"name": "The model requests an omitted child tool", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Discussion tool use follows explicit tool policy",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "Authorized read-only tool use during discussion", "owner": "08"},
+        {"name": "A mutating tool is requested during discussion", "owner": "08"},
+        {"name": "Tool effects are not trusted or classified", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Tool permissions and sandbox constraints remain separate",
+      "primaryOwner": "05",
+      "scenarios": [
+        {"name": "Non-critical sandboxed work does not require approval for every write", "owner": "06", "targetRequirement": "Non-critical writes remain subject to ordinary execution controls"},
+        {"name": "A sandbox does not grant tool permission", "owner": "05"},
+        {"name": "A subprocess attempts to escape the sandbox", "owner": "05"},
+        {"name": "A remote tool needs independent resource permission", "owner": "05"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Tool names identify their selected origin",
+      "primaryOwner": "02",
+      "scenarios": [
+        {"name": "Native tool names agree across interfaces", "owner": "02"},
+        {"name": "A facet tool uses its origin prefix despite MCP transport", "owner": "02"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Ambiguous tool names prevent tool exposure",
+      "primaryOwner": "02",
+      "scenarios": [
+        {"name": "Distinct selected servers have the same effective ID", "owner": "02"},
+        {"name": "Separators in components cause a name conflict", "owner": "02"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Standalone MCP names remain reserved without execution support",
+      "primaryOwner": "02",
+      "scenarios": [
+        {"name": "A model requests a standalone MCP tool", "owner": "02"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Critical operations require explicit human approval",
+      "primaryOwner": "06",
+      "scenarios": [
+        {"name": "Inspect and classify a newly available tool", "owner": "02", "targetRequirement": "Tool classifications bind reviewed definitions"},
+        {"name": "Save a reviewed classification through the console", "owner": "02", "targetRequirement": "Owners review classifications without tool side effects"},
+        {"name": "A definition changes before classification is saved", "owner": "02", "targetRequirement": "Owners review classifications without tool side effects"},
+        {"name": "Viewing classifications has no tool side effects", "owner": "02", "targetRequirement": "Owners review classifications without tool side effects"},
+        {"name": "Classification access is owner-only", "owner": "02", "targetRequirement": "Owners review classifications without tool side effects"},
+        {"name": "Installation selects the authoritative origin", "owner": "02", "targetRequirement": "Installation-selected origin determines tool classification"},
+        {"name": "The selected origin lacks a matching classification", "owner": "02", "targetRequirement": "Installation-selected origin determines tool classification"},
+        {"name": "Exposed names do not replace tool identities", "owner": "02", "targetRequirement": "Tool classifications bind reviewed definitions"},
+        {"name": "A tool definition changes after classification", "owner": "02", "targetRequirement": "Tool classifications bind reviewed definitions"},
+        {"name": "Classification does not approve discovery or tool use", "owner": "02", "targetRequirement": "Tool classifications bind reviewed definitions"},
+        {"name": "A critical push waits for approval", "owner": "06"},
+        {"name": "Critical and mutating classifications are independent", "owner": "06"},
+        {"name": "A critical request changes after approval", "owner": "06"},
+        {"name": "A wrapper cannot bypass a critical gate", "owner": "06"},
+        {"name": "Missing policy declarations prevent execution", "owner": "02", "targetRequirement": "Tool classifications bind reviewed definitions"},
+        {"name": "Discussion cannot use approval to gain write authority", "owner": "08", "targetRequirement": "Discussion tool use follows explicit tool policy"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Classification and execution policies use immutable revisions",
+      "primaryOwner": "05",
+      "scenarios": [
+        {"name": "Editing a classification preserves accepted work", "owner": "02", "targetRequirement": "Classification revisions preserve accepted bindings"},
+        {"name": "A policy record identifies its revision without a schema version", "owner": "05", "targetRequirement": "Execution policies use immutable validated revisions"},
+        {"name": "A policy record contains a schema version field", "owner": "05", "targetRequirement": "Execution policies use immutable validated revisions"},
+        {"name": "A policy uses an unsupported sandbox contract", "owner": "05", "targetRequirement": "Execution policies use immutable validated revisions"},
+        {"name": "Provenance is not authorization", "owner": "05", "targetRequirement": "Execution policies use immutable validated revisions"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Classification saves preserve the exact owner review",
+      "primaryOwner": "02",
+      "scenarios": [
+        {"name": "Two saves race from the same review", "owner": "02"},
+        {"name": "A lost save response does not create another revision", "owner": "02"},
+        {"name": "Current definition no longer matches the review", "owner": "02"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Configured identities do not silently replace authored agent references",
+      "primaryOwner": "03",
+      "scenarios": [
+        {"name": "A configured name matches an installed agent", "owner": "03"},
+        {"name": "Discussion cannot bypass an explicit authored child prohibition", "owner": "08", "targetRequirement": "Discussion tool use follows explicit tool policy"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Owner controls expose authority without inventing identity",
+      "primaryOwner": "06",
+      "scenarios": [
+        {"name": "Owner provenance reflects the actual boundary", "owner": "06"},
+        {"name": "More choices exist than fit one page", "owner": "05", "targetRequirement": "Owner choices remain available through bounded pages"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "A development reset regenerates runtime facet inputs",
+      "primaryOwner": "05",
+      "scenarios": [
+        {"name": "Generate the runtime installation again after a reset", "owner": "05"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Admission decisions from before a reset are not used again",
+      "primaryOwner": "05",
+      "scenarios": [
+        {"name": "An earlier refusal does not carry forward", "owner": "05"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "ADDED",
+      "title": "Facet version identifiers keep their meaning",
+      "primaryOwner": "05",
+      "scenarios": [
+        {"name": "Authored version metadata stays valid", "owner": "05"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "MODIFIED",
+      "title": "Supported facet behavior is explicit",
+      "primaryOwner": "01",
+      "scenarios": [
+        {"name": "An agent requires unsupported execution behavior", "owner": "01"},
+        {"name": "A permission restriction cannot be enforced", "owner": "01"},
+        {"name": "A facet requires automatic composition", "owner": "01"},
+        {"name": "A declared prerequisite is unavailable", "owner": "01"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "MODIFIED",
+      "title": "Installed contributions are identifiable",
+      "primaryOwner": "03",
+      "scenarios": [
+        {"name": "Inspect available workflow contributions", "owner": "03"},
+        {"name": "Inspect what each agent receives", "owner": "03"},
+        {"name": "Two contributions have an unresolved name conflict", "owner": "03"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "MODIFIED",
+      "title": "Skills are discovered and loaded on demand",
+      "primaryOwner": "03",
+      "scenarios": [
+        {"name": "Load an applicable skill", "owner": "03"},
+        {"name": "An unused skill stays out of the full instruction context", "owner": "03"},
+        {"name": "Request a missing or disallowed skill", "owner": "03"},
+        {"name": "Read a bundled skill reference", "owner": "03"},
+        {"name": "A skill reference is missing or escapes its bundle", "owner": "03"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "MODIFIED",
+      "title": "Named delegation is bounded",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "Delegate a task and use its result", "owner": "08"},
+        {"name": "Use two delegation layers", "owner": "08"},
+        {"name": "Omitted depth uses the default", "owner": "08"},
+        {"name": "Depth zero disables delegation", "owner": "08"},
+        {"name": "An explicit depth exceeds eight", "owner": "08"},
+        {"name": "An invalid depth is not normalized", "owner": "08"},
+        {"name": "The existing caller delegates again", "owner": "08"},
+        {"name": "An earlier agent name does not reset depth", "owner": "08"},
+        {"name": "Repeated delegation has no separate count limit", "owner": "08"},
+        {"name": "Nested actors consume one model-step budget", "owner": "08"},
+        {"name": "The superseded call-count setting needs migration", "owner": "08"},
+        {"name": "A run record with a delegation-call limit is refused", "owner": "08"},
+        {"name": "Request an unavailable delegate or exceed a limit", "owner": "08"},
+        {"name": "Request independent background delegation", "owner": "08"},
+        {"name": "A safely handled delegate failure", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "capabilities",
+      "operation": "MODIFIED",
+      "title": "Facets and delegates can only narrow authority",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "A facet requests more access than the owner granted", "owner": "08"},
+        {"name": "A delegate has a narrower tool set", "owner": "08"},
+        {"name": "A reviewer can comment but cannot change code", "owner": "08"},
+        {"name": "The target has a different selected tool catalog", "owner": "08"},
+        {"name": "Instructions attempt to expand permissions", "owner": "08"},
+        {"name": "Repeated independent selection is not a server approval", "owner": "08"},
+        {"name": "Individual selection does not bypass an applicable execution restriction", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "A run starts at a configured entry agent",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "An omitted entry choice uses the default", "owner": "08"},
+        {"name": "Select another permitted entry agent", "owner": "08"},
+        {"name": "A delegate-only agent is not an entry point", "owner": "08"},
+        {"name": "An explicit entry choice is unknown", "owner": "08"},
+        {"name": "Entry policy references are invalid", "owner": "03", "targetRequirement": "Entry policy and depth resolve against configured agents"},
+        {"name": "Supplied defaults preserve the native journey", "owner": "08"},
+        {"name": "Start directly at an agent also used as a delegate", "owner": "08"},
+        {"name": "Distinguish configured agents from invocations", "owner": "08"},
+        {"name": "Retry an accepted start with an entry choice", "owner": "08"},
+        {"name": "Retry an accepted start after the default changes", "owner": "08"},
+        {"name": "Retry after entry eligibility changes", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Goal runs use configured facet capabilities",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "Complete a facet-backed goal with either provider", "owner": "08"},
+        {"name": "Use the real voice-to-text skill at startup", "owner": "08"},
+        {"name": "A delegate has a different skill selection", "owner": "08"},
+        {"name": "The same startup skill is configured independently", "owner": "08"},
+        {"name": "A goal uses bounded nested delegation", "owner": "08"},
+        {"name": "Continue native operation without capabilities", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Discussion invocations retain a read-only execution mode",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "Discussion is enforced before the first tool request", "owner": "08"},
+        {"name": "Advice is not execution authority", "owner": "08"},
+        {"name": "Discussion cannot be routed through unrestricted task execution", "owner": "08"},
+        {"name": "Runtime bookkeeping remains possible during discussion", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Depth awareness persists across actor requests and continuation",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "A returned child does not change caller depth", "owner": "08"},
+        {"name": "Compatible continuation preserves depth instructions", "owner": "08"},
+        {"name": "First request includes depth awareness before startup skills", "owner": "08"},
+        {"name": "A later turn receives its own depth block", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "A discussion returns one final result through its parent operation",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "Discussion is an exclusive call", "owner": "08"},
+        {"name": "The caller receives only the finished advice", "owner": "08"},
+        {"name": "A follow-up reuses an idle session", "owner": "08"},
+        {"name": "A follow-up to a new target creates another session", "owner": "08"},
+        {"name": "Concurrent requests name the same idle session", "owner": "08"},
+        {"name": "A busy session is refused without a queue", "owner": "08"},
+        {"name": "A session becomes available after durable completion", "owner": "08"},
+        {"name": "An unavailable session is refused safely", "owner": "08"},
+        {"name": "A large topic is accepted", "owner": "08"},
+        {"name": "Invalid discussion input is refused", "owner": "08"},
+        {"name": "Large advice returns complete", "owner": "08"},
+        {"name": "A backend failure stops advice delivery", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Discussion shares run accounting without blocking approval drain",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "Discussion model work consumes the same run budget", "owner": "08"},
+        {"name": "A reused session does not get a fresh budget", "owner": "08"},
+        {"name": "A child critical read does not deadlock its parent", "owner": "06", "targetRequirement": "Suspended callers do not block approval drain"},
+        {"name": "A workspace hold is not a consultation failure", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Discussion context uses the target's retained definitions",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "Target context does not inherit the caller's loaded instructions", "owner": "08"},
+        {"name": "A later turn uses only the session's own history", "owner": "08"},
+        {"name": "A later turn does not repeat startup supply", "owner": "08"},
+        {"name": "A long session history is not compacted", "owner": "08"},
+        {"name": "Earlier skill state does not bypass a later turn's restrictions", "owner": "08"},
+        {"name": "Retained session definitions are not replaced", "owner": "08"},
+        {"name": "The supplied default consults its own configuration", "owner": "08"},
+        {"name": "Native configured agents can be retained without an installation", "owner": "03", "targetRequirement": "Retained configurations include every configured agent"},
+        {"name": "Retention keeps a large catalog complete", "owner": "03", "targetRequirement": "Retained configurations include every configured agent"},
+        {"name": "Retention cannot silently omit part of a catalog", "owner": "03", "targetRequirement": "Retained configurations include every configured agent"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Discussion lifecycle and replay preserve one turn per operation",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "Replay of a completed discussion returns its recorded result", "owner": "08"},
+        {"name": "A new topic is a new operation", "owner": "08"},
+        {"name": "A nested parent determines turn identity", "owner": "08"},
+        {"name": "A session lookup checks the owning run", "owner": "08"},
+        {"name": "Startup is never partially visible", "owner": "08"},
+        {"name": "Completion is durable before return", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "A session has one execution state",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "A waiting turn keeps its session active", "owner": "08"},
+        {"name": "Inspection shows the active turn", "owner": "08"},
+        {"name": "An uncertain effect keeps the session active", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Session conversation history is ordered and replay-safe",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "Replay does not duplicate messages", "owner": "08"},
+        {"name": "A new turn binds the prior conversation", "owner": "08"},
+        {"name": "Resumption after a selection change keeps the prepared binding", "owner": "08"},
+        {"name": "Resumption does not repeat an uncertain effect", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "An owner agent selection applies at the next model request preparation",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "A change during a model request applies to the next request", "owner": "08"},
+        {"name": "The latest change before capture applies", "owner": "08"},
+        {"name": "A tool call keeps its prepared configuration", "owner": "08"},
+        {"name": "A selection change does not interrupt the turn", "owner": "08"},
+        {"name": "The console shows both agents", "owner": "08"},
+        {"name": "A revocation applies after a selection change", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Critical-operation approvals bind exact execution",
+      "primaryOwner": "06",
+      "scenarios": [
+        {"name": "A critical operation's reviewed change is modified", "owner": "06"},
+        {"name": "A resumed critical operation retains its approval scope", "owner": "06"},
+        {"name": "A bound policy revision changes", "owner": "06"},
+        {"name": "Approval references a verified immutable change", "owner": "06"},
+        {"name": "Concurrent decisions do not create contradictory outcomes", "owner": "06", "targetRequirement": "Each critical request has one authoritative owner decision"},
+        {"name": "Repeating approval does not independently dispatch twice", "owner": "06", "targetRequirement": "Each critical request has one authoritative owner decision"},
+        {"name": "Approval is not proof of execution", "owner": "06", "targetRequirement": "Each critical request has one authoritative owner decision"},
+        {"name": "An uncertain operation is not automatically retried as a failure", "owner": "06", "targetRequirement": "Owner outcome resolution does not invent execution evidence"},
+        {"name": "An approval request contains a schema version field", "owner": "06"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Workspaces own shared execution environments",
+      "primaryOwner": "05",
+      "scenarios": [
+        {"name": "Several agents use one workspace", "owner": "05"},
+        {"name": "Different workspaces remain isolated", "owner": "05"},
+        {"name": "An agent requests incompatible workspace policy", "owner": "05"},
+        {"name": "Discussion shares a workspace with writers", "owner": "08", "targetRequirement": "Discussion stays read-only in a shared workspace"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "The first workspace sandbox backend is Docker",
+      "primaryOwner": "05",
+      "scenarios": [
+        {"name": "Concurrent workspace use provisions one sandbox", "owner": "05"},
+        {"name": "A task container cannot access runtime authority", "owner": "05"},
+        {"name": "Required sandbox support is unavailable", "owner": "05"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Workspace lifetime is independent of runs and containers",
+      "primaryOwner": "05",
+      "scenarios": [
+        {"name": "One run finishes while another still uses the workspace", "owner": "05"},
+        {"name": "A stopped workspace gets a replacement container", "owner": "05"},
+        {"name": "Restart uses current files without filesystem recovery", "owner": "05"},
+        {"name": "Finishing work does not create automatic save points", "owner": "05"},
+        {"name": "Deletion cannot race active execution", "owner": "05"},
+        {"name": "Shared edits cannot change an approved critical operation", "owner": "06", "targetRequirement": "Critical-operation approvals bind exact execution"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Critical approvals hold all new agent work in their workspace",
+      "primaryOwner": "06",
+      "scenarios": [
+        {"name": "Gate closure precedes drain", "owner": "06"},
+        {"name": "In-flight results do not restart the agent loop", "owner": "06"},
+        {"name": "All runs in a workspace share the hold", "owner": "06"},
+        {"name": "Another workspace remains independent", "owner": "06"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Workspace holds resolve through individual approvals",
+      "primaryOwner": "06",
+      "scenarios": [
+        {"name": "One approval leaves the other requests pending", "owner": "06"},
+        {"name": "Approved critical operations do not run concurrently", "owner": "06"},
+        {"name": "Ordinary work resumes after the hold is resolved", "owner": "06"},
+        {"name": "Uncertain execution retains the workspace hold", "owner": "06"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Workspace admission is durable across executor boundaries",
+      "primaryOwner": "06",
+      "scenarios": [
+        {"name": "Admission wins a race with closure", "owner": "06"},
+        {"name": "Closure wins a race with admission", "owner": "06"},
+        {"name": "A process restart leaves an external intent unresolved", "owner": "06"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Owner outcome resolution does not invent execution evidence",
+      "primaryOwner": "06",
+      "scenarios": [
+        {"name": "The owner accepts an unknown outcome after stopping execution", "owner": "06"},
+        {"name": "A stale executor might still act", "owner": "06"},
+        {"name": "Rejection or cancellation occurs before dispatch", "owner": "06"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "A workspace hold preserves resumable execution without a question",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "The workspace reopens after a durable pause", "owner": "08"},
+        {"name": "The owner answers while another run holds the workspace", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Submitted workspace and entry choices have stable retry identity",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "Submitted budget changes under an existing request ID", "owner": "08"},
+        {"name": "The workspace closes after preflight", "owner": "08"},
+        {"name": "A run without selected facets retains a binding", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Large inspection views preserve their committed history boundary",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "A child completes after the first history page", "owner": "08"},
+        {"name": "A run without selected facets requires approval", "owner": "06", "targetRequirement": "Approval inspection applies to every run"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Runtime records use one current strict schema",
+      "primaryOwner": "05",
+      "scenarios": [
+        {"name": "New records have no format selector", "owner": "05"},
+        {"name": "A record in an earlier format is refused", "owner": "05"},
+        {"name": "Current-format runs keep their execution guarantees", "owner": "05"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "The current record schema does not change the API path",
+      "primaryOwner": "05",
+      "scenarios": [
+        {"name": "A client uses the existing API path", "owner": "05"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "A development reset removes disposable runtime records",
+      "primaryOwner": "05",
+      "scenarios": [
+        {"name": "A reset leaves an empty current schema", "owner": "05"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "A development reset preserves owner and external data",
+      "primaryOwner": "05",
+      "scenarios": [
+        {"name": "A reset keeps owner and external data", "owner": "05"},
+        {"name": "Owner configuration errors remain after a reset", "owner": "05"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "A development reset needs separate owner approval",
+      "primaryOwner": "05",
+      "scenarios": [
+        {"name": "Startup finds a record in an earlier format", "owner": "05"},
+        {"name": "A reset request lacks approval or exact targets", "owner": "05"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Work from before a reset does not continue",
+      "primaryOwner": "05",
+      "scenarios": [
+        {"name": "An answer arrives for a removed run", "owner": "05"},
+        {"name": "A client resends a request from before the reset", "owner": "05"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Ordinary message content follows the common message-size policy",
+      "primaryOwner": "07",
+      "scenarios": [
+        {"name": "A large goal is accepted complete", "owner": "07"},
+        {"name": "Large command arguments and delegate tasks stay complete", "owner": "07"},
+        {"name": "A large question and answer stay complete", "owner": "07"},
+        {"name": "A declared answer-length constraint applies", "owner": "07"},
+        {"name": "Required checks still apply to large content", "owner": "07"},
+        {"name": "A long conversation is not compressed", "owner": "07"},
+        {"name": "Unrelated limits remain effective", "owner": "07"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "The provider decides request capacity",
+      "primaryOwner": "07",
+      "scenarios": [
+        {"name": "A large request goes to the provider", "owner": "07"},
+        {"name": "The provider refuses a request that is too large", "owner": "07"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Provider rejections are reported faithfully",
+      "primaryOwner": "07",
+      "scenarios": [
+        {"name": "A provider gives reliable context evidence", "owner": "07"},
+        {"name": "An HTTP status alone is not a context cause", "owner": "07"},
+        {"name": "A network failure is not a provider rejection", "owner": "07"},
+        {"name": "A local failure is not a provider rejection", "owner": "07"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "A failure keeps the accepted input",
+      "primaryOwner": "07",
+      "scenarios": [
+        {"name": "A provider rejects a request after an accepted answer", "owner": "07"},
+        {"name": "Acceptance of a large submission is uncertain", "owner": "07"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Size and resource monitors operate before limits are removed",
+      "primaryOwner": "07",
+      "scenarios": [
+        {"name": "Monitors are available before removed limits stop", "owner": "07"},
+        {"name": "The owner inspects size distributions", "owner": "07"},
+        {"name": "The provider reports no token usage", "owner": "07"},
+        {"name": "Telemetry excludes content and credentials", "owner": "07"},
+        {"name": "Host data remains after a process termination", "owner": "07"},
+        {"name": "Monitors do not add a limit", "owner": "07"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "A new size limit needs evidence and separate approval",
+      "primaryOwner": "07",
+      "scenarios": [
+        {"name": "Supplied defaults do not create a removed limit again", "owner": "07"},
+        {"name": "A proposed limit lacks evidence or approval", "owner": "07"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "ADDED",
+      "title": "Capacity risk is stated without capacity claims",
+      "primaryOwner": "07",
+      "scenarios": [
+        {"name": "Documentation states the accepted risk", "owner": "07"},
+        {"name": "Policy tests stay deterministic", "owner": "07"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "MODIFIED",
+      "title": "Run history records ordered activity",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "Status changes remain inspectable", "owner": "08"},
+        {"name": "Follow delegated activity", "owner": "08"},
+        {"name": "Follow discussion without implying task execution", "owner": "08"},
+        {"name": "Follow sequential turns of one session", "owner": "08"},
+        {"name": "A busy refusal remains inspectable", "owner": "08"},
+        {"name": "Follow an agent selection change", "owner": "08"},
+        {"name": "Follow skill and MCP use", "owner": "08"},
+        {"name": "Capability activity is recorded in order", "owner": "08"},
+        {"name": "Goal-run startup activity is ordered", "owner": "08"},
+        {"name": "Startup creation is atomic", "owner": "08"},
+        {"name": "Creation replay preserves startup history", "owner": "08"},
+        {"name": "Creation replay changes the startup set", "owner": "08"},
+        {"name": "Child startup refusal remains inspectable", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "MODIFIED",
+      "title": "Start a run from an installed command",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "Select a command and begin its task", "owner": "08"},
+        {"name": "A command does not switch the entry agent", "owner": "08"},
+        {"name": "Refuse an unusable command selection", "owner": "08"},
+        {"name": "Retry the same creation request after a facet update", "owner": "08"},
+        {"name": "Command arguments contain runtime-managed credentials", "owner": "08"},
+        {"name": "Goal-only runs remain available", "owner": "08"},
+        {"name": "A command does not expand agent configuration", "owner": "08"},
+        {"name": "A portable command supplies task instructions", "owner": "01", "targetRequirement": "Portable commands preserve task input without adding authority"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "MODIFIED",
+      "title": "A run keeps its original capability definitions",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "Update a facet while a run is in progress", "owner": "08"},
+        {"name": "A later installation selects another tool origin", "owner": "02", "targetRequirement": "Retained tool policies preserve reviewed identities"},
+        {"name": "Restart after changing the installed facets", "owner": "08"},
+        {"name": "Required retained definitions are lost", "owner": "08"},
+        {"name": "A grant is revoked for an existing run", "owner": "08"},
+        {"name": "Agent selections change during a human pause", "owner": "08"},
+        {"name": "Retry a goal start after configuration changes", "owner": "08"},
+        {"name": "The runtime cannot safely interpret a current-format waiting run", "owner": "08"},
+        {"name": "Saved state in an earlier format does not continue", "owner": "05", "targetRequirement": "Runtime records use one current strict schema"},
+        {"name": "New runs have no delegation-call limit", "owner": "08"},
+        {"name": "Retention has no agent-count or aggregate size cap", "owner": "03", "targetRequirement": "Retained configurations include every configured agent"},
+        {"name": "Snapshot storage fails", "owner": "08"},
+        {"name": "First discussion use occurs after a configuration change", "owner": "08"},
+        {"name": "A selection change uses the retained configuration", "owner": "08"},
+        {"name": "Compatible continuation preserves discussion restrictions", "owner": "08"},
+        {"name": "Compatible continuation preserves tool policy and critical approvals", "owner": "08"}
+      ]
+    },
+    {
+      "domain": "execution",
+      "operation": "MODIFIED",
+      "title": "Run capability provenance remains inspectable",
+      "primaryOwner": "08",
+      "scenarios": [
+        {"name": "Inspect what a run actually used", "owner": "08"},
+        {"name": "Inspect history after uninstalling a facet", "owner": "08"},
+        {"name": "Distinguish startup loading from mere availability", "owner": "08"},
+        {"name": "Inspect historical agent selection", "owner": "08"},
+        {"name": "Inspect several sessions of one configuration", "owner": "08"},
+        {"name": "Inspect a session after an agent selection change", "owner": "08"},
+        {"name": "Owner inspects the sessions of a finished run", "owner": "08"}
+      ]
+    }
+  ],
+  "addedScenarios": [
+    {"domain": "capabilities", "name": "First native registration establishes explicit policy", "owner": "02", "targetRequirement": "Native bootstrap preserves explicit policy and owner review"},
+    {"domain": "capabilities", "name": "Restart preserves an owner classification", "owner": "02", "targetRequirement": "Native bootstrap preserves explicit policy and owner review"},
+    {"domain": "capabilities", "name": "Changed native definitions need renewed classification", "owner": "02", "targetRequirement": "Native bootstrap preserves explicit policy and owner review"},
+    {"domain": "capabilities", "name": "Damaged classification state does not restore permission", "owner": "02", "targetRequirement": "Native bootstrap preserves explicit policy and owner review"},
+    {"domain": "capabilities", "name": "Facet tools do not receive native defaults", "owner": "02", "targetRequirement": "Native bootstrap preserves explicit policy and owner review"},
+    {"domain": "capabilities", "name": "The discussion declaration remains fixed", "owner": "02", "targetRequirement": "Native bootstrap preserves explicit policy and owner review"},
+    {"domain": "execution", "name": "Canonical names reach the provider request", "owner": "04", "targetRequirement": "Provider requests preserve canonical tool names"},
+    {"domain": "execution", "name": "An alias does not satisfy the naming requirement", "owner": "04", "targetRequirement": "Provider requests preserve canonical tool names"},
+    {"domain": "execution", "name": "Tool-name handling preserves the operation", "owner": "04", "targetRequirement": "Provider adaptation preserves tool-call identity"},
+    {"domain": "execution", "name": "The provider returns an unoffered tool name", "owner": "04", "targetRequirement": "Provider adaptation preserves tool-call identity"},
+    {"domain": "execution", "name": "Local validation is not live compatibility evidence", "owner": "04", "targetRequirement": "Provider compatibility claims identify their evidence"},
+    {"domain": "execution", "name": "A live compatibility check lacks approval", "owner": "04", "targetRequirement": "Provider compatibility claims identify their evidence"},
+    {"domain": "execution", "name": "Planning a reset does not delete records", "owner": "05", "targetRequirement": "A development reset needs separate owner approval"},
+    {"domain": "execution", "name": "The approved reset state changes", "owner": "05", "targetRequirement": "A development reset needs separate owner approval"},
+    {"domain": "capabilities", "name": "A terminal run rejects a new selection", "owner": "08", "targetRequirement": "Only the owner selects the agent of a session"},
+    {"domain": "capabilities", "name": "Terminal state does not invalidate an accepted selection receipt", "owner": "08", "targetRequirement": "Only the owner selects the agent of a session"}
+  ]
+}
