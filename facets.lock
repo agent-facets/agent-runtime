@@ -182,8 +182,8 @@
         "kind": "registry",
         "registry": "https://api.agentfacets.io"
       },
-      "version": "3.2.4",
-      "integrity": "sha256:a816167c353be058288f4b446dedd7949c1ba54d7ae102aea269bfed24650962",
+      "version": "3.2.6",
+      "integrity": "sha256:ad3402e9525834210c06e2ae610cff78af21bc17f51e0843a6271031e1348f37",
       "assets": [
         {
           "scope": "project",
@@ -195,7 +195,7 @@
           "files": [
             {
               "path": "skills/openspec-adversary-author/SKILL.md",
-              "integrity": "sha256:14c86056f3a7d06e186627c600a2fe84506a1159c3f5554b029c2dcf005f6bdd"
+              "integrity": "sha256:fe339d90f0af23816276959176f3202414c6778f4a1bf4a39722a5f9e153e4f6"
             }
           ]
         },
@@ -209,7 +209,7 @@
           "files": [
             {
               "path": "skills/openspec-adversary-compare/SKILL.md",
-              "integrity": "sha256:901de6feeaa4474cf15d24025cc7c9d07b885bfa96f41809242271d5e334ac6d"
+              "integrity": "sha256:61354be0dc0a7ca418495c8bea2944d7ac877fa0248b6d9ecc86eeb098cca9a6"
             }
           ]
         },
@@ -223,7 +223,7 @@
           "files": [
             {
               "path": "skills/openspec-adversary-reconcile/SKILL.md",
-              "integrity": "sha256:01982948653a9f3ac5fc3b9091d027fb01450b9a99294bb55335c254d9d7def3"
+              "integrity": "sha256:ac8579b6b8e2be1917a48d152be3b886d9299a16798be9611e566f3bf6e73fc3"
             }
           ]
         },
@@ -237,7 +237,7 @@
           "files": [
             {
               "path": "skills/openspec-adversary-run/SKILL.md",
-              "integrity": "sha256:e92d361ed8aa7558d9f151cf3e997d1aa54e38be8f091f36af777474c9c95769"
+              "integrity": "sha256:c752a0a690f52f91f3a10d5733b540514b7901e0a8f3c72d3e366036c115a381"
             }
           ]
         },
@@ -251,7 +251,7 @@
           "files": [
             {
               "path": "skills/openspec-adversary-status/SKILL.md",
-              "integrity": "sha256:2c65961cfba88dd6a04ad1ee6cda4f2831a2120674be027866b3a48567373aa0"
+              "integrity": "sha256:042cacd5f557cfe593117dbd4dc7e059bdd858700a163fd3db2b1a5dfc637b31"
             }
           ]
         },
@@ -265,7 +265,7 @@
           "files": [
             {
               "path": "agents/openspec-adversary.md",
-              "integrity": "sha256:540c135d86b5d57210065010cd0600743606812018e9a6747caa93619622f9c2"
+              "integrity": "sha256:e32b686a357ad8e2e23ef3f3800c789a7bca4ce290a0f637dac7631b69752c56"
             }
           ]
         },
@@ -293,7 +293,7 @@
           "files": [
             {
               "path": "commands/run-adversary.md",
-              "integrity": "sha256:b1269dd8659195e238d3d37663706c457a09d13e0b25a81969292f4d7b869844"
+              "integrity": "sha256:f7af0fcba79bf2fb57b819a15f1ce1a3f827483e2e1ebba6d0ebdfd51dd8e7be"
             }
           ]
         },
@@ -307,7 +307,7 @@
           "files": [
             {
               "path": "commands/run-inline-adversary.md",
-              "integrity": "sha256:7c5bf8f98e82fba9cc294d63494b59ce6517d3ce5b832dca067d7634b892216c"
+              "integrity": "sha256:3fc2cb34d20f57c01a653b4a6c65fcdc9226e1fedcc2d2a09ceb09e6c3695789"
             }
           ]
         }
@@ -413,9 +413,23 @@
         "kind": "registry",
         "registry": "https://api.agentfacets.io"
       },
-      "version": "1.0.0",
-      "integrity": "sha256:feffcd79aba75e6cefc65d7ed9d575ac0a89d84342668ca7684039ecb3f53084",
+      "version": "1.1.1",
+      "integrity": "sha256:aae1b4d127b8c987da6b85c67f79bd2050915fc75479ed3ab4e21284facc40e4",
       "assets": [
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "finding-facets",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/finding-facets/SKILL.md",
+              "integrity": "sha256:9f026caa86236cc2f5289cab9a8791f5689857e53d6fb83f2420e626bd9e2012"
+            }
+          ]
+        },
         {
           "scope": "project",
           "type": "skill",
@@ -426,7 +440,7 @@
           "files": [
             {
               "path": "skills/using-facets/SKILL.md",
-              "integrity": "sha256:5354584990bbbacdff621c23062a8540d1849884b94ce739f86b429057042d24"
+              "integrity": "sha256:c8f048582e1379be8d10ff696f07f3dfc62a5f310636ee07245a6eccf10bc7a3"
             }
           ]
         }
@@ -463,8 +477,8 @@
         "kind": "registry",
         "registry": "https://api.agentfacets.io"
       },
-      "version": "0.1.3",
-      "integrity": "sha256:939a3ff80ead9bb7b67303fbc2586b0dfeb9b03d679516411439abaf56d32caa",
+      "version": "0.1.4",
+      "integrity": "sha256:644ab166d75a9d208468cbd17cab847a53f3354625eb95f234a4e257e1eaaeb7",
       "assets": [
         {
           "scope": "project",
@@ -504,7 +518,7 @@
           "files": [
             {
               "path": "skills/openspec-artifact-status/SKILL.md",
-              "integrity": "sha256:f09ea0eec0db5596bd782927ad5270400f60a9075b90a5d07fcd4b272214c79d"
+              "integrity": "sha256:9bd9a412f661935f040e023dec07c92b284663e9c37329a46dc225b1bb3b4fd1"
             }
           ]
         },
@@ -532,7 +546,7 @@
           "files": [
             {
               "path": "skills/openspec-continue-change/SKILL.md",
-              "integrity": "sha256:85d5cdabcfe89407b893bc80e59d80b954faa297de7eab181ccc23be99275f57"
+              "integrity": "sha256:52c408d33f7162eb5d4b03aef5edea3302e5f2af6778003fc38d82d423c28e59"
             }
           ]
         },
@@ -560,7 +574,7 @@
           "files": [
             {
               "path": "skills/openspec-ff-change/SKILL.md",
-              "integrity": "sha256:bbe961cc9171f745db8c725431ea2aa81d3cc9e5522a69e2cdb3d1cc3db716ff"
+              "integrity": "sha256:7d75f9a9f8366e875c5451dfa7a1338b2c82f91cceb639ec0d4d13dacd5d3d51"
             }
           ]
         },
@@ -574,7 +588,7 @@
           "files": [
             {
               "path": "skills/openspec-new-change/SKILL.md",
-              "integrity": "sha256:ac9d80134584bedfc49394864df190274ff1cbff28feb047880ec8bd32edf8ea"
+              "integrity": "sha256:96bfa4e5193343be76cf111c3b05ad4f1ac6edb38a2e70b81a397880950b1fe1"
             }
           ]
         },
@@ -602,7 +616,7 @@
           "files": [
             {
               "path": "skills/openspec-propose/SKILL.md",
-              "integrity": "sha256:6358693bf1bbff9f6852489a653230fa35a3b641c4d42e5b228f0079c0770d93"
+              "integrity": "sha256:2c306fca88ac471e9063471cc40f39af4db7d56db2d83f4c59e55a5ae8d39dfc"
             }
           ]
         },
@@ -630,7 +644,7 @@
           "files": [
             {
               "path": "skills/openspec-update-change/SKILL.md",
-              "integrity": "sha256:6353d96f06116208223a2ed7745e1114e495a0b62571e3d24c2142f6d4dc83f6"
+              "integrity": "sha256:fbd3541c016299e687769c7087418e8a0d868e0b7e1c60818a363e3e22f27695"
             }
           ]
         },
