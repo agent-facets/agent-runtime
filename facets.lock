@@ -833,6 +833,43 @@
       ],
       "servers": []
     },
+    "ste100-writer": {
+      "source": {
+        "kind": "registry",
+        "registry": "https://api.agentfacets.io"
+      },
+      "version": "1.0.0",
+      "integrity": "sha256:4780eb79bd4fee05089a56e172dd45cbe6b67bcd49a88806aee1d08e90c6cfb9",
+      "assets": [
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "ste100-writer",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/ste100-writer/SKILL.md",
+              "integrity": "sha256:e56ac69655f39e1ed912132eaf39dbed26f5919255352a998c8476dc5dd893e1"
+            },
+            {
+              "path": "skills/ste100-writer/references/checklist.md",
+              "integrity": "sha256:2ad3ab6a1bed77963db9c067c836e94f8a5d0a8d73025068e81a84f489d57a6b"
+            },
+            {
+              "path": "skills/ste100-writer/references/rules.md",
+              "integrity": "sha256:c987e19acb919a3fe4fb9e8aacf6f3ed881f93fd84eea8d306f5007de3969174"
+            },
+            {
+              "path": "skills/ste100-writer/references/word-choices.md",
+              "integrity": "sha256:37c32ebf24344685e53ba6f914eb181c4306c558f07a8d688bc733c6ebfbc0f7"
+            }
+          ]
+        }
+      ],
+      "servers": []
+    },
     "viper-plans": {
       "source": {
         "kind": "registry",
