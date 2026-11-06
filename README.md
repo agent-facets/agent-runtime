@@ -264,10 +264,11 @@ endpoint, API key or other unsupported option can never be silently ignored:
   own canonical path (no symlink at any level), and the state directory and configuration file must resolve
   outside it. The state directory must exist and every private entry beneath it must be inspectable; if the
   private locations cannot be protected completely, workspace access stays unavailable.
-- `stepBudget` defaults to 50 model requests per run; `modelRequestDeadlineSeconds` to 300.
-- `modelRequestCeiling` (optional) limits model requests across **every** run of the deployment, durably and across
-  restarts; admission stops at the ceiling and the run fails as `step_limit` (`request_ceiling_reached`). Unset,
-  only each run's budget applies. The bounded acceptance trial uses it.
+- `stepBudget` is the model-request limit a new task uses unless its start request chooses another (a whole number
+  from 1 to 10,000); it defaults to 50. `modelRequestDeadlineSeconds` defaults to 300.
+- There is no deployment-wide request limit: each task has only its own. The former `modelRequestCeiling` setting is
+  refused at startup; remove it (and use `stepBudget` for the per-task default) before upgrading. Runs that already
+  failed with `request_ceiling_reached` keep that recorded failure.
 - Compose mounts the file named by `AGENT_RUNTIME_CONFIG` read-only at `/etc/agent-runtime/config.json`;
   [`deploy/runtime/config.example.json`](deploy/runtime/config.example.json) is a starting point.
 
@@ -535,7 +536,11 @@ loop; the runtime only constrains what crosses into graph state and what is disp
   UTF-8 reference from the retained bytes (never the filesystem), screened as a whole before paging (at most 2,000
   lines and 64 KiB per call). Eligibility is the membership frozen on the response that issued the call, so a skill
   loaded in the same response can be read from the next one. Loading grants nothing else.
-- **Budget.** The default is 50 model requests. The run reports `{ maximum, consumed, unconfirmed }`; an admission
+- **Budget.** Each task has its own limit on model requests, fixed when it starts: the console's “Task
+  model-request limit” (sent as `stepBudget`, 1–10,000, in either start form) or, if a start request omits it, the
+  configured default of 50. Every new task starts from zero; continuations and delegates never get a fresh allowance.
+  An explicitly chosen limit belongs to the start request's identity, so retrying a request ID with a different
+  limit is a conflict, while a request that omitted it is still recognized after the default changes. The run reports `{ maximum, consumed, unconfirmed }`; an admission
   whose dispatch was never confirmed stays charged as unconfirmed. Tool calls from the last permitted response still
   run; only another model request fails the run with `step_limit`. An answer can be accepted with no steps left.
   Delegates' requests (and their renewal retries) are charged to the same budget with the same ordinals; delegating

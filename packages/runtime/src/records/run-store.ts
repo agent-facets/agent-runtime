@@ -18,7 +18,7 @@ import {
 import type { AppDatabase } from '../persistence/app-database.ts';
 import { sqlStateOf } from '../persistence/errors.ts';
 import { jsonText, parseJsonText } from '../persistence/json.ts';
-import { LOCK_NAMESPACE, type OwnerFence, REQUEST_CEILING_LOCK, withOwnerFence } from '../persistence/ownership.ts';
+import { type OwnerFence, withOwnerFence } from '../persistence/ownership.ts';
 import { canonicalJson, digestOf, parseSequence } from './canonical.ts';
 import {
   type Answer,
@@ -56,7 +56,6 @@ export type RunStoreErrorCode =
   | 'tool_call_conflict'
   | 'not_dispatchable'
   | 'budget_exhausted'
-  | 'ceiling_reached'
   | 'invariant_violation'
   | 'acceptance_unknown';
 
@@ -158,6 +157,8 @@ export interface CreateRunInput {
   binding: ProviderBinding;
   definition: { digest: string; manifest: Record<string, unknown> };
   budgetMax: number;
+  /** The budget the start request explicitly chose, if any; it belongs to the creation identity. */
+  submittedStepBudget?: number;
   /**
    * A command run's normalized submission and the definitions it retains. Its rendered goal is `goal`; the creation
    * identity is the submission, not the rendering.
@@ -249,13 +250,19 @@ export type RecordedToolOutcome = Record<string, unknown> & { outcome: 'ok' | 'r
 /**
  * Identity of a creation request: the submitted content only, never server defaults applied afterwards. A goal's
  * identity is unchanged from phase 1; a command's covers the normalized submission (command, selection revision,
- * raw arguments and provider), never a rendering against whatever is installed now.
+ * raw arguments and provider), never a rendering against whatever is installed now. A task budget is part of the
+ * identity only when it was submitted, so requests that omit it keep their original digest whatever the configured
+ * default later becomes, and an explicit budget never matches an omitted one.
  */
 export function creationInputDigest(
   input: Pick<CreateRunInput, 'goal' | 'provider'> | GoalRunInput | CommandRunInput,
+  stepBudget?: number,
 ): string {
-  if ('kind' in input && input.kind === 'command') return digestOf(commandRunInputSchema.parse(input));
-  return digestOf({ goal: input.goal, provider: input.provider });
+  const submitted =
+    'kind' in input && input.kind === 'command'
+      ? commandRunInputSchema.parse(input)
+      : { goal: input.goal, provider: input.provider };
+  return digestOf(stepBudget === undefined ? submitted : { ...submitted, stepBudget });
 }
 
 /**
@@ -268,25 +275,19 @@ export function isAmbiguousCommitError(error: unknown): boolean {
   return state === undefined || state.startsWith('08') || state === '57P01' || state === '57P02' || state === '57P03';
 }
 
-export interface RunStoreOptions {
-  /**
-   * The most model requests this deployment may ever admit, across all runs (an operator safety limit, for example
-   * for a bounded acceptance trial). Unset, only each run's own budget applies.
-   */
-  modelRequestCeiling?: number;
-}
-
 export class RunStore {
   constructor(
     private readonly db: AppDatabase,
     private readonly owner: OwnerFence,
-    private readonly options: RunStoreOptions = {},
   ) {}
 
   /** Creates a run for a request ID, or returns the run that request already created. */
   async createRun(input: CreateRunInput): Promise<CreateRunResult> {
     const capability = input.capability === undefined ? undefined : this.#commandBinding(input);
-    const inputDigest = creationInputDigest(capability?.input ?? input);
+    if (input.submittedStepBudget !== undefined && input.submittedStepBudget !== input.budgetMax) {
+      throw new RangeError('the run budget differs from the submitted budget');
+    }
+    const inputDigest = creationInputDigest(capability?.input ?? input, input.submittedStepBudget);
     const workspace = workspaceSchema.parse(input.workspace);
     const binding = providerBindingSchema.parse(input.binding);
     if (binding.provider !== input.provider) throw new RangeError('binding provider differs from the request');
@@ -1073,17 +1074,6 @@ export class RunStore {
         select budget_max, consumed, unconfirmed, binding::text as binding from runtime.runs where run_id = ${runId}`;
       if (Number(budget.consumed) + Number(budget.unconfirmed) >= Number(budget.budget_max)) {
         throw new RunStoreError('budget_exhausted', 'another model request would exceed the step budget');
-      }
-      const ceiling = this.options.modelRequestCeiling;
-      if (ceiling !== undefined) {
-        // Every run's admissions take the same transaction lock, so two runs cannot both pass the last slot. An
-        // attempt known never to have been sent does not count; an unconfirmed one does.
-        await tx`select pg_advisory_xact_lock(${LOCK_NAMESPACE}, ${REQUEST_CEILING_LOCK})`;
-        const [admitted] = await tx`
-          select count(*)::int as count from runtime.model_attempts where state_kind <> 'abandoned'`;
-        if (Number(admitted.count) >= ceiling) {
-          throw new RunStoreError('ceiling_reached', 'the deployment-wide model-request ceiling has been reached');
-        }
       }
       const binding = providerBindingSchema.parse(parseJsonText(budget.binding));
       const [next] = await tx`

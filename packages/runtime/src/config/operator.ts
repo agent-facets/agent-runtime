@@ -1,6 +1,7 @@
 // Operator configuration: the owner's non-secret choices for this deployment, read from RUNTIME_CONFIG_FILE.
 // Credentials never appear here. Unknown fields are refused, so a misspelled or unsupported setting (an endpoint,
 // an API key, a different auth mode) cannot be silently ignored. The parsed result is deeply frozen.
+import { stepBudgetSchema } from '@agent-runtime/contracts';
 import { z } from 'zod';
 import { isStorableText } from '../domain/text.ts';
 import type { Provider } from '../records/schemas.ts';
@@ -72,10 +73,9 @@ const operatorSchema = z
         message: 'at least one provider must be configured',
       }),
     defaultProvider: z.enum(['anthropic', 'openai']),
-    stepBudget: z.number().int().min(1).max(10_000).default(DEFAULT_STEP_BUDGET),
+    /** Each new task's model-request limit unless its start request chooses another. */
+    stepBudget: stepBudgetSchema.default(DEFAULT_STEP_BUDGET),
     modelRequestDeadlineSeconds: z.number().int().min(10).max(3600).default(DEFAULT_MODEL_REQUEST_DEADLINE_SECONDS),
-    /** Optional limit on model requests across every run of this deployment, e.g. for a bounded live trial. */
-    modelRequestCeiling: z.number().int().min(1).max(1_000_000).optional(),
     /** Facet-backed capabilities; absent leaves the deployment goal-only. */
     capabilities: capabilityConfigSchema.optional(),
   })
@@ -123,6 +123,13 @@ export function parseOperatorConfig(source: string, context: OperatorContext): O
     raw = JSON.parse(source);
   } catch {
     throw new ConfigError('operator configuration is not valid JSON');
+  }
+  // A removed safety limit is refused with migration guidance, never silently dropped.
+  if (typeof raw === 'object' && raw !== null && !Array.isArray(raw) && Object.hasOwn(raw, 'modelRequestCeiling')) {
+    throw new ConfigError(
+      'operator configuration: modelRequestCeiling is no longer supported; remove it and use stepBudget for the ' +
+        'per-task model-request limit',
+    );
   }
   const parsed = operatorSchema.safeParse(raw);
   if (!parsed.success) {

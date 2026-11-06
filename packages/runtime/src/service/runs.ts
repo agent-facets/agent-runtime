@@ -221,13 +221,7 @@ export class RunService {
 
   constructor(options: RunServiceOptions) {
     this.#deps = options;
-    this.store =
-      options.store ??
-      new RunStore(options.persistence.app, options.persistence.ownership, {
-        ...(options.operator.modelRequestCeiling === undefined
-          ? {}
-          : { modelRequestCeiling: options.operator.modelRequestCeiling }),
-      });
+    this.store = options.store ?? new RunStore(options.persistence.app, options.persistence.ownership);
     this.#admit = options.admit ?? admitWorkspace;
     this.#code = options.code ?? currentCodeManifest;
     const installation = options.operator.capabilities?.installation;
@@ -328,7 +322,6 @@ export class RunService {
         providers,
         defaultProvider: operator.defaultProvider,
         defaultBudget: operator.stepBudget,
-        ...(operator.modelRequestCeiling === undefined ? {} : { modelRequestCeiling: operator.modelRequestCeiling }),
       },
     };
   }
@@ -413,20 +406,27 @@ export class RunService {
 
   /**
    * Starts a run for a request ID, at most once. The same request ID with the same normalized submission (a goal
-   * and provider, or a command, its selection revision, raw arguments and provider) returns the original run —
-   * before anything current (screening, the installation, providers, the workspace or MCP servers) is consulted —
-   * and starts nothing; a different submission is a conflict.
+   * and provider, or a command, its selection revision, raw arguments and provider, plus any explicitly chosen
+   * task budget) returns the original run — before anything current (screening, the installation, providers, the
+   * workspace, MCP servers or the configured default budget) is consulted — and starts nothing; a different
+   * submission is a conflict.
    */
   createRun(command: StartRunCommand | StartRunRequest): Promise<ApiResult<RunSnapshotView>> {
     const request: StartRunRequest = 'kind' in command ? command : { kind: 'goal', ...command };
     // One creation per request ID at a time in this process (the only owner): a duplicate waits and then finds the
     // run, so the run is dispatched exactly once, by the request that created it.
-    return this.#creations.run(request.requestId, () => this.#createRun(request.requestId, normalizeRunInput(request)));
+    return this.#creations.run(request.requestId, () =>
+      this.#createRun(request.requestId, normalizeRunInput(request), request.stepBudget),
+    );
   }
 
-  async #createRun(requestId: string, input: RunInput): Promise<ApiResult<RunSnapshotView>> {
+  async #createRun(
+    requestId: string,
+    input: RunInput,
+    stepBudget: number | undefined,
+  ): Promise<ApiResult<RunSnapshotView>> {
     const { operator, assembly, locations } = this.#deps;
-    const inputDigest = creationInputDigest(input);
+    const inputDigest = creationInputDigest(input, stepBudget);
     try {
       const existing = await this.store.findCreation(requestId);
       if (existing !== undefined) {
@@ -515,7 +515,8 @@ export class RunService {
             },
             binding,
             definition,
-            budgetMax: operator.stepBudget,
+            budgetMax: stepBudget ?? operator.stepBudget,
+            ...(stepBudget === undefined ? {} : { submittedStepBudget: stepBudget }),
             ...(capabilities === undefined
               ? {}
               : { capability: { input: capabilities.input, snapshot: capabilities.snapshot } }),

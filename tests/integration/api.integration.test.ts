@@ -93,11 +93,9 @@ async function harness(
      * issuer answering with `issuer` in order, and the given profile (the current one by default).
      */
     openai?: { authorized?: boolean; isDefault?: boolean; issuer?: Response[]; profileId?: string };
-    /** A deployment-wide model-request ceiling, with its own database (the ceiling counts every run in one). */
-    ceiling?: { modelRequestCeiling: number; persistence: Persistence };
   } = {},
 ): Promise<Harness> {
-  const records = options.ceiling?.persistence ?? persistence;
+  const records = persistence;
   const base = join(scratch, `case-${++counter}`);
   const stateDir = join(base, 'state');
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
@@ -119,7 +117,6 @@ async function harness(
     },
     defaultProvider: options.openai?.isDefault === true ? 'openai' : 'anthropic',
     stepBudget: options.stepBudget ?? 10,
-    ...(options.ceiling === undefined ? {} : { modelRequestCeiling: options.ceiling.modelRequestCeiling }),
   });
   writeFileSync(configFile, source);
   const operator = parseOperatorConfig(source, { stateDir, configFile });
@@ -171,11 +168,7 @@ async function harness(
     inferenceTransport: net.fetchImpl,
     authTransport,
   });
-  const store = new RunStore(
-    records.app,
-    records.ownership,
-    options.ceiling === undefined ? {} : { modelRequestCeiling: options.ceiling.modelRequestCeiling },
-  );
+  const store = new RunStore(records.app, records.ownership);
   const h: Harness = {
     net,
     tokens,
@@ -617,27 +610,84 @@ describe('cancelling runs', () => {
   });
 });
 
-describe('the deployment ceiling', () => {
-  test('stops model requests across runs, even when each run has budget left', async () => {
-    const own = await createScratchDatabase();
-    const ownPersistence = await openPersistence({ url: own.url, onFault: () => {} });
-    try {
-      const read = () => sse(toolTurn('msg_read', 'toolu_read', 'mcp_Read', { mode: 'file', path: 'notes/plan.md' }));
-      const h = await harness({
-        replies: [read, doneReply('Read it.')],
-        ceiling: { modelRequestCeiling: 2, persistence: ownPersistence },
-      });
-      const first = (await h.start()).body.run.runId as string;
-      await waitFor(h, first, 'succeeded');
-      // The deployment admitted its two requests; the next run has budget left but is refused before sending.
-      const second = (await h.start('Read it again.')).body.run.runId as string;
-      const stopped = await waitFor(h, second, 'failed');
-      expect(stopped.run.state.failure).toMatchObject({ category: 'step_limit', reason: 'request_ceiling_reached' });
-      expect(h.net.sent).toHaveLength(2);
-    } finally {
-      await ownPersistence.close();
-      await own.drop();
+describe('task budgets', () => {
+  const read = () => sse(toolTurn('msg_read', 'toolu_read', 'mcp_Read', { mode: 'file', path: 'notes/plan.md' }));
+  const startWith = (h: Harness, body: Record<string, unknown>) =>
+    h.call('POST', '/api/v1/runs', { requestId: crypto.randomUUID(), goal: GOAL, provider: 'anthropic', ...body });
+
+  test('each task has its own fresh limit: a chosen one or the default, never a deployment-wide count', async () => {
+    const h = await harness({ stepBudget: 1, replies: [read, doneReply('Read it.'), read] });
+    // A chosen limit is recorded with the task and used for every one of its requests.
+    const chosen = await startWith(h, { stepBudget: 2 });
+    expect(chosen.status).toBe(202);
+    expect(chosen.body.run.budget).toEqual({ maximum: 2, consumed: 0, unconfirmed: 0 });
+    const done = await waitFor(h, chosen.body.run.runId, 'succeeded');
+    expect(done.run.budget).toEqual({ maximum: 2, consumed: 2, unconfirmed: 0 });
+    const created = (await h.call('GET', `/api/v1/runs/${chosen.body.run.runId}/events`)).body.events[0];
+    expect(created).toMatchObject({ kind: 'run.created', payload: { budgetMax: 2 } });
+
+    // The next task starts from zero with the configured default, whatever earlier tasks used, and stops only at its
+    // own limit.
+    const defaulted = await startWith(h, {});
+    expect(defaulted.body.run.budget).toEqual({ maximum: 1, consumed: 0, unconfirmed: 0 });
+    const stopped = await waitFor(h, defaulted.body.run.runId, 'failed');
+    expect(stopped.run.state.failure).toMatchObject({ category: 'step_limit', reason: 'step_budget_exhausted' });
+    expect(stopped.run.budget).toEqual({ maximum: 1, consumed: 1, unconfirmed: 0 });
+    expect(h.net.sent).toHaveLength(3);
+    expect((await h.call('GET', '/api/v1/options')).body).not.toHaveProperty('modelRequestCeiling');
+  });
+
+  test('concurrent tasks draw only on their own limits', async () => {
+    const h = await harness({ stepBudget: 1, replies: [doneReply(), doneReply(), doneReply()] });
+    const started = await Promise.all([startWith(h, {}), startWith(h, {}), startWith(h, { stepBudget: 1 })]);
+    for (const { body } of started) {
+      const done = await waitFor(h, body.run.runId, 'succeeded');
+      expect(done.run.budget).toEqual({ maximum: 1, consumed: 1, unconfirmed: 0 });
     }
+    expect(h.net.sent).toHaveLength(3);
+  });
+
+  test('a chosen limit belongs to the request identity; an omitted one survives a changed default', async () => {
+    const h = await harness({ replies: [doneReply(), doneReply()] });
+    const omitted = crypto.randomUUID();
+    const first = await h.start(GOAL, omitted);
+    await waitFor(h, first.body.run.runId, 'succeeded');
+    // Explicitly naming even the default is a different submission.
+    const named = await startWith(h, { requestId: omitted, stepBudget: 10 });
+    expect([named.status, named.body.error.code]).toEqual([409, 'request_conflict']);
+    // A deployment whose default changed still acknowledges the original omitted-budget request as the same run.
+    const changed = await harness({ stepBudget: 20 });
+    const replayed = await changed.start(GOAL, omitted);
+    expect([replayed.status, replayed.body.run.runId, replayed.body.run.budget.maximum]).toEqual([
+      200,
+      first.body.run.runId,
+      10,
+    ]);
+
+    const explicit = crypto.randomUUID();
+    const chosen = await startWith(h, { requestId: explicit, stepBudget: 3 });
+    expect(chosen.status).toBe(202);
+    await waitFor(h, chosen.body.run.runId, 'succeeded');
+    const again = await startWith(h, { requestId: explicit, stepBudget: 3 });
+    expect([again.status, again.body.run.runId]).toEqual([200, chosen.body.run.runId]);
+    for (const body of [{ requestId: explicit, stepBudget: 4 }, { requestId: explicit }]) {
+      const conflict = await startWith(h, body);
+      expect([conflict.status, conflict.body.error.code]).toEqual([409, 'request_conflict']);
+    }
+    await h.settled();
+    expect(h.net.sent).toHaveLength(2);
+    expect(changed.net.sent).toHaveLength(0);
+  });
+
+  test('a limit outside 1–10,000 or not a whole number is refused and creates nothing', async () => {
+    const h = await harness();
+    const before = (await h.call('GET', '/api/v1/runs?limit=100')).body.runs.length;
+    for (const stepBudget of [0, -1, 10_001, 1.5, '5', null]) {
+      const refused = await startWith(h, { stepBudget });
+      expect([refused.status, refused.body.error.code]).toEqual([400, 'invalid_request']);
+    }
+    expect((await h.call('GET', '/api/v1/runs?limit=100')).body.runs.length).toBe(before);
+    expect(h.net.sent).toHaveLength(0);
   });
 });
 

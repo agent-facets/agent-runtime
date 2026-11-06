@@ -1,7 +1,7 @@
 // Display wording for run states, failure categories and times. All text is application-owned; values from the
 // server are rendered as plain text by React, never as markup.
 import type { ActorRef, FailureCategory, Provider, RunStateKind } from '@agent-runtime/contracts';
-import { PROVIDER_LABELS } from '@agent-runtime/contracts';
+import { PROVIDER_LABELS, STEP_BUDGET_MAX, STEP_BUDGET_MIN } from '@agent-runtime/contracts';
 
 export const STATE_LABELS: Record<RunStateKind, string> = {
   working: 'Working',
@@ -51,6 +51,29 @@ export const DELEGATION_OUTCOME_LABELS = {
   failed: 'failed',
   abandoned: 'was abandoned',
 } as const;
+
+export const TASK_BUDGET_GUIDANCE = `Enter a whole number from ${STEP_BUDGET_MIN} to ${STEP_BUDGET_MAX.toLocaleString('en-US')}.`;
+
+/** A task's model-request limit as typed into the start form, or undefined unless it is an accepted whole number. */
+export function parseTaskBudget(text: string): number | undefined {
+  const trimmed = text.trim();
+  if (!/^\d{1,6}$/.test(trimmed)) return undefined;
+  const value = Number(trimmed);
+  return value >= STEP_BUDGET_MIN && value <= STEP_BUDGET_MAX ? value : undefined;
+}
+
+/**
+ * A task's model-request usage. Unconfirmed requests may or may not have reached the provider; they are not shown
+ * as used, but they still count against the limit, so they reduce what remains.
+ */
+export function budgetUsage(budget: { maximum: number; consumed: number; unconfirmed: number }): string {
+  const remaining = Math.max(0, budget.maximum - budget.consumed - budget.unconfirmed);
+  const unconfirmed =
+    budget.unconfirmed > 0
+      ? ` · ${budget.unconfirmed} unconfirmed (${budget.unconfirmed === 1 ? 'counts' : 'count'} against the limit)`
+      : '';
+  return `${budget.consumed} of ${budget.maximum} used${unconfirmed} · ${remaining} remaining`;
+}
 
 /** A recorded instant in the reader's locale, with the exact UTC value available on hover. */
 export function formatTime(instant: string): string {

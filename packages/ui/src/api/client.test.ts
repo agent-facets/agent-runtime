@@ -130,11 +130,13 @@ describe('request identity', () => {
       requestId: RUN,
       provider: 'openai',
       command: { id: 'command:triage', selectionRevision: revision, arguments: '' },
+      stepBudget: 25,
     });
     expect(JSON.parse(String(sent[0]?.init.body))).toEqual({
       requestId: RUN,
       provider: 'openai',
       command: { id: 'command:triage', selectionRevision: revision, arguments: '' },
+      stepBudget: 25,
     });
     expect(await client.capabilities()).toMatchObject({ ok: true, value: { kind: 'unconfigured' } });
     expect(sent[1]?.url).toBe('/api/v1/capabilities');

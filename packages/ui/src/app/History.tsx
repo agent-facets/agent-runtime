@@ -120,8 +120,8 @@ function EventBody({
     case 'run.created':
       return (
         <p>
-          Run started with {providerLabel(event.payload.provider)} · {event.payload.model}, budget{' '}
-          {event.payload.budgetMax} model requests.
+          Run started with {providerLabel(event.payload.provider)} · {event.payload.model}, limit{' '}
+          {event.payload.budgetMax} model requests for this task.
         </p>
       );
     case 'run.status':

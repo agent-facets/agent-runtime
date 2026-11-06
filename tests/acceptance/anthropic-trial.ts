@@ -1,22 +1,23 @@
 // The bounded Anthropic acceptance trial (task 12.8), shared by its offline rehearsal (scripted provider, the
 // browser suite) and the live trial the owner runs after fresh authorization (task 12.20). Both use the same
 // fixture content, the same two runs and the same pass conditions; only the provider behind the runtime differs.
-// The same trial runs against OpenAI by naming that provider and the deployment's ceiling (which then also covers
-// requests recorded before the trial); the trial's own two runs are still held to TRIAL.requestCeiling. The
-// journey's negative answer is `false` unless the report is told the question declared `"no"` instead.
+// The same trial runs against OpenAI by naming that provider. The journey's negative answer is `false` unless the
+// report is told the question declared `"no"` instead.
 //
-// The cap is enforced by the runtime itself, not by this tooling: the trial deployment's configuration sets each
-// run's budget to TRIAL.stepBudget and a deployment-wide ceiling of TRIAL.requestCeiling model requests, both
-// durable across restarts. Retries count against them. This module only refuses to proceed against a deployment
-// that is not configured that way, starts at most the two trial runs (by fixed request IDs, so repeating a step
-// never starts another), and reports what happened.
+// Each run's cap is enforced by the runtime itself, not by this tooling: every trial start explicitly requests a
+// task budget of TRIAL.stepBudget model requests, which the runtime records with the run and enforces durably across
+// restarts, retries included. There is no deployment-wide limit: this module bounds the trial only by starting at
+// most its two runs (by fixed request IDs, so repeating a step never starts another), and it reports the two runs'
+// charged subtotal against TRIAL.namedRunRequests. Other runs in the deployment are not bounded by it.
 import type { Options, Provider, RunEvent, RunSnapshot } from '../../packages/contracts/src/index.ts';
 import type { ApiClient } from '../../packages/ui/src/api/client.ts';
 
 export const TRIAL = Object.freeze({
   provider: 'anthropic' as const,
+  /** Requested explicitly for each trial run; the runtime enforces it per run. */
   stepBudget: 6,
-  requestCeiling: 12,
+  /** The two named runs' combined allowance, reported but not separately enforced. */
+  namedRunRequests: 12,
   note: Object.freeze({
     path: 'acceptance/trial-note.md',
     content:
@@ -38,8 +39,6 @@ export function trialOperatorConfig(model: string, credentialSlot = 'default') {
     workspace: { id: 'trial', label: 'Acceptance trial', root: '/workspace' },
     providers: { anthropic: { authMode: 'subscription', model, profileId: 'claude-cli-2.1.280', credentialSlot } },
     defaultProvider: 'anthropic',
-    stepBudget: TRIAL.stepBudget,
-    modelRequestCeiling: TRIAL.requestCeiling,
   };
 }
 
@@ -61,33 +60,28 @@ export class TrialRefused extends Error {
   override readonly name = 'TrialRefused';
 }
 
-export interface TrialTarget {
-  provider: Provider;
-  /** The deployment-wide ceiling the trial expects to find configured. */
-  requestCeiling: number;
-}
-
-const DEFAULT_TARGET: TrialTarget = { provider: TRIAL.provider, requestCeiling: TRIAL.requestCeiling };
-
-/** Refuses a deployment whose limits, provider or workspace are not the trial's. */
-export async function checkTrialDeployment(client: ApiClient, target: TrialTarget = DEFAULT_TARGET): Promise<Options> {
+/**
+ * Refuses a deployment whose provider or workspace is not ready for the trial. Its configured default budget is
+ * irrelevant: every trial run requests TRIAL.stepBudget explicitly.
+ */
+export async function checkTrialDeployment(client: ApiClient, target: Provider = TRIAL.provider): Promise<Options> {
   const options = await client.options();
   if (!options.ok) throw new TrialRefused('the runtime’s options could not be read');
   const { value } = options;
-  const provider = value.providers.find((entry) => entry.provider === target.provider);
+  const provider = value.providers.find((entry) => entry.provider === target);
   const problems = [
-    value.defaultBudget !== TRIAL.stepBudget && `the step budget is ${value.defaultBudget}, not ${TRIAL.stepBudget}`,
-    value.modelRequestCeiling !== target.requestCeiling &&
-      `the model-request ceiling is ${value.modelRequestCeiling ?? 'unset'}, not ${target.requestCeiling}`,
-    provider === undefined && `${target.provider} is not configured`,
-    provider !== undefined && provider.readiness !== 'ready' && `${target.provider} is ${provider.readiness}`,
+    provider === undefined && `${target} is not configured`,
+    provider !== undefined && provider.readiness !== 'ready' && `${target} is ${provider.readiness}`,
     !value.workspace.available && 'the workspace is not available',
   ].filter((problem): problem is string => typeof problem === 'string');
   if (problems.length > 0) throw new TrialRefused(problems.join('; '));
   return value;
 }
 
-/** Starts one of the trial's two runs, or finds it if it was already started. Never starts another. */
+/**
+ * Starts one of the trial's two runs with the trial's own task budget, or finds it if it was already started. Never
+ * starts another; a lost reply is retried with the identical request.
+ */
 export async function startTrialRun(
   client: ApiClient,
   trial: string,
@@ -97,7 +91,7 @@ export async function startTrialRun(
   const requestId = (await trialRequestIds(trial))[role];
   const goal = role === 'journey' ? TRIAL.journeyGoal : TRIAL.cancelGoal;
   for (let attempt = 0; attempt < 3; attempt++) {
-    const outcome = await client.startRun({ requestId, goal, provider });
+    const outcome = await client.startRun({ requestId, goal, provider, stepBudget: TRIAL.stepBudget });
     if (outcome.ok) return outcome.value.run.runId;
     // A lost reply is retried with the same request ID; anything definite stops the trial.
     if (outcome.kind === 'refused' && outcome.error.acceptance !== 'unknown') {
@@ -129,7 +123,7 @@ export interface TrialReport {
   passed: boolean;
   /**
    * Model requests charged to each named run: confirmed sent plus admitted but unconfirmed. `total` covers these
-   * two runs only, not other runs in the deployment; the deployment's own ceiling accounts for those.
+   * two runs only; other runs in the deployment are neither counted nor bounded by the trial.
    */
   requests: { journey: number; cancel: number; total: number };
   findings: string[];
@@ -154,7 +148,8 @@ async function history(client: ApiClient, runId: string): Promise<{ snapshot: Ru
  * The trial's pass conditions, from recorded history only: the journey read the note, asked one question offering
  * the expected negative answer as a single choice, had exactly that value accepted for that question and finished
  * with a result; the other run was cancelled while its question was pending and stayed cancelled; both are distinct
- * runs on the trial's provider; and each run's budget and the two runs' requests stay within the trial's caps.
+ * runs on the trial's provider; each run recorded the trial's budget and stayed within it; and the two runs' charged
+ * subtotal stays within their combined allowance.
  * Reading changes nothing.
  */
 export async function reportTrial(
@@ -213,8 +208,10 @@ export async function reportTrial(
   if (cancel.snapshot.run.state.kind !== 'cancelled')
     findings.push(`the second run is ${cancel.snapshot.run.state.kind}`);
   if (!kinds(cancel.events).includes('question.closed')) findings.push('the second run’s question was not closed');
-  if (requests.total > TRIAL.requestCeiling) {
-    findings.push(`the two runs’ ${requests.total} model requests exceed the cap of ${TRIAL.requestCeiling}`);
+  if (requests.total > TRIAL.namedRunRequests) {
+    findings.push(
+      `the two runs’ ${requests.total} model requests exceed their combined allowance of ${TRIAL.namedRunRequests}`,
+    );
   }
   return { passed: findings.length === 0, requests, findings };
 }

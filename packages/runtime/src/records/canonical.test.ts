@@ -85,6 +85,26 @@ describe('canonical JSON', () => {
     expect(creationInputDigest({ goal: 'Inspect ', provider: 'anthropic' })).not.toBe(base);
     expect(creationInputDigest({ goal: 'Inspect', provider: 'openai' })).not.toBe(base);
   });
+
+  test('a chosen task budget joins the identity only when submitted, so omitted-budget identities are unchanged', () => {
+    const goal = { goal: 'Inspect', provider: 'anthropic' as const };
+    const command = {
+      kind: 'command' as const,
+      commandId: 'command:triage',
+      selectionRevision: 'a'.repeat(64),
+      arguments: 'owner/repo-a',
+      provider: 'anthropic' as const,
+    };
+    for (const input of [goal, command]) {
+      const omitted = creationInputDigest(input);
+      expect(creationInputDigest(input, undefined)).toBe(omitted);
+      const chosen = creationInputDigest(input, 50);
+      expect(chosen).not.toBe(omitted);
+      expect(creationInputDigest(input, 50)).toBe(chosen);
+      expect(creationInputDigest(input, 51)).not.toBe(chosen);
+    }
+    expect(creationInputDigest(goal)).toBe('c9133c96b51d81430dc92ff2df5b7e8781832390333a893f568a2fa8143fcb79');
+  });
 });
 
 describe('decimal sequences', () => {
