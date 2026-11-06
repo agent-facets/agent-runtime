@@ -66,7 +66,8 @@ label {
 
 textarea,
 select,
-input[type="text"] {
+input[type="text"],
+input[type="number"] {
   display: block;
   width: 100%;
   box-sizing: border-box;
@@ -82,8 +83,13 @@ input[type="text"] {
   align-items: end;
 }
 
-.row label {
+.row label,
+.row .field {
   flex: 0 1 18rem;
+}
+
+.field label {
+  margin-bottom: 0.25rem;
 }
 
 button {

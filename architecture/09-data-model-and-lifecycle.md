@@ -88,9 +88,11 @@ definition digest. Answer precedence: existence → recorded disposition (duplic
 admitted afresh; a workspace that cannot be admitted now leaves the question pending) → provider readiness of the
 stored binding → conditional acceptance with readback.
 
-**Counters across runs.** An optional deployment-wide `modelRequestCeiling` counts every attempt not known to be
-unsent across all runs, under one transaction-scoped advisory lock taken by every admission; reaching it fails the
-run as `step_limit` (`request_ceiling_reached`).
+**Budgets are per run.** Each run's `budget_max` is fixed at creation, from the start request's chosen limit or the
+configured default, and admission checks only that run's counters under its row lock; runs never share a budget. A
+chosen limit is part of the creation digest (an omitted one is not, so earlier digests are unchanged). The former
+deployment-wide `modelRequestCeiling` and its advisory lock were removed; runs that failed with
+`request_ceiling_reached` keep that recorded failure.
 
 **Browser projections.** History events and run snapshots reach the browser as projections defined in
 `packages/contracts`: the state union without owner epochs, invocation or cancellation identities and binding

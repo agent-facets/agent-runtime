@@ -2,11 +2,13 @@ import { describe, expect, test } from 'bun:test';
 import type { CatalogView, FailureCategory, RunCapabilitiesView, RunEvent, RunState } from '@agent-runtime/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ApiClient } from '../api/client.ts';
+import { RequestIdentity } from '../api/requests.ts';
 import type { Connection } from '../state/sync.ts';
 import { RunTimeline } from '../state/timeline.ts';
 import { AT, answered, asked, attempt, message, QUESTION, RUN, snapshot, status } from '../test-support/fixtures.ts';
 import { type Catalog, InstalledCapabilities } from './Capabilities.tsx';
-import { FAILURE_LABELS, STATE_LABELS } from './format.ts';
+import { FAILURE_LABELS, parseTaskBudget, STATE_LABELS, TASK_BUDGET_GUIDANCE } from './format.ts';
+import { TaskBudgetField } from './Home.tsx';
 import { RunPage } from './RunDetail.tsx';
 
 const client = new ApiClient({ fetch: async () => new Response('{}') });
@@ -81,7 +83,39 @@ describe('run views', () => {
     expect(html).toContain('/workspace');
     expect(html).toContain(`title="${AT}"`);
     // The newest attempt event updated the budget: three used.
-    expect(html).toContain('3 of 10 used');
+    expect(html).toContain('Task model requests');
+    expect(html).toContain('3 of 10 used · 7 remaining');
+    expect(html).toContain('shared with any delegated agents');
+  });
+
+  test('unconfirmed requests are not shown as used, but count against what remains', () => {
+    const snapshotOnly = page({ kind: 'working' }, [], 'live', {
+      budget: { maximum: 10, consumed: 2, unconfirmed: 1 },
+    });
+    expect(snapshotOnly).toContain('2 of 10 used · 1 unconfirmed (counts against the limit) · 7 remaining');
+    const unconfirmed = attempt(2, 3);
+    if (unconfirmed.kind === 'model.attempt') {
+      unconfirmed.payload.budget = { maximum: 4, consumed: 1, unconfirmed: 3 };
+    }
+    expect(page({ kind: 'working' }, [unconfirmed])).toContain(
+      '1 of 4 used · 3 unconfirmed (count against the limit) · 0 remaining',
+    );
+  });
+
+  test('a run that hit the removed deployment-wide ceiling still shows its recorded failure', () => {
+    const html = page({
+      kind: 'failed',
+      finishedAt: AT,
+      failure: {
+        category: 'step_limit',
+        reason: 'request_ceiling_reached',
+        message: 'This deployment’s overall limit on model requests has been reached.',
+        operation: { kind: 'runtime' },
+        remediation: 'Raise or remove the configured model-request ceiling, then start a new run.',
+      },
+    });
+    expect(html).toContain('Failed — step limit');
+    expect(html).toContain('This deployment’s overall limit on model requests has been reached.');
   });
 
   test('history shows status changes with times, the question, the exact answer and the result', () => {
@@ -241,6 +275,42 @@ describe('run views', () => {
     );
     expect(asked({ kind: 'root' })).toContain('The root agent asks');
     expect(asked()).toContain('The agent asks');
+  });
+});
+
+describe('task model-request limit', () => {
+  test('accepts only whole numbers from 1 to 10,000', () => {
+    expect(['1', '50', ' 10000 '].map(parseTaskBudget)).toEqual([1, 50, 10_000]);
+    for (const text of ['', ' ', '0', '-1', '10001', '1.5', '1e3', '0x10', '50 requests', '９']) {
+      expect(parseTaskBudget(text)).toBeUndefined();
+    }
+  });
+
+  test('the start field explains its scope, and explains a rejected value', () => {
+    const field = (text: string | undefined) =>
+      renderToStaticMarkup(<TaskBudgetField budgetText={text} setBudgetText={() => {}} />);
+    const valid = field('50');
+    expect(valid).toContain('Task model-request limit');
+    expect(valid).toContain('name="stepBudget"');
+    expect(valid).toContain('value="50"');
+    expect(valid).toContain('min="1"');
+    expect(valid).toContain('max="10000"');
+    expect(valid).toContain('Applies to this task only, including delegated agents.');
+    expect(valid).toContain('aria-invalid="false"');
+    const invalid = field('0');
+    expect(invalid).toContain('aria-invalid="true"');
+    expect(invalid).toContain(TASK_BUDGET_GUIDANCE);
+    expect(TASK_BUDGET_GUIDANCE).toBe('Enter a whole number from 1 to 10,000.');
+    // Before the configured default has loaded there is nothing to submit.
+    expect(field(undefined)).toContain('disabled=""');
+  });
+
+  test('changing only the limit is a new start request; repeating it keeps the pending identity', () => {
+    let next = 0;
+    const identity = new RequestIdentity<{ goal: string; stepBudget: number }>(() => `id-${++next}`);
+    const first = identity.idFor({ goal: 'g', stepBudget: 50 });
+    expect(identity.idFor({ goal: 'g', stepBudget: 50 })).toBe(first);
+    expect(identity.idFor({ goal: 'g', stepBudget: 60 })).not.toBe(first);
   });
 });
 

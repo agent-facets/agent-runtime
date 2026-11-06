@@ -9,7 +9,7 @@ import { RequestIdentity } from '../api/requests.ts';
 import { type Connection, type EventSourceLike, RunSync } from '../state/sync.ts';
 import type { TimelineView } from '../state/timeline.ts';
 import { RunCapabilitiesPanel } from './Capabilities.tsx';
-import { FAILURE_LABELS, formatTime, providerLabel, STATE_DESCRIPTIONS, STATE_LABELS } from './format.ts';
+import { budgetUsage, FAILURE_LABELS, formatTime, providerLabel, STATE_DESCRIPTIONS, STATE_LABELS } from './format.ts';
 import { History } from './History.tsx';
 import { QuestionForm } from './QuestionForm.tsx';
 
@@ -152,10 +152,14 @@ export function RunPage({
           <dd>
             {run.workspace.label} <code>{run.workspace.root}</code>
           </dd>
-          <dt>Model requests</dt>
+          <dt>Task model requests</dt>
           <dd>
-            {run.budget.consumed} of {run.budget.maximum} used
-            {run.budget.unconfirmed > 0 && `, plus ${run.budget.unconfirmed} unconfirmed (counted against the budget)`}
+            {budgetUsage(run.budget)}
+            <span className="hint">
+              {' '}
+              This task’s own limit, shared with any delegated agents. Each model response counts; tool calls and tokens
+              do not.
+            </span>
           </dd>
           <dt>Started</dt>
           <dd title={run.createdAt}>{formatTime(run.createdAt)}</dd>

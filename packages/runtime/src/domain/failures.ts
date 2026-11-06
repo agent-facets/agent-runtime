@@ -68,13 +68,14 @@ export const FAILURE_REASONS = {
   unexpected_provider_response: { category: 'provider_failure', message: '{provider} returned an unexpected error.' },
   step_budget_exhausted: {
     category: 'step_limit',
-    message: 'Another model request would exceed this run\u2019s step budget.',
-    remediation: 'Start a new run, with a larger budget if appropriate.',
+    message: 'Another model request would exceed this task\u2019s model-request limit.',
+    remediation: 'Start a new task, with a larger model-request limit if appropriate.',
   },
+  /** Historical only: the deployment-wide ceiling was removed, but runs that hit it still record this reason. */
   request_ceiling_reached: {
     category: 'step_limit',
     message: 'This deployment\u2019s overall limit on model requests has been reached.',
-    remediation: 'Raise or remove the configured model-request ceiling, then start a new run.',
+    remediation: 'That deployment-wide limit no longer exists; start a new task, which has its own limit.',
   },
   saved_state_missing: {
     category: 'continuation_unavailable',

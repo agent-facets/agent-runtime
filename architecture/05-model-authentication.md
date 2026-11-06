@@ -149,8 +149,8 @@ be exercised deliberately. A 401 right after a renewal is treated as definitive:
 marked as needing reauthorization, so later runs fail with authorization guidance without dispatching.
 
 The browser API starts runs through the assembly and screens goals and answers against stored usable credentials
-before storing them. An optional deployment-wide `modelRequestCeiling` caps model requests across all runs (used
-by the bounded live trial).
+before storing them. Model requests are limited per run only, by the budget each run records when it starts; there
+is no deployment-wide request cap.
 
 A real Anthropic renewal (`auth anthropic renew`, generation 2 → 3) was exercised in the Docker deployment on
 2026-10-03. Issuer rotation and local persistence cannot be one transaction: a crash

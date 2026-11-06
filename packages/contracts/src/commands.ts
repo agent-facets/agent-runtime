@@ -20,7 +20,18 @@ export type CommandErrorCode =
 
 export type CommandResult<T> = { ok: true; value: T } | { ok: false; code: CommandErrorCode; field?: string };
 
-const startRunSchema = z.strictObject({ requestId: uuidSchema, goal: z.string(), provider: providerSchema });
+export const STEP_BUDGET_MIN = 1;
+export const STEP_BUDGET_MAX = 10_000;
+/** A task's maximum number of model requests, shared by every agent in that task. */
+export const stepBudgetSchema = z.number().int().min(STEP_BUDGET_MIN).max(STEP_BUDGET_MAX);
+
+const startRunSchema = z.strictObject({
+  requestId: uuidSchema,
+  goal: z.string(),
+  provider: providerSchema,
+  /** Omitted, the operator's configured default applies. */
+  stepBudget: stepBudgetSchema.optional(),
+});
 export type StartRunCommand = z.infer<typeof startRunSchema>;
 
 /** Goals are kept exactly as submitted; blank goals, oversized goals and unstorable text are refused. */
@@ -38,6 +49,7 @@ const startCommandRunSchema = z.strictObject({
   requestId: uuidSchema,
   provider: providerSchema,
   command: z.strictObject({ id: commandIdSchema, selectionRevision: digestSchema, arguments: z.string() }),
+  stepBudget: stepBudgetSchema.optional(),
 });
 export type StartCommandRunCommand = z.infer<typeof startCommandRunSchema>;
 
@@ -46,8 +58,8 @@ export type StartRunRequest = ({ kind: 'goal' } & StartRunCommand) | ({ kind: 'c
 
 /**
  * Parses either start form. Supplying both or neither is invalid, and a command start can carry nothing but the
- * command's ID, the selection revision it was offered under and its raw arguments: no prompt, graph, path, grant,
- * endpoint or credential reference. Arguments are kept exactly as submitted.
+ * command's ID, the selection revision it was offered under, its raw arguments and an optional task budget: no
+ * prompt, graph, path, grant, endpoint or credential reference. Arguments are kept exactly as submitted.
  */
 export function parseStartRunRequest(body: unknown): CommandResult<StartRunRequest> {
   const record = typeof body === 'object' && body !== null && !Array.isArray(body) ? body : undefined;

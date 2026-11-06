@@ -132,9 +132,8 @@ export const optionsSchema = z.strictObject({
     }),
   ),
   defaultProvider: providerSchema,
+  /** The model-request limit a new task uses unless its start request chooses another. */
   defaultBudget: count.min(1),
-  /** A limit on model requests across all runs, when the operator configured one. */
-  modelRequestCeiling: count.min(1).optional(),
 });
 export type Options = z.infer<typeof optionsSchema>;
 

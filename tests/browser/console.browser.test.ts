@@ -62,6 +62,10 @@ describe('the console', () => {
       await page.goto(server.url);
       await page.getByLabel('Provider').waitFor({ timeout: TIMEOUT });
       await page.getByLabel('Goal').fill('Summarize notes/plan.md, then ask me before continuing.');
+      // The task's own model-request limit starts at the configured default and can be changed before starting.
+      const limit = page.getByLabel('Task model-request limit');
+      expect(await limit.inputValue()).toBe('50');
+      await limit.fill('7');
       await page.getByRole('button', { name: 'Start' }).click();
       await page.waitForURL(/#\/runs\/[0-9a-f-]{36}$/, { timeout: TIMEOUT });
       await page.getByRole('form', { name: 'Answer the question' }).waitFor({ timeout: TIMEOUT });
@@ -78,6 +82,7 @@ describe('the console', () => {
       await page.locator('.message.final').waitFor({ timeout: TIMEOUT });
       expect(await status(page).textContent()).toBe('Completed');
       expect(await page.locator('.event-question-answered strong').textContent()).toBe('false');
+      expect(await page.locator('.facts').textContent()).toContain('3 of 7 used · 4 remaining');
 
       // Every recorded event appears once, in order; only model turns without text are not listed.
       const seqs = await page

@@ -130,6 +130,31 @@ describe('start-run request with exclusive goal or command modes', () => {
     }
   });
 
+  test('either mode may choose a whole-number task budget from 1 to 10,000, kept only when supplied', () => {
+    for (const stepBudget of [1, 50, 10_000]) {
+      expect(parseStartRunRequest({ requestId, provider: 'anthropic', goal: 'g', stepBudget })).toEqual({
+        ok: true,
+        value: { kind: 'goal', requestId, provider: 'anthropic', goal: 'g', stepBudget },
+      });
+      expect(parseStartRunRequest({ requestId, provider: 'anthropic', command, stepBudget })).toEqual({
+        ok: true,
+        value: { kind: 'command', requestId, provider: 'anthropic', command, stepBudget },
+      });
+    }
+    expect(parseStartRunRequest({ requestId, provider: 'anthropic', goal: 'g' })).not.toMatchObject({
+      value: { stepBudget: expect.anything() },
+    });
+    for (const stepBudget of [0, -1, 10_001, 1.5, Number.NaN, '50', null, 2 ** 53]) {
+      for (const mode of [{ goal: 'g' }, { command }]) {
+        expect(parseStartRunRequest({ requestId, provider: 'anthropic', ...mode, stepBudget })).toEqual({
+          ok: false,
+          code: 'invalid_request',
+          field: 'stepBudget',
+        });
+      }
+    }
+  });
+
   test('the goal parser alone refuses the command form; only the start-request parser accepts it', () => {
     expect(parseStartRun({ requestId, provider: 'anthropic', command })).toMatchObject({
       ok: false,

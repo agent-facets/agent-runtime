@@ -166,12 +166,13 @@ async function harness(options: { preflight?: McpPreflight } = {}) {
     },
   });
   const revision = () => selectionRevision(sha(installed.bytes as Uint8Array), 'command:triage');
-  const start = (requestId: string, args: string, rev = revision()) =>
+  const start = (requestId: string, args: string, rev = revision(), stepBudget?: number) =>
     service.createRun({
       kind: 'command',
       requestId,
       provider: 'anthropic',
       command: { id: 'command:triage', selectionRevision: rev, arguments: args },
+      ...(stepBudget === undefined ? {} : { stepBudget }),
     } satisfies StartRunRequest);
   return { service, net, installed, counts, revision, start, stateDir };
 }
@@ -225,6 +226,28 @@ describe('command starts', () => {
       errorOf(await h.service.createRun({ requestId, goal: 'Triage owner/repo-a.', provider: 'anthropic' })),
     ).toEqual([409, 'request_conflict']);
     expect(h.counts).toEqual({ catalog: before.catalog, preflight: before.preflight });
+  });
+
+  test('a command start can choose its task limit, which belongs to its request identity', async () => {
+    const h = await harness();
+    const requestId = crypto.randomUUID();
+    const revision = h.revision();
+    const started = await h.start(requestId, 'owner/repo-a', revision, 3);
+    expect(started.status).toBe(202);
+    // biome-ignore lint/suspicious/noExplicitAny: response body under test
+    const run = (started.body as any).run;
+    expect(run.budget).toEqual({ maximum: 3, consumed: 0, unconfirmed: 0 });
+    await h.service.settled();
+    // The retained command input is unchanged; the limit is recorded with the run.
+    expect(await h.service.store.readCapabilities(run.runId)).toMatchObject({
+      input: { kind: 'command', commandId: 'command:triage', arguments: 'owner/repo-a', provider: 'anthropic' },
+    });
+    expect(Object.keys((await h.service.store.readCapabilities(run.runId))?.input ?? {})).not.toContain('stepBudget');
+    // biome-ignore lint/suspicious/noExplicitAny: response body under test
+    expect(((await h.start(requestId, 'owner/repo-a', revision, 3)).body as any).run.runId).toBe(run.runId);
+    expect(errorOf(await h.start(requestId, 'owner/repo-a', revision, 4))).toEqual([409, 'request_conflict']);
+    expect(errorOf(await h.start(requestId, 'owner/repo-a', revision))).toEqual([409, 'request_conflict']);
+    expect(h.net.sent).toHaveLength(1);
   });
 
   test('a fresh start against a changed installation is refused without starting anything', async () => {

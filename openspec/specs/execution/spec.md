@@ -294,12 +294,17 @@ After an ordinary restart with persistent storage preserved, a run whose cancell
 
 ### Requirement: Agent steps have a visible finite budget
 
-Each run SHALL have a finite, owner-configurable maximum number of agent steps, with a documented default. Each model-response request dispatched by the system for that run, including requests made by delegates and retries, SHALL consume one step. A tool call itself SHALL NOT consume an additional step, but model-response requests made to perform delegated work SHALL consume steps from the same run budget. Recording questions or answers, renewing authorization, reconnecting the browser, and restarting the runtime SHALL NOT themselves consume steps. The console SHALL show the consumed count and maximum for every run. Human pauses, delegation, and ordinary restarts SHALL NOT reset or extend the budget.
+Each run SHALL have a finite, owner-configurable maximum number of agent steps, with a documented default. The owner SHALL be able to choose a run's maximum before starting it, for free-form and installed-command starts alike; otherwise the configured default SHALL apply. The maximum SHALL be fixed when the run is created, and each new run SHALL start with its own unconsumed budget. Model steps SHALL NOT be limited by any count shared across runs. Each model-response request dispatched by the system for that run, including requests made by delegates and retries, SHALL consume one step. A tool call itself SHALL NOT consume an additional step, but model-response requests made to perform delegated work SHALL consume steps from the same run budget. Recording questions or answers, renewing authorization, reconnecting the browser, and restarting the runtime SHALL NOT themselves consume steps. The console SHALL show the consumed count and maximum for every run. Human pauses, delegation, and ordinary restarts SHALL NOT reset or extend the budget.
 
 #### Scenario: Model requests and retries consume steps
 - **WHEN** a run with a maximum of five steps dispatches two model-response requests and retries one of them
 - **THEN** the console SHALL show three of five steps consumed
 - **AND** processing their tool results SHALL NOT increase that count
+
+#### Scenario: Each run has its own budget
+- **WHEN** the owner starts one run with a chosen maximum of two steps that consumes both, then starts another without choosing a maximum
+- **THEN** the second run SHALL use the configured default maximum with no steps consumed
+- **AND** steps consumed by earlier runs SHALL NOT prevent it from dispatching model-response requests
 
 #### Scenario: Answering after restart does not reset the budget
 - **WHEN** a run pauses for a human answer, survives an ordinary restart, and continues after an accepted answer

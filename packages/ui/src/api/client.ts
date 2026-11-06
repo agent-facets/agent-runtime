@@ -28,13 +28,17 @@ import {
   runSnapshotSchema,
 } from '@agent-runtime/contracts';
 
-/** A start request: exactly one of a free-form goal or an installed command with its raw argument text. */
+/**
+ * A start request: exactly one of a free-form goal or an installed command with its raw argument text, plus the
+ * task's model-request limit when one is chosen (omitted, the configured default applies).
+ */
 export type StartBody =
-  | { requestId: string; provider: Provider; goal: string }
+  | { requestId: string; provider: Provider; goal: string; stepBudget?: number }
   | {
       requestId: string;
       provider: Provider;
       command: { id: string; selectionRevision: string; arguments: string };
+      stepBudget?: number;
     };
 
 /** Any contract schema: the console only needs to validate with it. */

@@ -1,11 +1,12 @@
 // The run list and the form that starts a run.
 import type { ContributionView, Options, Provider, RunSummary } from '@agent-runtime/contracts';
+import { STEP_BUDGET_MAX, STEP_BUDGET_MIN } from '@agent-runtime/contracts';
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import type { ApiClient, StartBody } from '../api/client.ts';
 import { RequestIdentity } from '../api/requests.ts';
 import { type Catalog, InstalledCapabilities, originsLabel, useCatalog } from './Capabilities.tsx';
 import { ConnectAnthropic, ConnectOpenAI } from './Connect.tsx';
-import { formatTime, providerLabel, STATE_LABELS } from './format.ts';
+import { formatTime, parseTaskBudget, providerLabel, STATE_LABELS, TASK_BUDGET_GUIDANCE } from './format.ts';
 import { runHref } from './route.ts';
 
 const LIST_REFRESH_MS = 5_000;
@@ -24,8 +25,8 @@ export function Home({ client }: { client: ApiClient }) {
 type Notice = { tone: 'error' | 'uncertain'; text: string } | undefined;
 type Mode = 'goal' | 'command';
 type StartContent =
-  | { provider: Provider; goal: string }
-  | { provider: Provider; command: { id: string; selectionRevision: string; arguments: string } };
+  | { provider: Provider; goal: string; stepBudget: number }
+  | { provider: Provider; command: { id: string; selectionRevision: string; arguments: string }; stepBudget: number };
 
 export function StartForm({ client, catalog }: { client: ApiClient; catalog: Catalog }) {
   const [options, setOptions] = useState<Options | undefined>();
@@ -35,6 +36,8 @@ export function StartForm({ client, catalog }: { client: ApiClient; catalog: Cat
   const [commandId, setCommandId] = useState('');
   const [args, setArgs] = useState('');
   const [provider, setProvider] = useState<Provider | undefined>();
+  // The task's model-request limit as typed; seeded once from the configured default, then the owner's to change.
+  const [budgetText, setBudgetText] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>();
   // A start whose acknowledgement was lost: retried exactly as sent, whatever has been refreshed or edited since.
@@ -49,6 +52,7 @@ export function StartForm({ client, catalog }: { client: ApiClient; catalog: Cat
       setOptionsError(false);
       setOptions(outcome.value);
       setProvider((current) => current ?? outcome.value.defaultProvider);
+      setBudgetText((current) => current ?? String(outcome.value.defaultBudget));
     } else setOptionsError(true);
   }, [client]);
 
@@ -65,6 +69,7 @@ export function StartForm({ client, catalog }: { client: ApiClient; catalog: Cat
   const commands = ready?.contributions.filter((entry) => entry.kind === 'command') ?? [];
   const command = commands.find((entry) => entry.id === commandId);
   const revision = command?.availability.kind === 'ready' ? command.availability.selectionRevision : undefined;
+  const stepBudget = budgetText === undefined ? undefined : parseTaskBudget(budgetText);
 
   const send = async (body: StartBody) => {
     setBusy(true);
@@ -94,19 +99,20 @@ export function StartForm({ client, catalog }: { client: ApiClient; catalog: Cat
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (provider === undefined || busy) return;
+    if (provider === undefined || stepBudget === undefined || busy) return;
     let content: StartContent;
-    if (mode === 'goal') content = { provider, goal };
+    if (mode === 'goal') content = { provider, goal, stepBudget };
     else {
       if (command === undefined || revision === undefined) return;
-      content = { provider, command: { id: command.id, selectionRevision: revision, arguments: args } };
+      content = { provider, command: { id: command.id, selectionRevision: revision, arguments: args }, stepBudget };
     }
     await send({ requestId: identity.current.idFor(content), ...content } as StartBody);
   };
 
   const commandReady =
     command !== undefined && revision !== undefined && (command.arguments?.required !== true || /\S/.test(args));
-  const canStart = provider !== undefined && !busy && (mode === 'goal' ? /\S/.test(goal) : commandReady);
+  const canStart =
+    provider !== undefined && stepBudget !== undefined && !busy && (mode === 'goal' ? /\S/.test(goal) : commandReady);
   const selected = options?.providers.find((entry) => entry.provider === provider);
   return (
     <section className="panel">
@@ -175,13 +181,8 @@ export function StartForm({ client, catalog }: { client: ApiClient; catalog: Cat
               ))}
             </select>
           </label>
-          {options !== undefined && (
-            <span className="hint">
-              Workspace: {options.workspace.label} · Step budget: {options.defaultBudget}
-              {options.modelRequestCeiling !== undefined &&
-                ` · Deployment limit: ${options.modelRequestCeiling} model requests`}
-            </span>
-          )}
+          <TaskBudgetField budgetText={budgetText} setBudgetText={setBudgetText} />
+          {options !== undefined && <span className="hint">Workspace: {options.workspace.label}</span>}
           <button type="submit" disabled={!canStart}>
             {busy ? 'Starting…' : identity.current.pending ? 'Submit again' : 'Start'}
           </button>
@@ -211,6 +212,43 @@ export function StartForm({ client, catalog }: { client: ApiClient; catalog: Cat
           <ConnectOpenAI client={client} readiness={selected.readiness} onConnected={() => void loadOptions()} />
         ))}
     </section>
+  );
+}
+
+/** The task's own model-request limit, chosen before it starts; delegated agents share it. */
+export function TaskBudgetField({
+  budgetText,
+  setBudgetText,
+}: {
+  budgetText: string | undefined;
+  setBudgetText: (text: string) => void;
+}) {
+  const invalid = budgetText !== undefined && parseTaskBudget(budgetText) === undefined;
+  return (
+    <div className="field">
+      <label>
+        Task model-request limit
+        <input
+          type="number"
+          name="stepBudget"
+          inputMode="numeric"
+          min={STEP_BUDGET_MIN}
+          max={STEP_BUDGET_MAX}
+          step={1}
+          required
+          value={budgetText ?? ''}
+          disabled={budgetText === undefined}
+          aria-invalid={invalid}
+          aria-describedby="step-budget-help"
+          onChange={(event) => setBudgetText(event.target.value)}
+        />
+      </label>
+      <span id="step-budget-help" className={invalid ? 'notice error' : 'hint'}>
+        {invalid
+          ? TASK_BUDGET_GUIDANCE
+          : 'Applies to this task only, including delegated agents. Each model response counts; tool calls do not.'}
+      </span>
+    </div>
   );
 }
 

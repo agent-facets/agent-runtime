@@ -76,6 +76,22 @@ describe('operator configuration', () => {
     }
   });
 
+  test('the default task budget accepts whole numbers from 1 to 10,000', () => {
+    expect(parse({ ...valid, stepBudget: 1 }).stepBudget).toBe(1);
+    expect(parse({ ...valid, stepBudget: 10_000 }).stepBudget).toBe(10_000);
+    for (const stepBudget of [10_001, '50', null]) expect(() => parse({ ...valid, stepBudget })).toThrow(ConfigError);
+  });
+
+  test('the removed deployment-wide ceiling is refused with migration guidance, whatever its value', () => {
+    for (const modelRequestCeiling of [23, 1_000_000, null, 'x']) {
+      const message = refused({ ...valid, stepBudget: 50, modelRequestCeiling });
+      expect(message).toBe(
+        'operator configuration: modelRequestCeiling is no longer supported; remove it and use stepBudget for the ' +
+          'per-task model-request limit',
+      );
+    }
+  });
+
   test('requires a normalized workspace root separate from private state and configuration', () => {
     for (const root of ['relative', '/', '/workspace/', '/work//space', '/workspace/../etc', '/work\u0001space']) {
       expect(() => parse({ ...valid, workspace: { ...valid.workspace, root } })).toThrow(ConfigError);

@@ -1,7 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import type { Provider, QuestionInput, RunEvent, RunSnapshot } from '../packages/contracts/src/index.ts';
 import { ApiClient } from '../packages/ui/src/api/client.ts';
-import { type ExpectedNegative, reportTrial, TrialRefused } from '../tests/acceptance/anthropic-trial.ts';
+import {
+  checkTrialDeployment,
+  type ExpectedNegative,
+  reportTrial,
+  startTrialRun,
+  TRIAL,
+  TrialRefused,
+  trialOperatorConfig,
+  trialRequestIds,
+} from '../tests/acceptance/anthropic-trial.ts';
 import { repoRoot } from './lib/workspace.ts';
 
 async function run(args: string[]) {
@@ -229,7 +238,7 @@ describe('acceptance trial report', () => {
     expect(runtime.requests).toEqual([]);
   });
 
-  test('holds each run to its own budget and cap, and the two runs to theirs, counting unconfirmed requests', async () => {
+  test('holds each run to its recorded budget, and reports the two runs’ allowance, counting unconfirmed requests', async () => {
     const budget = await report({ journey: { ...journey(), maximum: 7 }, cancel: cancelled() });
     expect(budget.findings).toEqual(['the journey’s budget is 7, not 6']);
 
@@ -240,8 +249,51 @@ describe('acceptance trial report', () => {
     expect(over.requests).toEqual({ journey: 6, cancel: 7, total: 13 });
     expect(over.findings).toEqual([
       'the second run’s 7 model requests exceed its cap of 6',
-      'the two runs’ 13 model requests exceed the cap of 12',
+      'the two runs’ 13 model requests exceed their combined allowance of 12',
     ]);
+  });
+});
+
+describe('acceptance trial starts', () => {
+  test('each run explicitly requests the trial budget, and a lost reply is retried with the identical request', async () => {
+    const runtime = fakeRuntime({ [JOURNEY]: journey() });
+    const bodies: unknown[] = [];
+    let lose = true;
+    const client = new ApiClient({
+      fetch: async (_input, init) => {
+        bodies.push(JSON.parse(String(init.body)));
+        if (lose) {
+          lose = false;
+          throw new TypeError('connection lost');
+        }
+        // The created run as the API serves it.
+        return runtime.handle(new Request(`http://runtime.test/api/v1/runs/${JOURNEY}`));
+      },
+    });
+    const ids = await trialRequestIds('rehearsal');
+    expect(await startTrialRun(client, 'rehearsal', 'journey', 'openai')).toBe(JOURNEY);
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]).toEqual({ requestId: ids.journey, goal: TRIAL.journeyGoal, provider: 'openai', stepBudget: 6 });
+    expect(bodies[1]).toEqual(bodies[0]);
+    expect(trialOperatorConfig('model')).not.toHaveProperty('stepBudget');
+    expect(trialOperatorConfig('model')).not.toHaveProperty('modelRequestCeiling');
+  });
+
+  test('a deployment is ready whatever its default budget, and refused when its provider is not', async () => {
+    const options = (readiness: string) =>
+      new ApiClient({
+        fetch: async () =>
+          Response.json({
+            workspace: { label: 'Acceptance trial', available: true },
+            providers: [{ provider: 'anthropic', authMode: 'subscription', model: 'model', readiness }],
+            defaultProvider: 'anthropic',
+            defaultBudget: 50,
+          }),
+      });
+    expect((await checkTrialDeployment(options('ready'))).defaultBudget).toBe(50);
+    await expect(checkTrialDeployment(options('reauthorization_required'))).rejects.toThrow(
+      'anthropic is reauthorization_required',
+    );
   });
 });
 
@@ -296,18 +348,17 @@ describe('acceptance trial tool', () => {
         workspace: { label: 'Acceptance trial', available: true },
         providers: [{ provider: 'openai', authMode: 'subscription', model: 'model', readiness: 'ready' }],
         defaultProvider: 'anthropic',
-        defaultBudget: 6,
-        modelRequestCeiling: 23,
+        defaultBudget: 50,
       },
     );
     const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: runtime.handle });
     try {
       const args = ['report', '--origin', `http://127.0.0.1:${server.port}`, '--journey', JOURNEY, '--cancel', CANCEL];
-      args.push('--provider', 'openai', '--ceiling', '23');
+      args.push('--provider', 'openai');
       const declared = await run([...args, '--expected-answer', 'no']);
       expect(declared.code).toBe(0);
       expect(declared.out).toContain(
-        "model requests: journey 3, cancellation 1, named-run subtotal 4 of 12 (these two runs only; other runs count against the deployment's ceiling)",
+        'model requests: journey 3, cancellation 1, named-run subtotal 4 of 12, unconfirmed included (these two runs only; other runs are not counted or limited)',
       );
       expect(declared.out).toContain('trial conditions hold');
 
