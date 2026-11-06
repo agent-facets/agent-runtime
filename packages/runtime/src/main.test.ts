@@ -39,6 +39,33 @@ describe('startup guards', () => {
     expect(external.sort()).toEqual(['@agent-runtime/contracts', 'zod']);
   });
 
+  test('the production entry never reaches a development module, statically or dynamically', async () => {
+    const seen = new Set<string>();
+    const pending = [join(srcDir, 'main.ts')];
+    while (pending.length > 0) {
+      const file = pending.pop() as string;
+      if (seen.has(file)) continue;
+      seen.add(file);
+      for (const { path } of transpiler.scan(await Bun.file(file).text()).imports) {
+        if (path.startsWith('.')) pending.push(resolve(dirname(file), path));
+      }
+    }
+    expect(seen.size).toBeGreaterThan(50);
+    expect([...seen].filter((file) => file.startsWith(join(srcDir, 'dev')))).toEqual([]);
+  });
+
+  test('the development backend refuses to start outside the development supervisor', () => {
+    const result = Bun.spawnSync(['bun', '--no-env-file', join(srcDir, 'dev', 'backend.ts')], {
+      env: { PATH: process.env.PATH ?? '' },
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: 20_000,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(`${result.stderr}`).toContain('the development backend is started by `bun run dev`');
+    expect(`${result.stdout}`).not.toContain('listening');
+  });
+
   test('an enabled tracing setting stops the process before it listens', () => {
     const result = runMain({ LANGCHAIN_TRACING_V2: 'true', LANGSMITH_API_KEY: 'lsv2-synthetic-secret' });
     expect(result.exitCode).toBe(1);

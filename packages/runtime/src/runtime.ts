@@ -3,13 +3,15 @@ import { configuredCredentialSlots } from './config/capabilities.ts';
 import type { RuntimeConfig } from './config.ts';
 import { type ConsoleFiles, loadConsole } from './console.ts';
 import { loadConfiguredMcpCredentials, McpCredentialStore } from './credentials/mcp-store.ts';
+import type { CodeManifest } from './execution/code-manifest.ts';
 import { PersistenceError } from './persistence/errors.ts';
 import type { OwnershipOptions } from './persistence/ownership.ts';
 import { openPersistence, type Persistence } from './persistence/persistence.ts';
 import { createProviderAssembly } from './providers/assembly.ts';
 import { RunStore } from './records/run-store.ts';
+import type { Provider } from './records/schemas.ts';
 import { formatDiagnostic } from './security/diagnostics.ts';
-import { type PersistenceStatus, startServer } from './server.ts';
+import { type DevelopmentConsole, type PersistenceStatus, startServer } from './server.ts';
 import { handleApi, type ServiceProvider } from './service/http.ts';
 import { RunService } from './service/runs.ts';
 
@@ -32,6 +34,10 @@ export interface RuntimeOptions {
   loadConsole?: () => Promise<ConsoleFiles>;
   /** Opens persistence; tests substitute one that fails without waiting out a connection timeout. */
   openPersistence?: typeof openPersistence;
+  /** Development only: the live-reloading console, served in place of the bundled one. */
+  developmentConsole?: DevelopmentConsole;
+  /** The manifest of the running code per provider; by default the shipped manifest, or computed from source. */
+  code?: (provider: Provider) => Promise<CodeManifest>;
 }
 
 /** The readiness state reported for a failed persistence startup. */
@@ -69,15 +75,21 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
     agentExecution: () =>
       operator === undefined ? 'unconfigured' : 'unavailable' in services() ? 'unavailable' : 'ready',
     ...(options.config.publicOrigin === undefined ? {} : { publicOrigin: options.config.publicOrigin }),
+    ...(options.developmentConsole === undefined ? {} : { developmentConsole: options.developmentConsole }),
   });
-  const consoleLoaded = (options.loadConsole ?? loadConsole)().then(
-    (files) => {
-      consoleFiles = files;
-    },
-    () => {
-      log(formatDiagnostic({ event: 'console_unavailable', operation: 'startup' }));
-    },
-  );
+  const consoleLoaded =
+    options.developmentConsole !== undefined
+      ? Promise.resolve()
+      : (options.loadConsole ?? loadConsole)().then(
+          (files) => {
+            consoleFiles = files;
+          },
+          () => {
+            log(formatDiagnostic({ event: 'console_unavailable', operation: 'startup' }));
+          },
+        );
+  // Persistence startup, once begun; shutdown waits for it so whatever it opened is closed before stopping ends.
+  let startup: Promise<void> = Promise.resolve();
 
   // Provider integrations for configured providers. Readiness only reads stored credentials; nothing logs in,
   // refreshes or sends inference here.
@@ -100,6 +112,8 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
       if (status === 'starting' || status === 'ready' || status === 'unconfigured') status = 'stopping';
       // Admission stops first; persistence (and with it ownership) is released last.
       await server.stop(true);
+      // Startup sees `stopping` at its next stage and goes no further; anything it opened is then closed below.
+      await startup.catch(() => {});
       // An unfinished console login is aborted and settles (releasing its credential lock) before shutdown ends.
       await Promise.all([runs?.login.stop(), runs?.openaiLogin.stop()]);
       await persistence?.close();
@@ -119,7 +133,7 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
   };
 
   const url = options.config.databaseUrl;
-  const started =
+  startup =
     url === undefined
       ? Promise.resolve()
       : (options.openPersistence ?? openPersistence)({ url, onFault, ownership: options.ownership }).then(
@@ -147,6 +161,7 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
                 count: reconciled.interrupted + reconciled.cancelled,
               }),
             );
+            if (stopping !== undefined) return;
             // Configured MCP credentials are read only now, under runtime ownership, so stopped-runtime
             // provisioning cannot change a slot between this read and the service accepting input.
             if (operator !== undefined && providers !== undefined) {
@@ -166,8 +181,10 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
               }
             }
             const configFile = options.config.configFile;
+            if (stopping !== undefined) return;
             if (operator !== undefined && providers !== undefined && configFile !== undefined) {
               runs = new RunService({
+                ...(options.code === undefined ? {} : { code: options.code }),
                 operator,
                 locations: { stateDir: options.config.stateDir, configFile },
                 persistence: opened,
@@ -186,7 +203,7 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
                 }),
               });
             }
-            if (opened.ownership.lost === undefined) status = 'ready';
+            if (opened.ownership.lost === undefined && stopping === undefined) status = 'ready';
           },
           (error: unknown) => {
             const code = error instanceof PersistenceError ? error.code : 'database_unavailable';
@@ -201,7 +218,7 @@ export function startRuntime(options: RuntimeOptions): RuntimeHandle {
   return {
     port: server.port ?? options.config.port,
     status: () => status,
-    started: Promise.all([started, providersReported, consoleLoaded]).then(() => {}),
+    started: Promise.all([startup, providersReported, consoleLoaded]).then(() => {}),
     stopped,
     stop,
   };

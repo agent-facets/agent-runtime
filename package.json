@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "dev": "bun run --cwd packages/runtime dev",
+    "dev:stack": "bun --no-env-file scripts/dev-stack.ts",
     "start": "bun run --cwd packages/runtime start",
     "build": "bun --no-env-file scripts/run-turbo.ts build",
     "check": "bun --no-env-file scripts/run-turbo.ts check",
@@ -21,6 +22,7 @@
     "typecheck:scripts": "tsc -p tsconfig.json",
     "test:integration": "bun --no-env-file scripts/run-integration.ts",
     "test:container": "bun --no-env-file scripts/container-smoke.ts",
+    "test:dev-container": "bun --no-env-file scripts/dev-container-smoke.ts",
     "test:browser": "bun --no-env-file scripts/run-browser.ts",
     "test:facets": "bun --no-env-file scripts/run-facets.ts",
     "console:offline": "bun --no-env-file scripts/run-console-offline.ts",

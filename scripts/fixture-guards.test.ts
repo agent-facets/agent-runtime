@@ -111,6 +111,7 @@ describe('launchers apply the policy before starting anything', () => {
     'scripts/run-browser.ts',
     'scripts/run-console-offline.ts',
     'scripts/container-smoke.ts',
+    'scripts/dev-container-smoke.ts',
     'scripts/run-facets.ts',
   ]) {
     test(`${script} refuses unsafe targets without starting anything`, async () => {

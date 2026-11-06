@@ -97,10 +97,11 @@ Run from the repository root (prefix with `mise exec --` if mise is not activate
 
 | Command | What it does |
 |---|---|
-| `bun run dev` | Runs the runtime with hot reload (uncached). |
+| `bun run dev` | Runs the runtime from source: console edits reload in the browser, backend edits restart the backend (see [Development](#development)). |
+| `bun run dev:stack <command>` | Operates the containerized development deployment (`compose.dev.yaml`, project `agent-runtime-dev`); see [Development deployment](#development-deployment). |
 | `bun run build` | Builds the application to `packages/runtime/dist/`, the runtime facet adapter to `packages/facet-adapter/dist/` and the (empty) MCP program set to `packages/mcp-programs/dist/`. |
 | `bun run start` | Runs the built application. |
-| `bun run check` | The complete non-live gate through Turbo: lint, typechecks, unit tests, the build, then the facet, integration, browser and container suites one at a time. Reuses valid cached results. Requires Docker, `bun run browser:install` and a `facet` CLI on `PATH` (CI installs the pinned one). CI runs this. |
+| `bun run check` | The complete non-live gate through Turbo: lint, typechecks, unit tests, the build, then the facet, integration, browser, container and development-container suites one at a time. Reuses valid cached results. Requires Docker, `bun run browser:install` and a `facet` CLI on `PATH` (CI installs the pinned one). CI runs this. |
 | `bun run check:verify` | The same graph with `--force`: every task executes. Use this for acceptance. |
 | `bun run test` / `typecheck` | Package and repository-script tests / typechecks through Turbo. |
 | `bun run lint` | Biome lint and format check (read-only). `bun run format` applies fixes. |
@@ -111,6 +112,7 @@ Run from the repository root (prefix with `mise exec --` if mise is not activate
 | `bun run test:facets` | Runs `tests/facets` with the `facet` CLI on `PATH`: installs synthetic fixture facets into disposable runtime and editor homes, then checks exports, sealing (including the join of MCP server declarations to every facet that declares them), reproducibility and isolation between the two installations. Any CLI version runs; these behavioral checks decide whether it works. No Docker, model or MCP server is used. |
 | `bun run browser:install` | Downloads the pinned Playwright headless Chromium (once, into Playwright's user cache). |
 | `bun run test:container` | Builds the image and smoke-tests the isolated Compose topology, including the served console and the Host/Origin checks and runtime facets with synthetic inputs (below), then rehearses an image rollback and a configuration-only rollback over preserved storage. Stops at the first failed check. Requires Docker. |
+| `bun run test:dev-container` | Builds the development image and smoke-tests `compose.dev.yaml` in an isolated project running a disposable copy of the sources: the relayed console passes the Host/Origin checks, a console edit reaches an open page without restarting the backend or touching recorded runs, a backend edit restarts the backend (a working run becomes `interrupted`, a waiting one stays waiting), a dependency change is refused until a rebuild, and stopping is clean. Requires Docker. |
 | `bun run acceptance:anthropic` | The live trial's operator tool (Anthropic by default; `--provider openai --ceiling <n>` for OpenAI); use only as the [checklist](deploy/runtime/anthropic-acceptance.md) describes, after fresh authorization. Its `report` only reads two named runs. |
 | `bun run provenance:anthropic` | Maintenance only, uses the network: re-verifies the subscription package's recorded upstream baseline, or lists what differs at a candidate revision (see [PROVENANCE.md](packages/anthropic-subscription/PROVENANCE.md)). Never part of `check`. |
 
@@ -169,6 +171,73 @@ shows that a compatible image can be rolled back on preserved storage; it is not
 does not show compatibility with older execution code (a changed execution manifest refuses waiting runs instead) or
 with a binary that predates the current schema, and leaves crash, question and cancellation semantics to the
 integration suites.
+
+## Development
+
+`bun run dev` runs the runtime from source under a small supervisor (`packages/runtime/src/dev/`). What a change
+does depends on where it is:
+
+| Change | Effect |
+|---|---|
+| Console source (`packages/ui/src`) | Open pages update in place (Bun's live reload). The backend keeps running; runs, streams and waiting questions are untouched. Console code is not part of any execution manifest. |
+| Backend source (`packages/runtime/src`, `packages/contracts/src`, `packages/anthropic-subscription/src`; not tests) | The backend process restarts cleanly. Changes are coalesced; the old process is sent `SIGTERM` and must exit (releasing database ownership) before its replacement starts. One that has not exited after 15 seconds is killed with its process group, its MCP servers included, and the stop is logged as unclean. |
+| Dependencies (`package.json` files, `bun.lock`, `bunfig.toml`), the Bun release | Run `bun install`; the supervisor then restarts the backend. In the development container, rebuild the image (below). |
+| MCP program sources, the facet adapter, `tsconfig` files, the Dockerfile | Not watched. Locally, restart `bun run dev`; in the container, rebuild the image. |
+| Operator configuration or environment | Read at backend start: send the supervisor `SIGHUP` (`bun run dev:stack reload`) or restart it. |
+
+A backend restart has the outcomes of any restart: a working run becomes `interrupted` and is not retried, an
+accepted cancellation becomes `cancelled`, and a waiting run stays waiting. A waiting run's answer is accepted only by
+the code that asked: after a change to execution code (see the execution manifest), answering it is refused as
+`continuation_unavailable`, with its history kept. Finish or cancel waiting runs you need before editing execution
+code. Each backend records the manifest of the code it loaded once, at startup, so an edit it has not loaded is never
+recorded as its code. A backend that exits on its own is started again up to five times, with backoff, and then waits
+for the next change, so an invalid configuration cannot spin.
+
+The console's live reload is served by a Bun development server that listens only on a Unix socket in a private
+temporary directory, because Bun's development routes do not pass the runtime's request checks. The runtime relays
+to it, after its usual Host and Origin checks, only the page, `/_bun/client/*` and `/_bun/asset/*`, the development
+client's two reports and the live-update channel — which, unlike other reads, must also come from the console's own
+origin. Everything else Bun serves in development (source files, editor and workspace hooks) is unreachable. The
+development page has its own content security policy: scripts from the origin and the `blob:` URLs live updates use,
+the page's bootstrap script by hash, inline styles for the error overlay, and the live-update channel to the page's own
+origin only. None of this exists in production: the production entry point cannot reach the development modules, and
+the built image serves the bundled console with the production policy and no development routes.
+
+### Development deployment
+
+`compose.dev.yaml` runs the same supervisor in a container: the base topology (Tailscale Serve as the only ingress, no
+published ports, read-only root, all capabilities dropped) with the image's `dev` target, the package sources and
+installation inputs bind-mounted read-only over the image's copies, and installed dependencies left in the image. Run
+it under its own project, with its own environment file, operator configuration, workspace, tailnet name and database
+password; Compose then gives it its own database, runtime state and Tailscale identity. `bun run dev:stack` does this
+and refuses the `agent-runtime` and `agent-runtime-live` projects:
+
+```bash
+bun run dev:stack rebuild        # build the development image and (re)create the runtime on it
+bun run dev:stack up             # start; refused if the image is missing or its dependencies are stale
+bun run dev:stack logs           # follow the runtime (supervisor, backend and console server); or name a service
+bun run dev:stack auth anthropic login   # the operator command, from source
+bun run dev:stack reload         # restart only the backend, e.g. after editing the operator configuration
+bun run dev:stack stop           # stop everything; keeps containers, volumes and identity
+bun run dev:stack down           # remove containers and network; keeps volumes
+```
+
+The environment file defaults to `~/.local/state/agent-runtime-dev/compose.env` (`--env-file` or
+`AGENT_RUNTIME_DEV_ENV_FILE` to change it, `--project` or `AGENT_RUNTIME_DEV_PROJECT` for another project). It holds
+the same variables as `.env.example`, with values distinct from any other deployment. Enroll its Tailscale container as
+in [Deployment](#deployment), reading its login link with `bun run dev:stack logs tailscale`. The Tailscale container
+restarts once after its first login, which leaves the runtime in its former network namespace, unable to reach the
+database or the tailnet; run `bun run dev:stack recreate` once enrollment completes.
+
+Rebuild (`dev:stack rebuild`) after changing dependencies, the Bun release, `tsconfig` files, MCP program sources or
+the Dockerfile; console and backend edits never need it. The image records a fingerprint of its installation inputs;
+the supervisor refuses to start, or stops, when the mounted inputs no longer match. A file mounted on its own keeps
+showing the version the container was created with once an editor or `bun install` replaces it, so `dev:stack up`,
+`recreate` and `restart` first fingerprint the checkout itself and refuse a stale image. Use `recreate` after changing
+the environment file. Removing the development deployment's volumes (its database, runtime state and Tailscale
+identity) is deliberately not a `dev:stack` command; it is an owner decision made with Compose directly.
+
+The development image contains the sources and development tooling; never deploy it as production.
 
 ## Persistence
 
