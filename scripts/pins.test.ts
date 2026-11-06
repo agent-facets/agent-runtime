@@ -12,6 +12,7 @@ test('pinned toolchain', async () => {
     services: Record<string, { image?: string }>;
   };
   const dockerfile = await Bun.file(join(repoRoot, 'Dockerfile')).text();
+  const stages = new Set([...dockerfile.matchAll(/^FROM\s+\S+\s+AS\s+(\S+)/gim)].map((match) => match[1]));
 
   const devTools: Record<string, { declared: string; installed: string }> = {};
   for (const [name, declared] of Object.entries(root.devDependencies ?? {}).sort()) {
@@ -24,7 +25,10 @@ test('pinned toolchain', async () => {
     bun: { packageManager: root.packageManager, running: Bun.version },
     facetCli: { ...PINNED_CLI, adapterSdk: ADAPTER_SDK_VERSION, adapterApi: ADAPTER_API },
     images: {
-      dockerfile: [...dockerfile.matchAll(/^FROM\s+(\S+)/gm)].map((match) => match[1]),
+      // External base images only: a FROM naming an earlier stage pins nothing.
+      dockerfile: [...dockerfile.matchAll(/^FROM\s+(\S+)/gm)]
+        .map((match) => match[1] as string)
+        .filter((from) => !stages.has(from)),
       compose: Object.fromEntries(
         Object.entries(compose.services)
           .filter(([, service]) => service.image !== undefined && !service.image.startsWith('$'))

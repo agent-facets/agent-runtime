@@ -28,6 +28,7 @@ const compose = Bun.YAML.parse(await Bun.file(join(repoRoot, 'compose.yaml')).te
 const facets = Bun.YAML.parse(await Bun.file(join(repoRoot, 'compose.facets.yaml')).text()) as {
   services: Record<string, { volumes?: unknown[] } & Record<string, unknown>>;
 };
+const devCompose = Bun.YAML.parse(await Bun.file(join(repoRoot, 'compose.dev.yaml')).text());
 const dockerfile = await Bun.file(join(repoRoot, 'Dockerfile')).text();
 const dockerignore = await Bun.file(join(repoRoot, '.dockerignore')).text();
 const serve = await Bun.file(join(repoRoot, 'deploy', 'tailscale', 'serve.json')).json();
@@ -168,6 +169,69 @@ describe('runtime facets', () => {
     // Only package sources enter the build context, so the synthetic servers under test-support cannot.
     expect(dockerignore).not.toMatch(/test-support/);
     expect(dockerignore).toContain('!packages/*/src/**');
+  });
+});
+
+describe('development overlay', () => {
+  interface Mount {
+    type: string;
+    source: string;
+    target: string;
+    read_only?: boolean;
+  }
+  const dev = devCompose as {
+    services: Record<string, Omit<ComposeService, 'build'> & { init?: boolean; build?: Record<string, string> }>;
+  };
+  const runtimeDev = dev.services.runtime;
+  const mounts = (runtimeDev?.volumes ?? []) as unknown as Mount[];
+
+  test('changes only the runtime, building the development target under its own image name', () => {
+    expect(Object.keys(dev.services)).toEqual(['runtime']);
+    expect(runtimeDev?.build).toEqual({ context: '.', dockerfile: 'Dockerfile', target: 'dev' });
+    expect(runtimeDev?.image).toBe(['$', '{AGENT_RUNTIME_DEV_IMAGE:-agent-runtime/runtime:dev}'].join(''));
+    expect(runtimeDev?.init).toBe(true);
+    // Ingress, privileges and writable locations stay the base file's.
+    for (const key of ['ports', 'network_mode', 'networks', 'read_only', 'cap_drop', 'security_opt', 'tmpfs']) {
+      expect(runtimeDev).not.toHaveProperty(key);
+    }
+    expect(runtimeDev?.environment?.NODE_ENV).toBe('development');
+  });
+
+  test('mounts package sources and installation inputs read-only, never the checkout or dependencies', () => {
+    expect(mounts.every((mount) => mount.type === 'bind' && mount.read_only === true)).toBe(true);
+    const sources = mounts.filter((mount) => mount.target.endsWith('/src')).map((mount) => mount.target);
+    expect(sources.sort()).toEqual(
+      ['anthropic-subscription', 'contracts', 'runtime', 'ui'].map((name) => `/repo/packages/${name}/src`),
+    );
+    for (const mount of mounts) {
+      expect(mount.source).toBe(`./${mount.target.slice('/repo/'.length)}`);
+      expect(mount.target).not.toContain('node_modules');
+      expect(mount.target).not.toMatch(/^\/repo\/?$|^\/repo\/packages\/[^/]+$/);
+    }
+    const inputs = mounts.filter((mount) => !mount.target.endsWith('/src')).map((mount) => mount.target.slice(6));
+    expect(inputs.sort()).toEqual(
+      [
+        'bun.lock',
+        'bunfig.toml',
+        'package.json',
+        ...['anthropic-subscription', 'contracts', 'facet-adapter', 'mcp-programs', 'runtime', 'ui'].map(
+          (name) => `packages/${name}/package.json`,
+        ),
+      ].sort(),
+    );
+  });
+
+  test('the production image stays the default target and carries no sources or development entry', () => {
+    const stages = [...dockerfile.matchAll(/^FROM .+ AS (\S+)$/gm)].map((match) => match[1]);
+    expect(stages).toEqual(['deps', 'source', 'build', 'dev', 'runtime']);
+    const production = dockerfile.slice(dockerfile.lastIndexOf('\nFROM '));
+    expect(production).toContain('CMD ["bun", "dist/main.js"]');
+    expect(production).toContain('ENV NODE_ENV=production');
+    expect(production).not.toMatch(/src\/dev|packages\/[^/]+\/src|node_modules|COPY --from=(?:deps|source|dev) /);
+    const development = dockerfile.slice(dockerfile.indexOf(' AS dev\n'), dockerfile.lastIndexOf('\nFROM '));
+    expect(development).toContain('CMD ["bun", "packages/runtime/src/dev/supervisor.ts"]');
+    expect(development).toContain('USER bun');
+    expect(development).toContain('dependency-fingerprint');
   });
 });
 

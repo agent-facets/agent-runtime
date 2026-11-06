@@ -47,19 +47,38 @@ export function createRequestPolicy(options: RequestPolicyOptions) {
     origins.set(url.host, url.origin);
   }
 
+  const originFor = (request: Request): string | undefined => {
+    const host = request.headers.get('host')?.toLowerCase();
+    return host === undefined ? undefined : origins.get(host);
+  };
+
+  const sameOrigin = (request: Request, expectedOrigin: string): Refusal | undefined => {
+    const origin = request.headers.get('origin');
+    if (origin === null || origin !== expectedOrigin) return { status: 403, code: 'forbidden', reason: 'origin' };
+    const site = request.headers.get('sec-fetch-site');
+    if (site !== null && site !== 'same-origin') return { status: 403, code: 'forbidden', reason: 'origin' };
+    return undefined;
+  };
+
   return {
     /** Undefined when the request may proceed. */
     check(request: Request): Refusal | undefined {
-      const host = request.headers.get('host')?.toLowerCase();
-      const expectedOrigin = host === undefined ? undefined : origins.get(host);
+      const expectedOrigin = originFor(request);
       if (expectedOrigin === undefined) return { status: 403, code: 'forbidden', reason: 'host' };
       if (SAFE_METHODS.has(request.method)) return undefined;
-      const origin = request.headers.get('origin');
-      if (origin === null || origin !== expectedOrigin) return { status: 403, code: 'forbidden', reason: 'origin' };
-      const site = request.headers.get('sec-fetch-site');
-      if (site !== null && site !== 'same-origin') return { status: 403, code: 'forbidden', reason: 'origin' };
-      return undefined;
+      return sameOrigin(request, expectedOrigin);
     },
+    /**
+     * A WebSocket handshake is a GET, but it opens a channel a page on another site could otherwise use, so it
+     * must come from this same origin as well.
+     */
+    checkUpgrade(request: Request): Refusal | undefined {
+      const expectedOrigin = originFor(request);
+      if (expectedOrigin === undefined) return { status: 403, code: 'forbidden', reason: 'host' };
+      return sameOrigin(request, expectedOrigin);
+    },
+    /** The browser-visible origin an accepted request was addressed to. */
+    originFor,
   };
 }
 

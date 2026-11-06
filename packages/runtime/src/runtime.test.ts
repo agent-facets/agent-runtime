@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { parseOperatorConfig } from './config/operator.ts';
 import { CredentialStore } from './credentials/store.ts';
 import { PersistenceError } from './persistence/errors.ts';
+import type { Persistence } from './persistence/persistence.ts';
 import { startRuntime, statusForStartupFailure } from './runtime.ts';
 
 // The console's bundling is covered by console.test.ts; these tests start the runtime many times.
@@ -135,5 +136,41 @@ describe('runtime lifecycle', () => {
     expect(lines).toEqual([
       JSON.stringify({ event: 'persistence_startup_failed', reason: 'database_unavailable', operation: 'startup' }),
     ]);
+  });
+
+  test('a stop during persistence startup ends only after what startup opened is closed, and never becomes ready', async () => {
+    let open: (value: Persistence) => void = () => {};
+    let closes = 0;
+    const runtime = startRuntime({
+      loadConsole: noConsole,
+      config: {
+        port: 0,
+        databaseUrl: 'postgres://fixture@127.0.0.1:1/fixture',
+        stateDir: '/tmp/state',
+        configFile: undefined,
+      },
+      log: () => {},
+      openPersistence: () =>
+        new Promise<Persistence>((resolve) => {
+          open = resolve;
+        }),
+    });
+    let stopped = false;
+    const stopping = runtime.stop(0).then((code) => {
+      stopped = true;
+      return code;
+    });
+    await Bun.sleep(10);
+    // Ownership is still being acquired: the stop must wait for it, or it would be released by nobody.
+    expect(stopped).toBe(false);
+    open({
+      close: async () => {
+        closes++;
+      },
+    } as unknown as Persistence);
+    expect(await stopping).toBe(0);
+    expect(closes).toBe(1);
+    expect(runtime.status()).toBe('stopping');
+    expect(await runtime.stopped).toBe(0);
   });
 });

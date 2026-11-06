@@ -1,0 +1,70 @@
+# Development overlay: the runtime runs from source with a live-reloading console and restarts its backend when
+# backend source changes. Never use it for production. Select it alongside the base file, under its own project so
+# it has its own database, runtime state, Tailscale identity and network — `bun run dev:stack` does this:
+#
+#   docker compose -p agent-runtime-dev --env-file <dev compose.env> -f compose.yaml -f compose.dev.yaml up -d
+#
+# Package sources are mounted read-only, each directory on its own, so the image's installed dependencies and
+# workspace links stay in place. Console edits reload in the browser; backend edits restart the backend; dependency
+# manifests, the lockfile, the Bun release, tsconfig files, MCP program sources and this image's definition need
+# the image rebuilt (`bun run dev:stack rebuild`). Ingress stays Tailscale Serve only; no port is published.
+services:
+  runtime:
+    image: ${AGENT_RUNTIME_DEV_IMAGE:-agent-runtime/runtime:dev}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    # Reaps the backend's exited children; the supervisor forwards stop signals to the backend.
+    init: true
+    stop_grace_period: 30s
+    environment:
+      NODE_ENV: development
+      TMPDIR: /tmp
+      # The root filesystem is read-only; Bun keeps no transpiler cache on disk.
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: '0'
+    volumes:
+      - type: bind
+        source: ./packages/runtime/src
+        target: /repo/packages/runtime/src
+        read_only: true
+      - type: bind
+        source: ./packages/contracts/src
+        target: /repo/packages/contracts/src
+        read_only: true
+      - type: bind
+        source: ./packages/anthropic-subscription/src
+        target: /repo/packages/anthropic-subscription/src
+        read_only: true
+      - type: bind
+        source: ./packages/ui/src
+        target: /repo/packages/ui/src
+        read_only: true
+      # Installation inputs, so the backend refuses to start against dependencies it was not built with.
+      - { type: bind, source: ./package.json, target: /repo/package.json, read_only: true }
+      - { type: bind, source: ./bun.lock, target: /repo/bun.lock, read_only: true }
+      - { type: bind, source: ./bunfig.toml, target: /repo/bunfig.toml, read_only: true }
+      - type: bind
+        source: ./packages/anthropic-subscription/package.json
+        target: /repo/packages/anthropic-subscription/package.json
+        read_only: true
+      - type: bind
+        source: ./packages/contracts/package.json
+        target: /repo/packages/contracts/package.json
+        read_only: true
+      - type: bind
+        source: ./packages/facet-adapter/package.json
+        target: /repo/packages/facet-adapter/package.json
+        read_only: true
+      - type: bind
+        source: ./packages/mcp-programs/package.json
+        target: /repo/packages/mcp-programs/package.json
+        read_only: true
+      - type: bind
+        source: ./packages/runtime/package.json
+        target: /repo/packages/runtime/package.json
+        read_only: true
+      - type: bind
+        source: ./packages/ui/package.json
+        target: /repo/packages/ui/package.json
+        read_only: true

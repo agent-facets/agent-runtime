@@ -24,7 +24,13 @@ interface TurboConfig {
   tasks: Record<string, TurboTask>;
 }
 
-const FIXTURE_SUITES = ['//#test:facets', '//#test:integration', '//#test:browser', '//#test:container'];
+const FIXTURE_SUITES = [
+  '//#test:facets',
+  '//#test:integration',
+  '//#test:browser',
+  '//#test:container',
+  '//#test:dev-container',
+];
 
 const root = await readJson<RootManifest>(join(repoRoot, 'package.json'));
 const turbo = await readJson<TurboConfig>(join(repoRoot, 'turbo.json'));

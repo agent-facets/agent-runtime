@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --hot src/main.ts",
+    "dev": "bun src/dev/supervisor.ts",
     "start": "bun dist/main.js",
     "build": "bun build src/main.ts src/auth.ts --target bun --production --root .. --entry-naming '[name].[ext]' --outdir dist && bun src/build/write-code-manifest.ts dist",
     "typecheck": "tsc -p tsconfig.json",

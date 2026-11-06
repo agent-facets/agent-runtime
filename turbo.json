@@ -35,7 +35,8 @@
         "//#test:facets",
         "//#test:integration",
         "//#test:browser",
-        "//#test:container"
+        "//#test:container",
+        "//#test:dev-container"
       ]
     },
     "//#lint": {
@@ -107,6 +108,25 @@
     "//#test:container": {
       "description": "Container smoke test, last: it builds images from the package sources.",
       "dependsOn": ["//#test:browser"],
+      "env": ["CHECK_FIXTURE_TOOLCHAIN"],
+      "passThroughEnv": ["TMPDIR", "TERM", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "packages/**",
+        "!packages/*/dist/**",
+        "!packages/*/.turbo/**",
+        "!packages/*/node_modules/**",
+        "!.circleci/**",
+        "!architecture/**",
+        "!openspec/**",
+        "!spikes/**",
+        "!AGENTS.md",
+        "!README.md"
+      ]
+    },
+    "//#test:dev-container": {
+      "description": "Development deployment smoke test, after the container suite: it builds the development image.",
+      "dependsOn": ["//#test:container"],
       "env": ["CHECK_FIXTURE_TOOLCHAIN"],
       "passThroughEnv": ["TMPDIR", "TERM", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG"],
       "inputs": [
