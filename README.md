@@ -62,12 +62,13 @@ Tailscale account.
 
 ```bash
 mise trust                                 # mise ignores untrusted project config
-mise install                               # installs the pinned Bun 1.3.14
+mise install                               # installs the pinned Bun 1.4.4
 mise exec -- bun install --frozen-lockfile  # reproduces bun.lock exactly
 ```
 
-Pinned tools: Bun 1.3.14 (`mise.toml` and `packageManager`), the `facet` CLI 0.36.5 (`mise.toml`; its binary digest is
-pinned in `packages/facet-adapter/src/toolchain.ts`), Turbo 2.10.4, TypeScript 5.9.3, Biome 2.4.15.
+Pinned tools: Bun 1.4.4 (`mise.toml` and `packageManager`), the `facet` CLI 0.36.5 (`mise.toml`; its binary digest is
+pinned in `packages/facet-adapter/src/toolchain.ts`), Turbo 2.10.4, TypeScript 5.9.3, Biome 2.4.15, Tailwind CSS
+4.3.5 with `bun-plugin-tailwind` 0.1.2 (build-time only: the console's stylesheet is compiled into the bundle).
 Bun is configured to add exact versions. The runtime pins LangChain 1.5.14, `@langchain/core` 1.2.14, LangGraph
 1.4.13 with its PostgreSQL checkpointer, and the provider models `@langchain/anthropic` 1.5.11 (with
 `@anthropic-ai/sdk` 0.122.0) and `@langchain/openai` 1.6.2 (with `openai` 7.28.0), all in
@@ -259,7 +260,8 @@ An incompatible schema keeps the process up but unready for the operator. Postgr
 keepalives so sessions orphaned by a replaced network namespace end in about 25 seconds and ownership can move to
 the replacement.
 
-**Bun SQL rules.** Two Bun 1.3.14 defects shape database access:
+**Bun SQL rules.** Two defects observed on Bun 1.3.14 shape database access; the guards stay in place on later
+releases:
 
 - A plain pool query can run inside another caller's transaction when the pool is busy. Application code therefore
   issues every statement in `transaction()`/`readOnly()` or on a reserved session; the adapter does not expose the
@@ -605,8 +607,8 @@ loop; the runtime only constrains what crosses into graph state and what is disp
   UTF-8 reference from the retained bytes (never the filesystem), screened as a whole before paging (at most 2,000
   lines and 64 KiB per call). Eligibility is the membership frozen on the response that issued the call, so a skill
   loaded in the same response can be read from the next one. Loading grants nothing else.
-- **Budget.** Each task has its own limit on model requests, fixed when it starts: the console's “Task
-  model-request limit” (sent as `stepBudget`, 1–10,000, in either start form) or, if a start request omits it, the
+- **Budget.** Each task has its own limit on model requests, fixed when it starts: the console's “Model-request
+  limit” under **Options** (sent as `stepBudget`, 1–10,000, in either start form) or, if a start request omits it, the
   configured default of 50. Every new task starts from zero; continuations and delegates never get a fresh allowance.
   An explicitly chosen limit belongs to the start request's identity, so retrying a request ID with a different
   limit is a conflict, while a request that omitted it is still recognized after the default changes. The run reports `{ maximum, consumed, unconfirmed }`; an admission
@@ -660,22 +662,35 @@ browser — that caused it. Verification with provider-free models, including ev
 
 ## Browser console and API
 
-Open the console at the `RUNTIME_PUBLIC_ORIGIN` address from any device on your tailnet. It lists runs (goal,
-provider, status, start and last-activity times), starts a run, and shows one run: its status, budget
-(`consumed` of `maximum`, plus any `unconfirmed` admissions), provider and workspace, history with recorded times,
-the pending question (and, in a command run, which agent asked it), the final result or failure with its category
-and guidance, and a cancel button. Text from the model, tools, workspace and installed facets is rendered as plain
-text; nothing is interpreted as markup or loads external resources.
+Open the console at the `RUNTIME_PUBLIC_ORIGIN` address from any device on your tailnet. The console calls each run
+a *session* and is laid out like a chat app. A sidebar (a drawer on narrow screens) offers **New session** and lists
+every session: its first message, status, provider, start time, short ID and how long ago it last changed. The start
+page is a single composer. A session's page has a slim header — status, model, request usage and **Stop session**
+while it runs — then any failure with its category and guidance, **Details** (workspace, exact times, full budget
+accounting — `consumed` of `maximum`, plus any `unconfirmed` admissions — and the ID), and its conversation. The
+conversation is the owner's message followed by every recorded event in order. Assistant messages, questions,
+answers, delegations, status changes and anything failed or uncertain are always shown. Consecutive routine work
+(model requests and tool calls that completed normally) by one agent is folded into an **Activity** entry in place,
+which opens to every event with its time and tool results. A pending question stays in its place in the
+conversation and is answered in a form docked below it, like a reply (in a command run, it names the agent that
+asked). New activity never scrolls the page; **Jump to latest** appears when newer entries are out of view. A session
+cannot yet be continued with another message.
 
-**Starting from a command.** The start form offers a free-form task (the default) or an **Installed command**:
+Assistant messages are rendered as Markdown (paragraphs, lists, emphasis, code and links) with
+[`react-markdown`](https://github.com/remarkjs/react-markdown): raw HTML is shown as text, images are not loaded,
+and links with unsafe targets are disabled; links open in a new tab. All other text from the model, tools,
+workspace and installed facets is rendered as plain text.
+
+**Starting from a command.** The start form offers a message (the default) or an **Installed command**:
 choose one, read its description and origin, and enter its raw argument text (required or optional, as the command
-declares). The provider choice and **Connect** buttons are shared by both. The installed commands are read only when
-command mode is chosen, and again only with **Refresh commands**. A refused command — changed since it was shown,
-missing a prerequisite, or with unusable arguments — is reported and never started as a free-form task instead. If
+declares). The model choice, **Options** (the model-request limit) and **Connection** are shared by both. The
+installed commands are read only when command mode is chosen, and again only with **Refresh commands**. A refused
+command — changed since it was shown, missing a prerequisite, or with unusable arguments — is reported and never
+started as a message instead. If
 a start's reply is lost, **Retry same start** sends exactly what was submitted, with the same request identity,
 whatever has been refreshed or edited since.
 
-**Installed capabilities** (a collapsible panel under the start form, read when opened) lists every installed
+**Installed capabilities** (a page linked from the sidebar, read when opened) lists every installed
 command, skill and agent with its facet and version and whether it is ready, refused (with the reason) or not allowed
 by the owner's configuration; and every MCP server with its connection approval (approved, denied, not configured,
 needing approval again, or program unavailable — with the current approval digest to review), its configured tool
@@ -685,18 +700,19 @@ is granted for exactly that definition), then closes it. It calls nothing and ap
 [operator configuration](#capability-configuration). Inspection results are kept in memory for display until the
 runtime restarts.
 
-**A command run's capabilities** appear in a panel on its page: the command and its arguments, the definitions the
+**A command run's capabilities** appear in a collapsed **Capabilities** panel on its page: the command and its arguments, the definitions the
 run retained (skills, agents and tools, each with its facet and version) and whether each was actually used, its
 delegations and their outcomes, the recorded outcomes of its tool use (completed, refused, failed, unknown or
 without a recorded outcome), its limits, and its permissions — those it was accepted under, and the owner's current
 configuration, which new operations must also satisfy. It is read from the run's own records, so it stays the same
-after the facet is updated or removed, and reading it starts nothing. History entries name the facet each skill,
-agent and tool came from.
+after the facet is updated or removed, and reading it starts nothing. Conversation entries name the facet each
+skill, agent and tool came from.
 
-**Connecting Anthropic.** When Anthropic needs authorization, the start form says so and offers **Connect
-Anthropic**: open Anthropic's sign-in in a new tab, approve access with your Claude account, then copy the code
-Anthropic shows and paste it into the console's code field. The provider then shows as ready, with no terminal and
-without starting a task; **Reconnect** replaces a working authorization the same way. Details under
+**Connecting Anthropic.** When Anthropic needs authorization, the start form opens its **Connection** section and
+offers **Connect Anthropic**: open Anthropic's sign-in in a new tab, approve access with your Claude account, then
+copy the code Anthropic shows and paste it into the console's code field. The provider then shows as connected, with
+no terminal and without starting a session; **Reconnect**, under the collapsed **Connection** section, replaces a
+working authorization the same way. Details under
 [Providers](#providers).
 
 You can close the page at any time — the run continues — and reopen it later: the console reads a snapshot,

@@ -27,14 +27,19 @@ function headersFor(contentType: string, page: boolean, etag?: string): Record<s
 
 const sourceBuilds = new Map<string, Promise<Awaited<ReturnType<typeof Bun.build>>['outputs']>>();
 
-/** One in-memory bundle per entry and process; concurrent callers share it. */
+/**
+ * One in-memory bundle per entry and process; concurrent callers share it. The stylesheet is compiled by the
+ * Tailwind plugin, a build-time dependency loaded only here: the built server never bundles from source.
+ */
 function buildFromSource(entry: string) {
   let pending = sourceBuilds.get(entry);
   if (pending === undefined) {
-    pending = Bun.build({ entrypoints: [entry], target: 'browser', minify: true }).then((built) => {
+    pending = (async () => {
+      const { default: tailwind } = await import('bun-plugin-tailwind');
+      const built = await Bun.build({ entrypoints: [entry], target: 'browser', minify: true, plugins: [tailwind] });
       if (!built.success) throw new Error('the console could not be bundled');
       return built.outputs;
-    });
+    })();
     sourceBuilds.set(entry, pending);
     pending.catch(() => sourceBuilds.delete(entry));
   }

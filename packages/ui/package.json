@@ -12,7 +12,8 @@
   "dependencies": {
     "@agent-runtime/contracts": "workspace:*",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "react-markdown": "10.1.0"
   },
   "devDependencies": {
     "@types/react": "19.3.0",

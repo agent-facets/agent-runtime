@@ -1,22 +1,24 @@
-// One run: identity, state, budget, failure explanation, the pending question, cancellation and history. The
-// view follows the run's committed history; whether this page is connected is shown separately and never
-// changes what the run is shown to be doing.
+// One session: its state at a glance in a slim header, details on request, failure explanation, the way to stop it,
+// and its conversation. A pending question is answered in a form docked below the conversation, like a reply. The
+// view follows the run's committed history; whether this page is connected is shown separately and never changes
+// what the session is shown to be doing.
 import type { RunCapabilitiesView, RunView } from '@agent-runtime/contracts';
 import { TERMINAL_STATE_KINDS } from '@agent-runtime/contracts';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ApiClient } from '../api/client.ts';
 import { RequestIdentity } from '../api/requests.ts';
 import { type Connection, type EventSourceLike, RunSync } from '../state/sync.ts';
 import type { TimelineView } from '../state/timeline.ts';
 import { RunCapabilitiesPanel } from './Capabilities.tsx';
-import { budgetUsage, FAILURE_LABELS, formatTime, providerLabel, STATE_DESCRIPTIONS, STATE_LABELS } from './format.ts';
-import { History } from './History.tsx';
+import { budgetSummary, budgetUsage, FAILURE_LABELS, formatTime, providerLabel, STATE_DESCRIPTIONS } from './format.ts';
+import { Conversation } from './History.tsx';
 import { QuestionForm } from './QuestionForm.tsx';
+import { ArrowDownIcon, button, ChevronIcon, code, cx, hint, muted, notice, Status, summaryLine } from './ui.tsx';
 
 const CONNECTION_LABELS: Record<Connection, string> = {
   loading: 'Loading…',
   live: 'Live',
-  reconnecting: 'Reconnecting… (the run is not affected)',
+  reconnecting: 'Reconnecting… (the session is not affected)',
   complete: 'All history loaded',
   not_found: 'Not found',
 };
@@ -52,13 +54,17 @@ export function RunDetail({
 
   if (connection === 'not_found') {
     return (
-      <main>
-        <p className="notice error">There is no run with this identity.</p>
-        <a href="#/">All runs</a>
+      <main className="mx-auto max-w-3xl space-y-3 px-4 py-10">
+        <p className={notice('error')}>There is no session with this identity.</p>
+        <a href="#/" className={button.link}>
+          Start a new session
+        </a>
       </main>
     );
   }
-  if (view === undefined) return <main className="hint">Loading the run…</main>;
+  if (view === undefined) {
+    return <main className={cx('mx-auto max-w-3xl px-4 py-10 text-sm', muted)}>Loading the session…</main>;
+  }
   return (
     <RunPage
       client={client}
@@ -128,67 +134,146 @@ export function RunPage({
 }) {
   const { run } = view;
   const state = run.state;
+  const scroller = useRef<HTMLDivElement>(null);
+  const [atEnd, setAtEnd] = useState(true);
+  const pending = state.kind === 'waiting' ? run.pendingQuestion : undefined;
+
+  const measure = useCallback(() => {
+    const element = scroller.current;
+    if (element !== null) setAtEnd(element.scrollHeight - element.scrollTop - element.clientHeight < 80);
+  }, []);
+  // New activity never scrolls the page; it only offers the jump when it arrives out of view.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measured whenever the conversation grows.
+  useEffect(measure, [measure, view.events.length]);
+
   return (
-    <main>
-      <p>
-        <a href="#/">All runs</a>
-      </p>
-      <section className="panel">
-        <div className="title-row">
-          <h1 className="goal text">{run.goal}</h1>
-          <span className={`connection connection-${connection}`}>{CONNECTION_LABELS[connection]}</span>
+    <main className="session flex h-full flex-col">
+      <header className="session-head shrink-0 border-b border-zinc-200 px-4 py-3 md:px-6 dark:border-zinc-800">
+        <div className="mx-auto flex max-w-3xl items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <h1 className="session-title truncate text-base font-semibold" title={run.goal}>
+              {run.goal}
+            </h1>
+            <p className="summary mt-0.5 flex flex-wrap items-center gap-x-1.5 text-sm">
+              <Status kind={state.kind} />
+              <span className={muted}>
+                · {providerLabel(run.provider)} · {run.model} · {budgetSummary(run.budget)}
+              </span>
+            </p>
+          </div>
+          <span
+            className={cx(`connection connection-${connection} mt-1 shrink-0 text-xs`, CONNECTION_TONE[connection])}
+          >
+            {CONNECTION_LABELS[connection]}
+          </span>
+          <CancelButton client={client} run={run} onSettled={refresh} />
         </div>
-        <dl className="facts">
-          <dt>Status</dt>
-          <dd>
-            <span className={`status status-${state.kind}`}>{STATE_LABELS[state.kind]}</span>
-            <span className="hint"> {STATE_DESCRIPTIONS[state.kind]}</span>
-          </dd>
-          <dt>Provider</dt>
-          <dd>
-            {providerLabel(run.provider)} · {run.model} (subscription)
-          </dd>
-          <dt>Workspace</dt>
-          <dd>
-            {run.workspace.label} <code>{run.workspace.root}</code>
-          </dd>
-          <dt>Task model requests</dt>
-          <dd>
-            {budgetUsage(run.budget)}
-            <span className="hint">
-              {' '}
-              This task’s own limit, shared with any delegated agents. Each model response counts; tool calls and tokens
-              do not.
-            </span>
-          </dd>
-          <dt>Started</dt>
-          <dd title={run.createdAt}>{formatTime(run.createdAt)}</dd>
-          <dt>Last activity</dt>
-          <dd title={run.lastActivityAt}>{formatTime(run.lastActivityAt)}</dd>
-          <dt>Run</dt>
-          <dd>
-            <code>{run.runId}</code>
-          </dd>
-        </dl>
-        <Outcome run={run} />
-        <CancelButton client={client} run={run} onSettled={refresh} />
-      </section>
-      {state.kind === 'waiting' && run.pendingQuestion !== undefined && (
-        <QuestionForm
-          key={run.pendingQuestion.questionId}
-          client={client}
-          runId={run.runId}
-          question={run.pendingQuestion}
-          onSettled={refresh}
-        />
+      </header>
+      <div className="relative min-h-0 flex-1">
+        <div ref={scroller} onScroll={measure} className="conversation-scroller h-full overflow-y-auto">
+          <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 md:px-6">
+            <div className="space-y-3">
+              {state.kind !== 'succeeded' && <p className={cx('text-sm', muted)}>{STATE_DESCRIPTIONS[state.kind]}</p>}
+              <Outcome run={run} />
+              <details className="disclosure details group">
+                <summary className={summaryLine}>
+                  <ChevronIcon />
+                  Details
+                </summary>
+                <dl className="facts mt-3 grid grid-cols-1 gap-x-4 gap-y-1 text-sm sm:grid-cols-[max-content_1fr] sm:gap-y-1.5">
+                  <dt className={muted}>Model</dt>
+                  <dd className="mb-1.5 sm:mb-0">
+                    {providerLabel(run.provider)} · {run.model} (subscription)
+                  </dd>
+                  <dt className={muted}>Model requests</dt>
+                  <dd className="mb-1.5 sm:mb-0">
+                    {budgetUsage(run.budget)}
+                    <span className={hint}>
+                      {' '}
+                      This session’s own limit, shared with any delegated agents. Each model response counts; tool calls
+                      and tokens do not.
+                    </span>
+                  </dd>
+                  <dt className={muted}>Workspace</dt>
+                  <dd className="mb-1.5 break-all sm:mb-0">
+                    {run.workspace.label} <code className={code}>{run.workspace.root}</code>
+                  </dd>
+                  <dt className={muted}>Started</dt>
+                  <dd className="mb-1.5 sm:mb-0" title={run.createdAt}>
+                    {formatTime(run.createdAt)}
+                  </dd>
+                  <dt className={muted}>Last activity</dt>
+                  <dd className="mb-1.5 sm:mb-0" title={run.lastActivityAt}>
+                    {formatTime(run.lastActivityAt)}
+                  </dd>
+                  <dt className={muted}>Session</dt>
+                  <dd className="break-all">
+                    <code className={code}>{run.runId}</code>
+                  </dd>
+                </dl>
+              </details>
+              <RunCapabilitiesPanel capabilities={capabilities} />
+            </div>
+            <section aria-labelledby="conversation-heading">
+              <h2 id="conversation-heading" className="sr-only">
+                Conversation
+              </h2>
+              <Conversation
+                goal={run.goal}
+                startedAt={run.createdAt}
+                events={view.events}
+                state={state}
+                capabilities={capabilities}
+                pendingQuestionId={pending?.questionId}
+              />
+            </section>
+          </div>
+        </div>
+        <button
+          type="button"
+          className={cx(
+            button.secondary,
+            'absolute right-4 bottom-4 rounded-full shadow-md',
+            atEnd && 'pointer-events-none invisible opacity-0',
+          )}
+          onClick={() => jumpToLatest(scroller.current)}
+        >
+          <ArrowDownIcon />
+          Jump to latest
+        </button>
+      </div>
+      {pending !== undefined && (
+        <div className="shrink-0 border-t border-zinc-200 bg-zinc-50/80 px-4 py-3 md:px-6 dark:border-zinc-800 dark:bg-zinc-900/60">
+          <div className="mx-auto max-h-[60dvh] max-w-3xl overflow-y-auto">
+            <QuestionForm
+              key={pending.questionId}
+              client={client}
+              runId={run.runId}
+              question={pending}
+              onSettled={refresh}
+            />
+          </div>
+        </div>
       )}
-      <RunCapabilitiesPanel capabilities={capabilities} />
-      <section className="panel">
-        <h2>History</h2>
-        <History events={view.events} state={state} capabilities={capabilities} />
-      </section>
     </main>
   );
+}
+
+const CONNECTION_TONE: Record<Connection, string> = {
+  loading: muted,
+  live: 'text-emerald-700 dark:text-emerald-400',
+  reconnecting: 'text-amber-700 dark:text-amber-400',
+  complete: muted,
+  not_found: muted,
+};
+
+/** Moves to the newest entry only when the owner asks: new activity never scrolls the page or takes focus. */
+function jumpToLatest(scroller: HTMLElement | null) {
+  const latest = scroller?.querySelector<HTMLElement>('.conversation > li:last-child');
+  if (scroller === null || latest === null || latest === undefined) return;
+  scroller.scrollTo({ top: scroller.scrollHeight });
+  latest.tabIndex = -1;
+  latest.focus({ preventScroll: true });
 }
 
 function Outcome({ run }: { run: RunView }) {
@@ -196,37 +281,29 @@ function Outcome({ run }: { run: RunView }) {
   if (state.kind === 'failed') {
     const { failure } = state;
     return (
-      <div className="outcome failed" role="alert">
+      <div className={cx('outcome failed space-y-1', notice('error'))} role="alert">
         <p>
-          <strong>Failed — {FAILURE_LABELS[failure.category]}</strong> ({failure.reason.replaceAll('_', ' ')})
+          <strong className="font-semibold">Failed — {FAILURE_LABELS[failure.category]}</strong> (
+          {failure.reason.replaceAll('_', ' ')})
         </p>
-        <p className="text">{failure.message}</p>
-        {failure.remediation !== undefined && <p className="text">{failure.remediation}</p>}
+        <p className="whitespace-pre-wrap">{failure.message}</p>
+        {failure.remediation !== undefined && <p className="whitespace-pre-wrap">{failure.remediation}</p>}
         {failure.retryAfterSeconds !== undefined && (
           <p>The provider asked to wait about {Math.ceil(failure.retryAfterSeconds / 60)} minutes.</p>
         )}
-        <p className="hint">Finished {formatTime(state.finishedAt)}</p>
+        <p className="text-xs opacity-80">Finished {formatTime(state.finishedAt)}</p>
       </div>
     );
   }
   if (state.kind === 'interrupted') {
     return (
-      <div className="outcome interrupted">
-        <p>
-          Interrupted {formatTime(state.detectedAt)}; last recorded activity {formatTime(state.lastActivityAt)}.
-        </p>
-      </div>
+      <p className={cx('outcome interrupted', notice('error'))}>
+        Interrupted {formatTime(state.detectedAt)}; last recorded activity {formatTime(state.lastActivityAt)}.
+      </p>
     );
   }
   if (state.kind === 'cancelled' || state.kind === 'cancelling') {
-    return <p className="outcome">Cancellation accepted {formatTime(state.acceptedAt)}.</p>;
-  }
-  if (state.kind === 'succeeded') {
-    return (
-      <p className="outcome succeeded">
-        Completed {formatTime(state.finishedAt)}. The result is marked in the history.
-      </p>
-    );
+    return <p className={cx('outcome text-sm', muted)}>Stop requested {formatTime(state.acceptedAt)}.</p>;
   }
   return null;
 }
@@ -234,7 +311,7 @@ function Outcome({ run }: { run: RunView }) {
 function CancelButton({ client, run, onSettled }: { client: ApiClient; run: RunView; onSettled: () => void }) {
   const identity = useRef(new RequestIdentity<string>());
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<{ tone: 'error' | 'uncertain'; text: string } | undefined>();
+  const [message, setNotice] = useState<{ tone: 'error' | 'uncertain'; text: string } | undefined>();
   if (TERMINAL_STATE_KINDS.has(run.state.kind) || run.state.kind === 'cancelling') return null;
 
   const cancel = async () => {
@@ -247,7 +324,7 @@ function CancelButton({ client, run, onSettled }: { client: ApiClient; run: RunV
     if (settlement === 'unknown') {
       return setNotice({
         tone: 'uncertain',
-        text: 'The cancellation may have been recorded, but no reply arrived. Cancelling again is safe.',
+        text: 'The stop may have been recorded, but no reply arrived. Stopping again is safe.',
       });
     }
     if (outcome.kind === 'refused') {
@@ -257,12 +334,20 @@ function CancelButton({ client, run, onSettled }: { client: ApiClient; run: RunV
   };
 
   return (
-    <div className="cancel">
-      <button type="button" className="danger" disabled={busy} onClick={() => void cancel()}>
-        {busy ? 'Cancelling…' : 'Cancel run'}
+    <div className="cancel flex shrink-0 flex-col items-end gap-1">
+      <button
+        type="button"
+        className={cx(button.danger, 'h-8 px-3')}
+        disabled={busy}
+        aria-describedby="stop-help"
+        onClick={() => void cancel()}
+      >
+        {busy ? 'Stopping…' : 'Stop session'}
       </button>
-      <span className="hint"> Stops further agent work. Work already sent to the provider may still finish.</span>
-      {notice !== undefined && <p className={`notice ${notice.tone}`}>{notice.text}</p>}
+      <span id="stop-help" className="sr-only">
+        Stops further agent work. Work already sent to the provider may still finish.
+      </span>
+      {message !== undefined && <p className={cx(notice(message.tone), 'max-w-xs')}>{message.text}</p>}
     </div>
   );
 }

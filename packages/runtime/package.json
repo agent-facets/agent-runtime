@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun src/dev/supervisor.ts",
+    "dev": "bun --config=../../bunfig.toml src/dev/supervisor.ts",
     "start": "bun dist/main.js",
-    "build": "bun build src/main.ts src/auth.ts --target bun --production --root .. --entry-naming '[name].[ext]' --outdir dist && bun src/build/write-code-manifest.ts dist",
+    "build": "NODE_ENV=production bun src/build/build.ts dist && bun src/build/write-code-manifest.ts dist",
     "typecheck": "tsc -p tsconfig.json",
     "test": "bun test"
   },
