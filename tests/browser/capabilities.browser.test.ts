@@ -47,17 +47,18 @@ describe('command runs in the console', () => {
     const page = await browser.newPage();
     try {
       await page.goto(server.url);
-      await page.getByLabel('Provider').waitFor({ timeout: TIMEOUT });
-      await page.getByLabel('Installed command').check();
+      await page.getByLabel('Model', { exact: true }).waitFor({ timeout: TIMEOUT });
+      await page.locator('fieldset.mode label', { hasText: 'Installed command' }).click();
       const select = page.locator('select[name="command"]');
       await select.waitFor({ timeout: TIMEOUT });
       await select.selectOption('command:sync');
       await page.getByLabel('Arguments').fill('owner/repo-a');
-      await page.getByRole('button', { name: 'Start' }).click();
+      await page.getByRole('button', { name: 'Start session' }).click();
       await page.waitForURL(/#\/runs\/[0-9a-f-]{36}$/, { timeout: TIMEOUT });
 
       await page.locator('.message.final').waitFor({ timeout: TIMEOUT });
-      const panel = page.locator('section.capabilities');
+      const panel = page.locator('details.capabilities');
+      await panel.locator('> summary').click();
       await panel.getByText('— called').waitFor({ timeout: TIMEOUT });
       expect(await panel.textContent()).toContain('command:sync');
       expect(await page.content()).not.toContain(SLOT_VALUE);

@@ -1,331 +1,103 @@
-:root {
-  color-scheme: light dark;
-  --fg: #1d1d1f;
-  --muted: #61656b;
-  --bg: #f6f6f4;
-  --panel: #ffffff;
-  --border: #d7d7d2;
-  --accent: #2f5bd3;
-  --ok: #1d7a3a;
-  --warn: #9a6200;
-  --bad: #b3261e;
-  font-family: system-ui, sans-serif;
-  font-size: 15px;
-  line-height: 1.45;
-  color: var(--fg);
-  background: var(--bg);
-}
+/* Tailwind, generated only from the console's own source. Components style themselves with utilities; this file
+   holds the page base and the Markdown prose, whose elements come from the renderer rather than our markup. */
+@import "tailwindcss" source(none);
+@source "./";
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --fg: #e8e8e6;
-    --muted: #a3a6ab;
-    --bg: #161718;
-    --panel: #1f2022;
-    --border: #3a3b3e;
-    --accent: #8aa8ff;
-    --ok: #6fcf8a;
-    --warn: #e8b04b;
-    --bad: #ff8a80;
+@layer base {
+  html {
+    color-scheme: light dark;
+  }
+
+  body {
+    @apply bg-white text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
   }
 }
 
-body {
-  margin: 0 auto;
-  max-width: 64rem;
-  padding: 0 1rem 3rem;
-}
-
-a {
-  color: var(--accent);
-}
-
-.masthead {
-  padding: 1rem 0;
-  font-weight: 600;
-}
-
-.panel {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 1rem 1.25rem;
-  margin-bottom: 1rem;
-}
-
-h1,
-h2 {
-  margin: 0 0 0.75rem;
-  font-size: 1.15rem;
-}
-
-label {
-  display: block;
-  margin-bottom: 0.5rem;
-}
-
-textarea,
-select,
-input[type="text"],
-input[type="number"] {
-  display: block;
-  width: 100%;
-  box-sizing: border-box;
-  font: inherit;
-  margin-top: 0.25rem;
-  padding: 0.4rem;
-}
-
-.row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  align-items: end;
-}
-
-.row label,
-.row .field {
-  flex: 0 1 18rem;
-}
-
-.field label {
-  margin-bottom: 0.25rem;
-}
-
-button {
-  font: inherit;
-  padding: 0.4rem 0.9rem;
-  border-radius: 6px;
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: #fff;
-  cursor: pointer;
-}
-
-button:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-button.secondary {
-  background: transparent;
-  color: var(--accent);
-}
-
-/* A link that starts an action elsewhere (Anthropic's sign-in), styled like a button. */
-a.button {
-  display: inline-block;
-  padding: 0.4rem 0.9rem;
-  border-radius: 6px;
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: #fff;
-  text-decoration: none;
-}
-
-.connect {
-  margin-top: 1rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--border);
-}
-
-.connect ol {
-  padding-left: 1.25rem;
-}
-
-.connect li {
-  margin-bottom: 0.75rem;
-}
-
-.connect .user-code {
-  font-size: 1.25rem;
-  letter-spacing: 0.1em;
-  user-select: all;
-}
-
-button.danger {
-  border-color: var(--bad);
-  background: transparent;
-  color: var(--bad);
-}
-
-.hint {
-  color: var(--muted);
-}
-
-.notice {
-  padding: 0.5rem 0.75rem;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-}
-
-.notice.error {
-  border-color: var(--bad);
-  color: var(--bad);
-}
-
-.notice.uncertain {
-  border-color: var(--warn);
-  color: var(--warn);
-}
-
-.notice.ok {
-  border-color: var(--ok);
-  color: var(--ok);
-}
-
-/* Owner and agent text keeps its line breaks and never runs off the page. */
-.text {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-table.runs {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-table.runs th,
-table.runs td {
-  text-align: left;
-  padding: 0.35rem 0.5rem;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
-}
-
-table.runs td.goal {
-  max-width: 24rem;
-  min-width: 9rem;
-  /* Long unbroken text wraps; ordinary words are not split. */
-  overflow-wrap: break-word;
-}
-
-.table-scroll {
-  overflow-x: auto;
-}
-
-/* On a phone, the run list keeps the goal, status and last activity; the run page shows the rest. */
-@media (max-width: 640px) {
-  .wide-only {
-    display: none;
+@layer components {
+  .prose {
+    @apply text-[0.9375rem] leading-relaxed break-words;
   }
-}
 
-.id,
-code {
-  font-family: ui-monospace, monospace;
-  font-size: 0.9em;
-}
+  .prose > :first-child {
+    @apply mt-0;
+  }
 
-.status {
-  font-weight: 600;
-}
+  .prose > :last-child {
+    @apply mb-0;
+  }
 
-.status-working,
-.status-cancelling {
-  color: var(--accent);
-}
+  .prose p,
+  .prose ul,
+  .prose ol,
+  .prose pre,
+  .prose blockquote,
+  .prose table {
+    @apply my-3;
+  }
 
-.status-waiting {
-  color: var(--warn);
-}
+  .prose ul {
+    @apply list-disc pl-6;
+  }
 
-.status-succeeded {
-  color: var(--ok);
-}
+  .prose ol {
+    @apply list-decimal pl-6;
+  }
 
-.status-failed,
-.status-interrupted {
-  color: var(--bad);
-}
+  .prose li {
+    @apply my-1;
+  }
 
-.status-cancelled {
-  color: var(--muted);
-}
+  .prose h1,
+  .prose h2,
+  .prose h3,
+  .prose h4 {
+    @apply mt-5 mb-2 font-semibold;
+  }
 
-.title-row {
-  display: flex;
-  gap: 1rem;
-  justify-content: space-between;
-  align-items: start;
-}
+  .prose h1 {
+    @apply text-lg;
+  }
 
-.connection {
-  font-size: 0.85rem;
-  color: var(--muted);
-  white-space: nowrap;
-}
+  .prose h2,
+  .prose h3,
+  .prose h4 {
+    @apply text-base;
+  }
 
-.connection-reconnecting {
-  color: var(--warn);
-}
+  .prose a {
+    @apply text-blue-600 underline underline-offset-2 dark:text-blue-400;
+  }
 
-dl.facts {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 0.25rem 1rem;
-  margin: 0 0 0.75rem;
-}
+  .prose strong {
+    @apply font-semibold;
+  }
 
-dl.facts dt {
-  color: var(--muted);
-}
+  .prose blockquote {
+    @apply border-l-2 border-zinc-300 pl-3 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400;
+  }
 
-dl.facts dd {
-  margin: 0;
-}
+  .prose code {
+    @apply rounded bg-zinc-100 px-1 py-0.5 font-mono text-[0.85em] dark:bg-zinc-800;
+  }
 
-.outcome.failed {
-  border-left: 3px solid var(--bad);
-  padding-left: 0.75rem;
-}
+  .prose pre {
+    @apply overflow-x-auto rounded-lg bg-zinc-100 p-3 text-sm dark:bg-zinc-900;
+  }
 
-.history {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
+  .prose pre code {
+    @apply bg-transparent p-0;
+  }
 
-.history > li {
-  border-top: 1px solid var(--border);
-  padding: 0.5rem 0;
-}
+  .prose table {
+    @apply block overflow-x-auto text-sm;
+  }
 
-.history time {
-  display: block;
-  font-size: 0.8rem;
-  color: var(--muted);
-}
+  .prose th,
+  .prose td {
+    @apply border border-zinc-200 px-2 py-1 dark:border-zinc-800;
+  }
 
-.history p {
-  margin: 0.15rem 0;
-}
-
-.message.final {
-  border-left: 3px solid var(--ok);
-  padding-left: 0.75rem;
-}
-
-.label {
-  font-weight: 600;
-}
-
-pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-size: 0.85rem;
-  max-height: 24rem;
-  overflow: auto;
-}
-
-fieldset {
-  border: none;
-  padding: 0;
-  margin: 0 0 0.75rem;
-}
-
-.choice {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
+  .prose hr {
+    @apply my-4 border-zinc-200 dark:border-zinc-800;
+  }
 }

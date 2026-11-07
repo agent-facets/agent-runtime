@@ -10,6 +10,10 @@ import type { AuthAttempt, ProviderReadiness } from '@agent-runtime/contracts';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import type { ApiClient, ApiOutcome } from '../api/client.ts';
 import { formatTime } from './format.ts';
+import { button, cx, field, label, muted, notice } from './ui.tsx';
+
+const PANEL = 'connect max-w-xl space-y-3 text-sm';
+const STEPS = 'list-decimal space-y-3 pl-5';
 
 const STATUS_POLL_MS = 1_500;
 
@@ -30,7 +34,7 @@ export function ConnectAnthropic({
   const [attempt, setAttempt] = useState<AuthAttempt | undefined>();
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<Notice>();
+  const [message, setNotice] = useState<Notice>();
 
   const settle = useCallback(
     (outcome: ApiOutcome<AuthAttempt>, lostReply: string) => {
@@ -38,7 +42,7 @@ export function ConnectAnthropic({
         const next = outcome.value;
         if (next.state === 'connected') {
           setAttempt(undefined);
-          setNotice({ tone: 'ok', text: 'Connected. You can start tasks now.' });
+          setNotice({ tone: 'ok', text: 'Connected. You can start sessions now.' });
           onConnected();
         } else if (next.state === 'awaiting_code' || next.state === 'completing') {
           setAttempt(next);
@@ -111,11 +115,11 @@ export function ConnectAnthropic({
     } else settle(outcome, UNREACHABLE);
   };
 
-  const shown = notice !== undefined && <p className={`notice ${notice.tone}`}>{notice.text}</p>;
+  const shown = message !== undefined && <p className={notice(message.tone)}>{message.text}</p>;
 
   if (attempt?.state === 'completing') {
     return (
-      <div className="connect" aria-live="polite">
+      <div className={PANEL} aria-live="polite">
         <p>Connecting Anthropic… This takes a few seconds.</p>
         {shown}
       </div>
@@ -124,20 +128,20 @@ export function ConnectAnthropic({
 
   if (attempt?.state === 'awaiting_code' && attempt.authorizationUrl !== undefined) {
     return (
-      <div className="connect">
-        <h2>Connect Anthropic</h2>
-        <ol>
-          <li>
-            <a className="button" href={attempt.authorizationUrl} target="_blank" rel="noopener noreferrer">
+      <div className={PANEL}>
+        <h3 className="font-semibold">Connect Anthropic</h3>
+        <ol className={STEPS}>
+          <li className="space-y-1.5">
+            <a className={button.primary} href={attempt.authorizationUrl} target="_blank" rel="noopener noreferrer">
               Open Anthropic sign-in
-            </a>{' '}
-            <span className="hint">Opens in a new tab. Sign in with your Claude account and approve access.</span>
+            </a>
+            <p className={muted}>Opens in a new tab. Sign in with your Claude account and approve access.</p>
           </li>
           <li>
             Anthropic then shows a code. Copy it, come back to this tab and paste it below.
-            <form aria-label="Anthropic authorization code" onSubmit={submit}>
-              <div className="row">
-                <label>
+            <form aria-label="Anthropic authorization code" onSubmit={submit} className="mt-2">
+              <div className="flex flex-wrap items-end gap-2">
+                <label className={cx(label, 'min-w-48 flex-1')}>
                   Code
                   <input
                     type="text"
@@ -145,40 +149,41 @@ export function ConnectAnthropic({
                     value={code}
                     autoComplete="off"
                     spellCheck={false}
+                    className={field}
                     onChange={(event) => setCode(event.target.value)}
                   />
                 </label>
-                <button type="submit" disabled={busy || !/\S/.test(code)}>
+                <button type="submit" className={button.primary} disabled={busy || !/\S/.test(code)}>
                   Connect
                 </button>
-                <button type="button" className="secondary" disabled={busy} onClick={() => void cancel()}>
+                <button type="button" className={button.secondary} disabled={busy} onClick={() => void cancel()}>
                   Cancel
                 </button>
               </div>
             </form>
           </li>
         </ol>
-        <p className="hint">This sign-in expires at {formatTime(attempt.expiresAt)}.</p>
+        <p className={muted}>This sign-in expires at {formatTime(attempt.expiresAt)}.</p>
         {shown}
       </div>
     );
   }
 
   return (
-    <div className="connect">
+    <div className={PANEL}>
       {readiness === 'ready' ? (
-        <p className="hint">
-          Anthropic is connected.{' '}
-          <button type="button" className="secondary" disabled={busy} onClick={() => void begin()}>
+        <p className={cx('flex flex-wrap items-center gap-3', muted)}>
+          Anthropic is connected.
+          <button type="button" className={button.secondary} disabled={busy} onClick={() => void begin()}>
             Reconnect
           </button>
         </p>
       ) : (
-        <p>
-          <button type="button" disabled={busy} onClick={() => void begin()}>
+        <p className="flex flex-wrap items-center gap-3">
+          <button type="button" className={button.primary} disabled={busy} onClick={() => void begin()}>
             Connect Anthropic
-          </button>{' '}
-          <span className="hint">Sign in with your Claude account to let tasks use it.</span>
+          </button>
+          <span className={muted}>Sign in with your Claude account to let sessions use it.</span>
         </p>
       )}
       {shown}
@@ -198,7 +203,7 @@ export function ConnectOpenAI({
 }) {
   const [attempt, setAttempt] = useState<AuthAttempt | undefined>();
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<Notice>();
+  const [message, setNotice] = useState<Notice>();
 
   const settle = useCallback(
     (outcome: ApiOutcome<AuthAttempt>, lostReply: string) => {
@@ -206,7 +211,7 @@ export function ConnectOpenAI({
         const next = outcome.value;
         if (next.state === 'connected') {
           setAttempt(undefined);
-          setNotice({ tone: 'ok', text: 'Connected. You can start tasks now.' });
+          setNotice({ tone: 'ok', text: 'Connected. You can start sessions now.' });
           onConnected();
         } else if (next.state === 'awaiting_approval' || next.state === 'completing') {
           setAttempt(next);
@@ -261,11 +266,11 @@ export function ConnectOpenAI({
     } else settle(outcome, UNREACHABLE);
   };
 
-  const shown = notice !== undefined && <p className={`notice ${notice.tone}`}>{notice.text}</p>;
+  const shown = message !== undefined && <p className={notice(message.tone)}>{message.text}</p>;
 
   if (attempt?.state === 'completing') {
     return (
-      <div className="connect" aria-live="polite">
+      <div className={PANEL} aria-live="polite">
         <p>Approved. Connecting OpenAI… This takes a few seconds.</p>
         {shown}
       </div>
@@ -274,23 +279,26 @@ export function ConnectOpenAI({
 
   if (attempt?.state === 'awaiting_approval' && attempt.authorizationUrl !== undefined) {
     return (
-      <div className="connect" aria-live="polite">
-        <h2>Connect OpenAI</h2>
-        <ol>
-          <li>
-            <a className="button" href={attempt.authorizationUrl} target="_blank" rel="noopener noreferrer">
+      <div className={PANEL} aria-live="polite">
+        <h3 className="font-semibold">Connect OpenAI</h3>
+        <ol className={STEPS}>
+          <li className="space-y-1.5">
+            <a className={button.primary} href={attempt.authorizationUrl} target="_blank" rel="noopener noreferrer">
               Open OpenAI sign-in
-            </a>{' '}
-            <span className="hint">Opens in a new tab. Sign in with your ChatGPT account.</span>
+            </a>
+            <p className={muted}>Opens in a new tab. Sign in with your ChatGPT account.</p>
           </li>
           <li>
-            Enter this code there and approve: <code className="user-code">{attempt.userCode}</code>
+            Enter this code there and approve:{' '}
+            <code className="user-code rounded-md bg-zinc-100 px-2 py-1 font-mono text-lg tracking-widest select-all dark:bg-zinc-800">
+              {attempt.userCode}
+            </code>
           </li>
           <li>Come back here. This panel updates by itself once you approve.</li>
         </ol>
-        <p className="hint">
-          Waiting for approval until {formatTime(attempt.expiresAt)}.{' '}
-          <button type="button" className="secondary" disabled={busy} onClick={() => void cancel()}>
+        <p className={cx('flex flex-wrap items-center gap-3', muted)}>
+          Waiting for approval until {formatTime(attempt.expiresAt)}.
+          <button type="button" className={button.secondary} disabled={busy} onClick={() => void cancel()}>
             Cancel
           </button>
         </p>
@@ -300,20 +308,20 @@ export function ConnectOpenAI({
   }
 
   return (
-    <div className="connect">
+    <div className={PANEL}>
       {readiness === 'ready' ? (
-        <p className="hint">
-          OpenAI is connected.{' '}
-          <button type="button" className="secondary" disabled={busy} onClick={() => void begin()}>
+        <p className={cx('flex flex-wrap items-center gap-3', muted)}>
+          OpenAI is connected.
+          <button type="button" className={button.secondary} disabled={busy} onClick={() => void begin()}>
             Reconnect
           </button>
         </p>
       ) : (
-        <p>
-          <button type="button" disabled={busy} onClick={() => void begin()}>
+        <p className="flex flex-wrap items-center gap-3">
+          <button type="button" className={button.primary} disabled={busy} onClick={() => void begin()}>
             Connect OpenAI
-          </button>{' '}
-          <span className="hint">Sign in with your ChatGPT account to let tasks use it.</span>
+          </button>
+          <span className={muted}>Sign in with your ChatGPT account to let sessions use it.</span>
         </p>
       )}
       {shown}

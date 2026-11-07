@@ -47,10 +47,10 @@ const ask =
     );
 const finish = (text: string) => () => sse(textTurn(`msg_${crypto.randomUUID().slice(0, 6)}`, text));
 
-const status = (page: Page) => page.locator('.facts .status');
+const status = (page: Page) => page.locator('.summary .status');
 
 describe('the console', () => {
-  test('smoke: start a task, answer false after reconnecting, and see the result once', async () => {
+  test('smoke: start a session, answer false after reconnecting, and see the result once', async () => {
     const server = await consoleServer({
       persistence,
       scratch,
@@ -60,13 +60,14 @@ describe('the console', () => {
     const page = await browser.newPage();
     try {
       await page.goto(server.url);
-      await page.getByLabel('Provider').waitFor({ timeout: TIMEOUT });
-      await page.getByLabel('Goal').fill('Summarize notes/plan.md, then ask me before continuing.');
-      // The task's own model-request limit starts at the configured default and can be changed before starting.
-      const limit = page.getByLabel('Task model-request limit');
+      await page.getByLabel('Model', { exact: true }).waitFor({ timeout: TIMEOUT });
+      await page.getByLabel('Your message').fill('Summarize notes/plan.md, then ask me before continuing.');
+      // The session's own model-request limit starts at the configured default and can be changed under Options.
+      await page.locator('details.options > summary').click();
+      const limit = page.getByLabel('Model-request limit');
       expect(await limit.inputValue()).toBe('50');
       await limit.fill('7');
-      await page.getByRole('button', { name: 'Start' }).click();
+      await page.getByRole('button', { name: 'Start session' }).click();
       await page.waitForURL(/#\/runs\/[0-9a-f-]{36}$/, { timeout: TIMEOUT });
       await page.getByRole('form', { name: 'Answer the question' }).waitFor({ timeout: TIMEOUT });
 
@@ -80,13 +81,22 @@ describe('the console', () => {
       await page.getByLabel('No').check();
       await page.getByRole('button', { name: 'Send answer' }).click();
       await page.locator('.message.final').waitFor({ timeout: TIMEOUT });
-      expect(await status(page).textContent()).toBe('Completed');
+      expect(await status(page).textContent()).toBe('Finished');
       expect(await page.locator('.event-question-answered strong').textContent()).toBe('false');
+      expect(await page.locator('.summary').textContent()).toContain('3/7 requests');
       expect(await page.locator('.facts').textContent()).toContain('3 of 7 used · 4 remaining');
 
-      // Every recorded event appears once, in order; only model turns without text are not listed.
+      // Jumping is explicit: it is offered once the newest entry is out of view, and lands on it.
+      await page.setViewportSize({ width: 800, height: 360 });
+      await page.locator('.conversation-scroller').evaluate((element) => element.scrollTo({ top: 0 }));
+      await page.getByRole('button', { name: 'Jump to latest' }).click({ timeout: TIMEOUT });
+      expect(await page.locator('.conversation > li:last-child').evaluate((element) => element.matches(':focus'))).toBe(
+        true,
+      );
+
+      // Every recorded event appears once, in order, folded or not; only model turns without text are not listed.
       const seqs = await page
-        .locator('.history > li')
+        .locator('.conversation [data-seq]')
         .evaluateAll((items) => items.map((item) => item.getAttribute('data-seq')));
       const runId = page.url().split('/').at(-1) as string;
       const recorded = (await (await fetch(`${server.url}/api/v1/runs/${runId}/events?after=0`)).json()) as {

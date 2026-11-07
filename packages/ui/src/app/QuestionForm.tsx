@@ -4,6 +4,7 @@ import { canonicalAnswer, type QuestionView } from '@agent-runtime/contracts';
 import { type FormEvent, useState } from 'react';
 import type { ApiClient } from '../api/client.ts';
 import { actorLabel, formatValue } from './format.ts';
+import { button, cx, field, label, muted, notice } from './ui.tsx';
 
 const INVALID: Record<string, string> = {
   answer_missing: 'Choose or enter an answer.',
@@ -17,6 +18,9 @@ const INVALID: Record<string, string> = {
 };
 
 type Notice = { tone: 'error' | 'uncertain' | 'info'; text: string };
+
+/** The pending question's form, which the session page moves to on request. */
+export const QUESTION_FORM_ID = 'pending-question';
 
 export function QuestionForm({
   client,
@@ -35,7 +39,7 @@ export function QuestionForm({
   const [single, setSingle] = useState<number | undefined>();
   const [multiple, setMultiple] = useState<ReadonlySet<number>>(new Set());
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<Notice | undefined>();
+  const [message, setNotice] = useState<Notice | undefined>();
 
   const answer = (): { ok: true; value: unknown } | { ok: false } => {
     if (input.kind === 'text') return { ok: true, value: text };
@@ -73,32 +77,54 @@ export function QuestionForm({
   };
 
   return (
-    <form className="panel question" onSubmit={submit} aria-label="Answer the question">
-      <h2>
-        {question.asker === undefined
-          ? 'The agent asks'
-          : question.asker.kind === 'root'
-            ? 'The root agent asks'
-            : `${actorLabel(question.asker)} asks`}
-      </h2>
-      <p className="text prompt">{question.prompt}</p>
+    <form
+      id={QUESTION_FORM_ID}
+      className={cx(
+        'question space-y-3 border-amber-300 p-4 shadow-sm dark:border-amber-800',
+        'rounded-xl border bg-white dark:bg-zinc-900',
+      )}
+      onSubmit={submit}
+      aria-label="Answer the question"
+    >
+      <div>
+        <h3 className="text-xs font-semibold tracking-wide text-amber-700 uppercase dark:text-amber-400">
+          {question.asker === undefined
+            ? 'The agent asks'
+            : question.asker.kind === 'root'
+              ? 'The root agent asks'
+              : `${actorLabel(question.asker)} asks`}
+        </h3>
+        <p className="prompt mt-1 text-[0.9375rem] break-words whitespace-pre-wrap">{question.prompt}</p>
+      </div>
       {input.kind === 'text' && (
-        <label>
+        <label className={label}>
           Your answer
-          <textarea name="answer" value={text} rows={3} onChange={(event) => setText(event.target.value)} />
-          <span className="hint">
+          <textarea
+            name="answer"
+            value={text}
+            rows={2}
+            className={cx(field, 'max-h-40')}
+            onChange={(event) => setText(event.target.value)}
+          />
+          <span className={cx('mt-1 block text-xs font-normal', muted)}>
             {input.minLength > 0 ? `At least ${input.minLength} characters; ` : ''}at most {input.maxLength}.
           </span>
         </label>
       )}
       {input.kind === 'choice' && (
-        <fieldset>
-          <legend>{input.multiple ? `Choose ${input.minSelections} to ${input.maxSelections}` : 'Choose one'}</legend>
+        <fieldset className="max-h-48 space-y-1 overflow-y-auto">
+          <legend className={cx('mb-1 text-xs', muted)}>
+            {input.multiple ? `Choose ${input.minSelections} to ${input.maxSelections}` : 'Choose one'}
+          </legend>
           {input.options.map((option, index) => (
-            <label key={JSON.stringify(option.value)} className="choice">
+            <label
+              key={JSON.stringify(option.value)}
+              className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-zinc-200 px-3 py-2 text-sm hover:bg-zinc-50 has-checked:border-zinc-900 has-checked:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800 dark:has-checked:border-zinc-100 dark:has-checked:bg-zinc-800"
+            >
               <input
                 type={input.multiple ? 'checkbox' : 'radio'}
                 name="answer"
+                className="accent-zinc-900 dark:accent-zinc-100"
                 checked={input.multiple ? multiple.has(index) : single === index}
                 onChange={() => {
                   if (!input.multiple) return setSingle(index);
@@ -113,10 +139,12 @@ export function QuestionForm({
           ))}
         </fieldset>
       )}
-      <button type="submit" disabled={busy}>
-        {busy ? 'Sending…' : 'Send answer'}
-      </button>
-      {notice !== undefined && <p className={`notice ${notice.tone}`}>{notice.text}</p>}
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="submit" className={button.primary} disabled={busy}>
+          {busy ? 'Sending…' : 'Send answer'}
+        </button>
+        {message !== undefined && <p className={cx(notice(message.tone), 'flex-1')}>{message.text}</p>}
+      </div>
     </form>
   );
 }

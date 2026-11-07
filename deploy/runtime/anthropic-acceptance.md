@@ -68,7 +68,7 @@ authorization, and refresh only as the runtime performs it on use. Connecting ma
 10. While it waits, restart the runtime process (stop it, start it again with the same storage). Reopen the page:
     still waiting.
 11. Answer **No**. Confirm the result appears and the history shows the answer `false`.
-12. Open the cancellation run; when its question appears, press **Cancel run**. Restart the runtime again and
+12. Open the cancellation run; when its question appears, press **Stop session**. Restart the runtime again and
     confirm the run is still cancelled and its question closed.
 13. `bun run acceptance:anthropic -- report --origin http://127.0.0.1:<port> --journey <run> --cancel <run>` must
     end with `trial conditions hold`. It only reads the two named runs (which must differ). It checks that the

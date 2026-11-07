@@ -89,7 +89,8 @@ export function createDevelopmentConsole(options: DevelopmentConsoleOptions): De
     }
     let upstream: Response;
     try {
-      upstream = await fetch(`http://console${url.pathname}${url.search}`, {
+      // Bun's development server refuses any Host but its own (localhost); the socket is what is private.
+      upstream = await fetch(`http://localhost${url.pathname}${url.search}`, {
         unix: socket,
         method: request.method,
         headers,

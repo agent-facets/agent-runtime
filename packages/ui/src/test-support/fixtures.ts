@@ -69,6 +69,47 @@ export const attempt = (seq: number | string, consumed: number): RunEvent => ({
   },
 });
 
+type ToolEvent = Extract<RunEvent, { kind: 'tool.operation' }>;
+type AttemptEvent = Extract<RunEvent, { kind: 'model.attempt' }>;
+
+/** One step of a tool operation; steps of one operation share its `operation` letter. */
+export const tool = (
+  seq: number | string,
+  disposition: ToolEvent['payload']['disposition'],
+  operation = 'a',
+  actor?: ToolEvent['payload']['actor'],
+): RunEvent => ({
+  ...base(seq),
+  kind: 'tool.operation',
+  payload: {
+    operationId: operation.repeat(64),
+    toolName: 'mcp_Read',
+    disposition,
+    ...(actor === undefined ? {} : { actor }),
+  },
+});
+
+/** One step of a model request; steps of one request share its `request` number. */
+export const request = (
+  seq: number | string,
+  state: AttemptEvent['payload']['state'],
+  requestNumber = 1,
+  actor?: AttemptEvent['payload']['actor'],
+): RunEvent => ({
+  ...base(seq),
+  kind: 'model.attempt',
+  payload: {
+    attemptId: `00000000-0000-4000-8000-${String(requestNumber).padStart(12, '0')}`,
+    ordinal: requestNumber,
+    state,
+    budget: { maximum: 10, consumed: requestNumber, unconfirmed: 0 },
+    ...(actor === undefined ? {} : { actor }),
+  },
+});
+
+export const ok = { kind: 'completed', outcome: 'ok', result: { text: 'contents' } } as const;
+export const completed = { kind: 'completed', dispatchedAt: AT, completedAt: AT, outcome: 'ok' } as const;
+
 export const succeeded: RunState = { kind: 'succeeded', finishedAt: AT, resultSeq: '3' };
 
 /** A JSON response as the API sends it. */

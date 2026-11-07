@@ -6,22 +6,22 @@ import { PROVIDER_LABELS, STEP_BUDGET_MAX, STEP_BUDGET_MIN } from '@agent-runtim
 export const STATE_LABELS: Record<RunStateKind, string> = {
   working: 'Working',
   waiting: 'Waiting for you',
-  cancelling: 'Cancelling',
-  succeeded: 'Completed',
+  cancelling: 'Stopping',
+  succeeded: 'Finished',
   failed: 'Failed',
-  cancelled: 'Cancelled',
+  cancelled: 'Stopped',
   interrupted: 'Interrupted',
 };
 
 export const STATE_DESCRIPTIONS: Record<RunStateKind, string> = {
-  working: 'The agent is working. You can close this page; the run continues.',
+  working: 'The agent is working. You can close this page; the session continues.',
   waiting: 'The agent is waiting for your answer.',
-  cancelling: 'Cancellation was accepted. Work already in progress is stopping.',
-  succeeded: 'The run finished with a recorded result.',
-  failed: 'The run stopped with a failure. Its history is preserved.',
-  cancelled: 'The run was cancelled. Its history is preserved.',
+  cancelling: 'Stopping. Work already in progress may still finish.',
+  succeeded: 'The agent finished responding.',
+  failed: 'The agent stopped with a failure. The conversation is preserved.',
+  cancelled: 'The session was stopped. The conversation is preserved.',
   interrupted:
-    'The runtime stopped while this run was working. It will not be resumed; start a new run to continue the work.',
+    'The runtime stopped while this session was working. It will not be resumed; start a new session to continue the work.',
 };
 
 export const FAILURE_LABELS: Record<FailureCategory, string> = {
@@ -75,12 +75,38 @@ export function budgetUsage(budget: { maximum: number; consumed: number; unconfi
   return `${budget.consumed} of ${budget.maximum} used${unconfirmed} · ${remaining} remaining`;
 }
 
+/** A session's model-request usage in a few words; the full accounting is in its details. */
+export function budgetSummary(budget: { maximum: number; consumed: number; unconfirmed: number }): string {
+  const unconfirmed = budget.unconfirmed > 0 ? ` (+${budget.unconfirmed} unconfirmed)` : '';
+  return `${budget.consumed}/${budget.maximum} requests${unconfirmed}`;
+}
+
 /** A recorded instant in the reader's locale, with the exact UTC value available on hover. */
 export function formatTime(instant: string): string {
   const date = new Date(instant);
   return Number.isNaN(date.getTime())
     ? instant
     : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' });
+}
+
+/** A recorded instant to the minute, for lists; the exact value stays available on hover. */
+export function formatShortTime(instant: string): string {
+  const date = new Date(instant);
+  return Number.isNaN(date.getTime())
+    ? instant
+    : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+/** How long ago an instant was, briefly ("now", "5m", "3h", "2d"), or its date when older than a week. */
+export function formatAge(instant: string, now: number = Date.now()): string {
+  const at = new Date(instant).getTime();
+  if (Number.isNaN(at)) return instant;
+  const minutes = Math.floor(Math.max(0, now - at) / 60_000);
+  if (minutes < 1) return 'now';
+  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 24 * 60) return `${Math.floor(minutes / 60)}h`;
+  if (minutes < 7 * 24 * 60) return `${Math.floor(minutes / (24 * 60))}d`;
+  return new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 /** Typed values shown as themselves: `false` is "false", `null` is "null", text is quoted. */

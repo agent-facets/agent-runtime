@@ -9,9 +9,10 @@ import type {
   ServerView,
   ToolGrantView,
 } from '@agent-runtime/contracts';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ApiClient } from '../api/client.ts';
 import { actorLabel, formatTime } from './format.ts';
+import { button, ChevronIcon, card, code, cx, hint, muted, notice, subheading, summaryLine } from './ui.tsx';
 
 export type CatalogState =
   | { kind: 'idle' }
@@ -54,7 +55,7 @@ export type Catalog = ReturnType<typeof useCatalog>;
 export const originsLabel = (origins: readonly OriginView[]) =>
   origins.map((origin) => `${origin.facet} ${origin.version}`).join(', ');
 
-const words = (code: string) => code.replaceAll('_', ' ');
+const words = (text: string) => text.replaceAll('_', ' ');
 
 const CONNECTION_LABELS: Record<ServerView['connection']['kind'], string> = {
   approved: 'connection approved',
@@ -64,20 +65,23 @@ const CONNECTION_LABELS: Record<ServerView['connection']['kind'], string> = {
   program_unavailable: 'its program is not available',
 };
 
+const LIST = 'space-y-2 text-sm';
+
 function GrantList({ grants }: { grants: readonly ToolGrantView[] }) {
-  if (grants.length === 0) return <p className="hint">No tools granted.</p>;
+  if (grants.length === 0) return <p className={cx('text-sm', hint)}>No tools granted.</p>;
   return (
-    <ul className="grants">
+    <ul className={cx('grants', LIST)}>
       {grants.map((grant) => (
         <li key={grant.tool}>
-          <code>{grant.tool}</code>{' '}
-          <span className="hint" title={grant.definitionDigest}>
+          <code className={code}>{grant.tool}</code>{' '}
+          <span className={hint} title={grant.definitionDigest}>
             definition {grant.definitionDigest.slice(0, 12)}
           </span>
-          {Object.entries(grant.argumentEquals).map(([field, value]) => (
-            <span key={field} className="hint">
+          {Object.entries(grant.argumentEquals).map(([name, value]) => (
+            <span key={name} className={hint}>
               {' '}
-              · only <code>{field}</code> = {value.kind === 'value' ? JSON.stringify(value.value) : '(withheld)'}
+              · only <code className={code}>{name}</code> ={' '}
+              {value.kind === 'value' ? JSON.stringify(value.value) : '(withheld)'}
             </span>
           ))}
         </li>
@@ -107,59 +111,64 @@ function ServerEntry({
   onInspected: (server: ServerView) => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | undefined>();
+  const [problem, setProblem] = useState<string | undefined>();
   const inspect = async () => {
     setBusy(true);
-    setNotice(undefined);
+    setProblem(undefined);
     const outcome = await client.discoverServer(server.serverId, revision);
     setBusy(false);
     if (outcome.ok) return onInspected(outcome.value.server);
-    setNotice(outcome.kind === 'refused' ? outcome.error.message : 'The inspection result did not arrive.');
+    setProblem(outcome.kind === 'refused' ? outcome.error.message : 'The inspection result did not arrive.');
   };
   const { connection, observation } = server;
   return (
-    <li className="server">
-      <p>
-        <strong>{server.serverId}</strong> <span className="hint">({originsLabel(server.origins)})</span> —{' '}
-        {CONNECTION_LABELS[connection.kind]}
+    <li className={cx('server space-y-2 p-4', card)}>
+      <p className="text-sm">
+        <strong className="font-semibold">{server.serverId}</strong>{' '}
+        <span className={hint}>({originsLabel(server.origins)})</span> — {CONNECTION_LABELS[connection.kind]}
         {server.transport !== 'stdio' && ' · transport not supported'}
       </p>
       {connection.currentDigest !== undefined && connection.kind !== 'approved' && (
-        <p className="hint">
-          Digest to review and approve: <code>{connection.currentDigest}</code>
+        <p className={cx('text-sm', hint)}>
+          Digest to review and approve: <code className={cx(code, 'break-all')}>{connection.currentDigest}</code>
         </p>
       )}
       <GrantList grants={server.grants} />
       {connection.kind === 'approved' && server.transport === 'stdio' && (
-        <p>
-          <button type="button" className="secondary" disabled={busy} onClick={() => void inspect()}>
+        <p className="flex flex-wrap items-center gap-3 text-sm">
+          <button type="button" className={button.secondary} disabled={busy} onClick={() => void inspect()}>
             {busy ? 'Inspecting…' : 'Inspect server'}
-          </button>{' '}
-          <span className="hint">Starts it briefly to list its tools; calls nothing and approves nothing.</span>
+          </button>
+          <span className={hint}>Starts it briefly to list its tools; calls nothing and approves nothing.</span>
         </p>
       )}
-      {notice !== undefined && <p className="notice error">{notice}</p>}
+      {problem !== undefined && <p className={notice('error')}>{problem}</p>}
       {observation !== undefined && (
-        <div className="observation">
-          <p className="hint">Tools listed {formatTime(observation.observedAt)}:</p>
-          <ul>
+        <div className="observation space-y-2">
+          <p className={cx('text-sm', hint)}>Tools listed {formatTime(observation.observedAt)}:</p>
+          <ul className={LIST}>
             {observation.tools.map((tool, index) =>
               tool.status === 'supported' ? (
                 <li key={tool.name}>
-                  <code>{tool.name}</code> — {words(tool.grant)}{' '}
-                  <span className="hint" title={tool.definitionDigest}>
-                    definition <code>{tool.definitionDigest}</code>
+                  <code className={code}>{tool.name}</code> — {words(tool.grant)}{' '}
+                  <span className={hint} title={tool.definitionDigest}>
+                    definition <code className={cx(code, 'break-all')}>{tool.definitionDigest}</code>
                   </span>
-                  {tool.description !== undefined && <p className="text">{tool.description}</p>}
-                  <details>
-                    <summary>Definition</summary>
-                    <pre>{JSON.stringify(tool.definition, null, 2)}</pre>
+                  {tool.description !== undefined && (
+                    <p className="mt-1 whitespace-pre-wrap break-words">{tool.description}</p>
+                  )}
+                  <details className="group mt-1">
+                    <summary className={summaryLine}>
+                      <ChevronIcon />
+                      Definition
+                    </summary>
+                    <Json value={tool.definition} />
                   </details>
                 </li>
               ) : (
                 <li key={tool.name ?? `refused-${index}`}>
-                  {tool.name === undefined ? '(unnamed tool)' : <code>{tool.name}</code>} — unsupported:{' '}
-                  {words(tool.reason)}
+                  {tool.name === undefined ? '(unnamed tool)' : <code className={code}>{tool.name}</code>} —
+                  unsupported: {words(tool.reason)}
                 </li>
               ),
             )}
@@ -170,47 +179,70 @@ function ServerEntry({
   );
 }
 
-/** The installed catalog, opened on demand. */
+/** A JSON value, formatted and contained. */
+export function Json({ value }: { value: unknown }) {
+  return (
+    <pre className="mt-2 max-h-96 overflow-auto rounded-lg bg-zinc-100 p-3 font-mono text-xs break-all whitespace-pre-wrap dark:bg-zinc-900">
+      {JSON.stringify(value, null, 2)}
+    </pre>
+  );
+}
+
+/** The installed capabilities page: read when it opens, and again on request. */
+export function CapabilitiesPage({ client }: { client: ApiClient }) {
+  const catalog = useCatalog(client);
+  const { load } = catalog;
+  useEffect(() => {
+    void load();
+  }, [load]);
+  return (
+    <main className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-3xl px-4 py-8">
+        <div className="mb-6 flex items-center justify-between gap-4">
+          <h1 className="text-xl font-semibold tracking-tight">Installed capabilities</h1>
+          <button type="button" className={button.secondary} onClick={() => void load()}>
+            Refresh
+          </button>
+        </div>
+        <InstalledCapabilities client={client} catalog={catalog} />
+      </div>
+    </main>
+  );
+}
+
+/** The installed catalog's contents. */
 export function InstalledCapabilities({ client, catalog }: { client: ApiClient; catalog: Catalog }) {
   const { state } = catalog;
   return (
-    <details
-      className="panel capabilities"
-      onToggle={(event) => {
-        if (event.currentTarget.open && state.kind === 'idle') void catalog.load();
-      }}
-    >
-      <summary>Installed capabilities</summary>
-      <p>
-        <button type="button" className="secondary" onClick={() => void catalog.load()}>
-          Refresh
-        </button>
-      </p>
-      {state.kind === 'loading' && <p className="hint">Loading…</p>}
-      {state.kind === 'error' && <p className="notice error">The installed capabilities could not be loaded.</p>}
+    <section className="capabilities space-y-4">
+      {(state.kind === 'loading' || state.kind === 'idle') && <p className={cx('text-sm', hint)}>Loading…</p>}
+      {state.kind === 'error' && <p className={notice('error')}>The installed capabilities could not be loaded.</p>}
       {state.kind === 'loaded' && state.catalog.kind === 'unconfigured' && (
-        <p className="hint">No runtime facets are configured for this deployment.</p>
+        <p className={cx('text-sm', hint)}>No runtime facets are configured for this deployment.</p>
       )}
       {state.kind === 'loaded' && state.catalog.kind === 'unavailable' && (
-        <p className="notice error">The installation cannot be read ({words(state.catalog.reason)}).</p>
+        <p className={notice('error')}>The installation cannot be read ({words(state.catalog.reason)}).</p>
       )}
       {state.kind === 'loaded' && state.catalog.kind === 'ready' && (
         <>
-          <h3>Contributions</h3>
-          <ul className="contributions">
+          <h2 className={subheading}>Contributions</h2>
+          <ul className={cx('contributions divide-y divide-zinc-200 dark:divide-zinc-800', card)}>
             {state.catalog.contributions.map((contribution) => (
-              <li key={contribution.id}>
-                <code>{contribution.id}</code> <span className="hint">({originsLabel(contribution.origins)})</span> —{' '}
+              <li key={contribution.id} className="px-4 py-3 text-sm">
+                <code className={code}>{contribution.id}</code>{' '}
+                <span className={hint}>({originsLabel(contribution.origins)})</span> —{' '}
                 {contributionStatus(contribution)}
-                {contribution.description !== undefined && <p className="text">{contribution.description}</p>}
+                {contribution.description !== undefined && (
+                  <p className="mt-1 whitespace-pre-wrap break-words">{contribution.description}</p>
+                )}
               </li>
             ))}
           </ul>
-          <h3>MCP servers</h3>
+          <h2 className={subheading}>MCP servers</h2>
           {state.catalog.servers.length === 0 ? (
-            <p className="hint">No servers are installed.</p>
+            <p className={cx('text-sm', hint)}>No servers are installed.</p>
           ) : (
-            <ul className="servers">
+            <ul className="servers space-y-3">
               {state.catalog.servers.map((server) => (
                 <ServerEntry
                   key={server.serverId}
@@ -224,7 +256,7 @@ export function InstalledCapabilities({ client, catalog }: { client: ApiClient; 
           )}
         </>
       )}
-    </details>
+    </section>
   );
 }
 
@@ -237,15 +269,14 @@ const DELEGATION_STATES: Record<string, string> = {
   abandoned: 'was abandoned',
 };
 
-/** What a command run retained and actually used; nothing for a goal run. */
+/** What a command run retained and actually used, folded; nothing for a message session. */
 export function RunCapabilitiesPanel({ capabilities }: { capabilities: RunCapabilitiesView | undefined }) {
   if (capabilities === undefined || capabilities.kind === 'native') return null;
   if (capabilities.kind === 'unavailable') {
     return (
-      <section className="panel capabilities">
-        <h2>Capabilities</h2>
-        <p className="notice error">This run’s retained definitions cannot be read ({words(capabilities.reason)}).</p>
-      </section>
+      <p className={notice('error')}>
+        This session’s retained definitions cannot be read ({words(capabilities.reason)}).
+      </p>
     );
   }
   const { command, bound, used, limits, permissions } = capabilities;
@@ -253,53 +284,56 @@ export function RunCapabilitiesPanel({ capabilities }: { capabilities: RunCapabi
   const delegated = new Set(used.delegations.map((entry) => entry.agentId));
   const called = new Set(used.operations.filter((row) => row.kind === 'mcp').map((row) => row.subject));
   return (
-    <section className="panel capabilities">
-      <h2>Capabilities</h2>
-      <dl className="facts">
-        <dt>Command</dt>
-        <dd>
-          <code>{command.id}</code> <span className="hint">({originsLabel(command.origins)})</span>
+    <details className={cx('capabilities group px-4 py-3', card)}>
+      <summary className={summaryLine}>
+        <ChevronIcon />
+        Capabilities <span className={hint}>· {command.name}</span>
+      </summary>
+      <dl className="facts mt-3 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-sm">
+        <dt className={muted}>Command</dt>
+        <dd className="min-w-0 break-words">
+          <code className={code}>{command.id}</code> <span className={hint}>({originsLabel(command.origins)})</span>
           {command.arguments !== '' && (
             <>
               {' '}
-              with arguments <span className="text">{command.arguments}</span>
+              with arguments <span className="whitespace-pre-wrap">{command.arguments}</span>
             </>
           )}
         </dd>
-        <dt>Limits</dt>
+        <dt className={muted}>Limits</dt>
         <dd>
           Up to {limits.maxDelegations} delegations, depth {limits.delegationDepth}
         </dd>
       </dl>
-      <h3>Bound to this run</h3>
-      <ul className="bound">
+      <h3 className={subheading}>Bound to this session</h3>
+      <ul className={cx('bound', LIST)}>
         {bound.skills.map((skill) => (
           <li key={skill.id}>
-            Skill <code>{skill.id}</code> <span className="hint">({originsLabel(skill.origins)})</span> —{' '}
-            {loaded.has(skill.id) ? 'loaded' : 'not used'}
+            Skill <code className={code}>{skill.id}</code> <span className={hint}>({originsLabel(skill.origins)})</span>{' '}
+            — {loaded.has(skill.id) ? 'loaded' : 'not used'}
           </li>
         ))}
         {bound.agents.map((agent) => (
           <li key={agent.id}>
-            Agent <code>{agent.id}</code> <span className="hint">({originsLabel(agent.origins)})</span> —{' '}
-            {delegated.has(agent.id) ? 'delegated to' : 'not used'}
+            Agent <code className={code}>{agent.id}</code> <span className={hint}>({originsLabel(agent.origins)})</span>{' '}
+            — {delegated.has(agent.id) ? 'delegated to' : 'not used'}
           </li>
         ))}
         {bound.tools.map((tool) => (
           <li key={`${tool.serverId}/${tool.toolName}`}>
             Tool{' '}
-            <code>
+            <code className={code}>
               {tool.serverId} / {tool.toolName}
             </code>{' '}
-            <span className="hint">({originsLabel(tool.origins)})</span> —{' '}
+            <span className={hint}>({originsLabel(tool.origins)})</span> —{' '}
             {called.has(`${tool.serverId}/${tool.toolName}`) ? 'called' : 'not used'}
           </li>
         ))}
       </ul>
       {used.delegations.length > 0 && (
         <>
-          <h3>Delegations</h3>
-          <ul>
+          <h3 className={subheading}>Delegations</h3>
+          <ul className={LIST}>
             {used.delegations.map((delegation) => (
               <li key={delegation.delegationId}>
                 {actorLabel({ kind: 'delegate', delegationId: delegation.delegationId, agentId: delegation.agentId })} —{' '}
@@ -311,56 +345,58 @@ export function RunCapabilitiesPanel({ capabilities }: { capabilities: RunCapabi
       )}
       {used.operations.length > 0 && (
         <>
-          <h3>Recorded use</h3>
-          <ul className="usage">
+          <h3 className={subheading}>Recorded use</h3>
+          <ul className={cx('usage', LIST)}>
             {used.operations.map((row) => (
               <li key={`${row.kind} ${row.subject}`}>
-                {words(row.kind)} <code>{row.subject}</code>: {row.ok} completed
+                {words(row.kind)} <code className={code}>{row.subject}</code>: {row.ok} completed
                 {row.refused > 0 && `, ${row.refused} refused`}
                 {row.error > 0 && `, ${row.error} failed`}
                 {row.uncertain > 0 && `, ${row.uncertain} with an unknown outcome`}
                 {row.pending > 0 && `, ${row.pending} without a recorded outcome`}
-                {row.codes.length > 0 && <span className="hint"> ({row.codes.map(words).join('; ')})</span>}
+                {row.codes.length > 0 && <span className={hint}> ({row.codes.map(words).join('; ')})</span>}
               </li>
             ))}
           </ul>
         </>
       )}
-      <details>
-        <summary>Permissions</summary>
-        <p className="hint">
-          Granted when the run started (new operations also need the current configuration; neither ever widens the
-          other).
-        </p>
-        {permissions.captured.servers.map((server) => (
-          <div key={server.serverId}>
-            <p>
-              <strong>{server.serverId}</strong>{' '}
-              <span className="hint" title={server.serverDigest}>
-                connection {server.serverDigest.slice(0, 12)}
-              </span>
-            </p>
-            <GrantList grants={server.grants} />
-          </div>
-        ))}
-        <p>
-          Skills: {permissions.captured.skills.join(', ') || 'none'} · Agents:{' '}
-          {permissions.captured.agents.join(', ') || 'none'}
-        </p>
-        <p className="hint">Current configuration:</p>
-        {permissions.current.kind === 'unconfigured' ? (
-          <p>No capabilities are configured now: new operations of this run are refused.</p>
-        ) : (
-          permissions.current.servers.map((server) => (
+      <details className="group/permissions mt-4">
+        <summary className={summaryLine}>Permissions</summary>
+        <div className="mt-2 space-y-2 text-sm">
+          <p className={hint}>
+            Granted when the session started (new operations also need the current configuration; neither ever widens
+            the other).
+          </p>
+          {permissions.captured.servers.map((server) => (
             <div key={server.serverId}>
               <p>
-                <strong>{server.serverId}</strong> — {words(server.connection)}
+                <strong className="font-semibold">{server.serverId}</strong>{' '}
+                <span className={hint} title={server.serverDigest}>
+                  connection {server.serverDigest.slice(0, 12)}
+                </span>
               </p>
               <GrantList grants={server.grants} />
             </div>
-          ))
-        )}
+          ))}
+          <p>
+            Skills: {permissions.captured.skills.join(', ') || 'none'} · Agents:{' '}
+            {permissions.captured.agents.join(', ') || 'none'}
+          </p>
+          <p className={hint}>Current configuration:</p>
+          {permissions.current.kind === 'unconfigured' ? (
+            <p>No capabilities are configured now: new operations of this session are refused.</p>
+          ) : (
+            permissions.current.servers.map((server) => (
+              <div key={server.serverId}>
+                <p>
+                  <strong className="font-semibold">{server.serverId}</strong> — {words(server.connection)}
+                </p>
+                <GrantList grants={server.grants} />
+              </div>
+            ))
+          )}
+        </div>
       </details>
-    </section>
+    </details>
   );
 }

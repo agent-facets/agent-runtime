@@ -1,7 +1,7 @@
-# Build, development and runtime images share the pinned Bun release (1.3.14-slim, multi-architecture index digest).
+# Build, development and runtime images share the pinned Bun release (1.4.4-slim, multi-architecture index digest).
 # Stages: deps (installed dependencies) → source → build (bundled server, static console, MCP programs) → runtime,
 # the production image and the default target. `dev` (target `dev`) runs from source for compose.dev.yaml.
-FROM oven/bun:1.3.14-slim@sha256:d56a2534ffd262e92c12fd3249d3924d296d97086da773f821d7d0477435ea04 AS deps
+FROM oven/bun:1.4.4-slim@sha256:1846adf22496bd711036aae8be147e57bdebbaea2e5264e3e0b5af1db187d9a4 AS deps
 WORKDIR /repo
 
 # Workspace manifests first, so dependency installation is cached independently of source changes.
@@ -43,7 +43,7 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 \
   CMD ["bun", "-e", "fetch('http://127.0.0.1:3000/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
 CMD ["bun", "packages/runtime/src/dev/supervisor.ts"]
 
-FROM oven/bun:1.3.14-slim@sha256:d56a2534ffd262e92c12fd3249d3924d296d97086da773f821d7d0477435ea04 AS runtime
+FROM oven/bun:1.4.4-slim@sha256:1846adf22496bd711036aae8be147e57bdebbaea2e5264e3e0b5af1db187d9a4 AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 
