@@ -472,6 +472,39 @@
       ],
       "servers": []
     },
+    "mobbin": {
+      "source": {
+        "kind": "registry",
+        "registry": "https://api.agentfacets.io"
+      },
+      "version": "1.0.0",
+      "integrity": "sha256:bd7a362d542b5d9a12b3661efcd6b03c9e0f016709bd07b92c00ad79f7925e98",
+      "assets": [
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "using-mobbin",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/using-mobbin/SKILL.md",
+              "integrity": "sha256:1d41e04335278b96a6349f4123ad9666ef53510317d04244ceb7cb42e896ad05"
+            }
+          ]
+        }
+      ],
+      "servers": [
+        {
+          "name": "mobbin",
+          "fingerprint": "sha256:9b45312f26c19e3394053047afddc82ded1d4c3bcde8d500b19831815e7c482b",
+          "materialization": {
+            "kind": "authored"
+          }
+        }
+      ]
+    },
     "openspec": {
       "source": {
         "kind": "registry",
