@@ -10,14 +10,14 @@ import type { AuthAttempt, ProviderReadiness } from '@agent-runtime/contracts';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import type { ApiClient, ApiOutcome } from '../api/client.ts';
 import { formatTime } from './format.ts';
-import { button, cx, field, label, muted, notice } from './ui.tsx';
+import { button, cx, field, label, muted, Notice } from './ui.tsx';
 
 const PANEL = 'connect max-w-xl space-y-3 text-sm';
 const STEPS = 'list-decimal space-y-3 pl-5';
 
 const STATUS_POLL_MS = 1_500;
 
-type Notice = { tone: 'ok' | 'error' | 'uncertain'; text: string } | undefined;
+type ConnectNotice = { tone: 'ok' | 'error' | 'uncertain'; text: string } | undefined;
 
 const UNREACHABLE = 'The runtime could not be reached. Try again.';
 
@@ -34,7 +34,7 @@ export function ConnectAnthropic({
   const [attempt, setAttempt] = useState<AuthAttempt | undefined>();
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
-  const [message, setNotice] = useState<Notice>();
+  const [message, setNotice] = useState<ConnectNotice>();
 
   const settle = useCallback(
     (outcome: ApiOutcome<AuthAttempt>, lostReply: string) => {
@@ -115,7 +115,7 @@ export function ConnectAnthropic({
     } else settle(outcome, UNREACHABLE);
   };
 
-  const shown = message !== undefined && <p className={notice(message.tone)}>{message.text}</p>;
+  const shown = message !== undefined && <Notice tone={message.tone}>{message.text}</Notice>;
 
   if (attempt?.state === 'completing') {
     return (
@@ -203,7 +203,7 @@ export function ConnectOpenAI({
 }) {
   const [attempt, setAttempt] = useState<AuthAttempt | undefined>();
   const [busy, setBusy] = useState(false);
-  const [message, setNotice] = useState<Notice>();
+  const [message, setNotice] = useState<ConnectNotice>();
 
   const settle = useCallback(
     (outcome: ApiOutcome<AuthAttempt>, lostReply: string) => {
@@ -266,7 +266,7 @@ export function ConnectOpenAI({
     } else settle(outcome, UNREACHABLE);
   };
 
-  const shown = message !== undefined && <p className={notice(message.tone)}>{message.text}</p>;
+  const shown = message !== undefined && <Notice tone={message.tone}>{message.text}</Notice>;
 
   if (attempt?.state === 'completing') {
     return (

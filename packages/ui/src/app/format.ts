@@ -97,6 +97,24 @@ export function formatShortTime(instant: string): string {
     : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
+/**
+ * A recorded instant as a clock reading, for the conversation: the time alone today, with the date otherwise, and
+ * with the year only when it is not this one. The exact value belongs on hover (`formatTime`).
+ */
+export function formatClock(instant: string, now: number = Date.now()): string {
+  const date = new Date(instant);
+  if (Number.isNaN(date.getTime())) return instant;
+  const today = new Date(now);
+  if (date.toDateString() === today.toDateString()) return date.toLocaleTimeString(undefined, { timeStyle: 'short' });
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(date.getFullYear() === today.getFullYear() ? {} : { year: 'numeric' }),
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 /** How long ago an instant was, briefly ("now", "5m", "3h", "2d"), or its date when older than a week. */
 export function formatAge(instant: string, now: number = Date.now()): string {
   const at = new Date(instant).getTime();

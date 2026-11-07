@@ -41,6 +41,14 @@ What to test, and where:
 
 - Never link to an archived OpenSpec change (`openspec/changes/archive/`, or a change's path once it has been archived). Archives are local-only; name the change in plain text instead, or link to the main spec under `openspec/specs/`.
 
+## Console design
+
+Before changing the browser console (`packages/ui`), read [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md). It is the source of truth for how the console looks and behaves.
+
+- Build with its recipes and components (`packages/ui/src/app/ui.tsx`) and its patterns. Don't introduce one-off styles, colours, spacing or a component library.
+- When a change needs a pattern it does not cover, add the pattern to `DESIGN_SYSTEM.md` in the same change.
+- Check console changes in a browser against the development deployment (`bun run dev:stack`), at desktop, phone and short sizes in light and dark, before calling them done.
+
 ## Frontend
 
 Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, CSS, Tailwind.

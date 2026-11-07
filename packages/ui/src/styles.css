@@ -1,7 +1,11 @@
-/* Tailwind, generated only from the console's own source. Components style themselves with utilities; this file
-   holds the page base and the Markdown prose, whose elements come from the renderer rather than our markup. */
+/* Tailwind, generated only from the console's own source. Components style themselves with utilities and the shared
+   recipes in app/ui.tsx; this file holds the page base and the Markdown prose, whose elements come from the renderer
+   rather than our markup. DESIGN_SYSTEM.md at the repository root describes the system as a whole. */
 @import "tailwindcss" source(none);
 @source "./";
+
+/* A short viewport (a phone in landscape, or with its keyboard open): fixed docks would cover the content. */
+@custom-variant short (@media (max-height: 37.5rem));
 
 @layer base {
   html {
@@ -11,11 +15,16 @@
   body {
     @apply bg-white text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
   }
+
+  /* One focus ring everywhere a component does not draw its own. */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-blue-600 dark:outline-blue-400;
+  }
 }
 
 @layer components {
   .prose {
-    @apply text-[0.9375rem] leading-relaxed break-words;
+    @apply text-base leading-relaxed break-words;
   }
 
   .prose > :first-child {

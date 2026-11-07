@@ -1,19 +1,30 @@
 // A session's conversation: the owner's message, then every recorded event in sequence order. Consecutive routine
 // activity (model requests and tool calls that went as expected) is folded into a disclosure in place; messages,
 // questions, answers, failures and anything uncertain are always shown. Nothing is reordered, and every event stays
-// reachable. Every value is rendered as text.
-import type { ActorRef, RunCapabilitiesView, RunEvent, RunState, ToolBinding } from '@agent-runtime/contracts';
+// reachable. Every value is rendered as text. A waiting question's prompt is shown once, here; the answer form below
+// the conversation offers its choices.
+import type {
+  ActorRef,
+  QuestionView,
+  RunCapabilitiesView,
+  RunEvent,
+  RunState,
+  ToolBinding,
+} from '@agent-runtime/contracts';
+import type { ReactNode } from 'react';
 import { Json, originsLabel } from './Capabilities.tsx';
 import {
   actorLabel,
   DELEGATION_OUTCOME_LABELS,
   FAILURE_LABELS,
+  formatClock,
   formatTime,
   formatValue,
   providerLabel,
 } from './format.ts';
 import { Prose } from './Markdown.tsx';
-import { ChevronIcon, code, cx, hint, muted, Status, summaryLine } from './ui.tsx';
+import { focusAnswer, questionPromptId, questionRecordId } from './QuestionForm.tsx';
+import { button, ChevronIcon, code, cx, hint, meta, muted, Status, sectionTitle, summaryLine } from './ui.tsx';
 
 export type ConversationBlock =
   | { kind: 'event'; event: RunEvent }
@@ -40,7 +51,8 @@ function routine(event: RunEvent, settled: ReturnType<typeof settledNormally>): 
     case 'run.created':
       return true;
     case 'run.status':
-      return event.payload.state.kind === 'working';
+      // Waiting always comes with its question, which is always shown and says so.
+      return event.payload.state.kind === 'working' || event.payload.state.kind === 'waiting';
     case 'model.attempt': {
       const { state } = event.payload;
       if (state.kind === 'reserved' || state.kind === 'dispatched') return true;
@@ -51,10 +63,10 @@ function routine(event: RunEvent, settled: ReturnType<typeof settledNormally>): 
       const { disposition } = event.payload;
       if (disposition.kind === 'started') return true;
       if (disposition.kind === 'completed' && disposition.outcome === 'ok') return true;
-      // A request that may have been sent, or a call paused for an answer, is routine only once it completed.
-      if (disposition.kind === 'dispatching' || disposition.kind === 'paused') {
-        return settled.operations.has(event.payload.operationId);
-      }
+      // A call paused for an answer is how a question is asked: the question itself is always shown.
+      if (disposition.kind === 'paused') return true;
+      // A request that may have been sent is routine only once it completed.
+      if (disposition.kind === 'dispatching') return settled.operations.has(event.payload.operationId);
       return false;
     }
     default:
@@ -118,7 +130,7 @@ export function Conversation({
   events,
   state,
   capabilities,
-  pendingQuestionId,
+  pendingQuestion,
 }: {
   /** The owner's message that started the session. */
   goal: string;
@@ -127,52 +139,75 @@ export function Conversation({
   state: RunState;
   /** The run's retained capabilities, when known: they name the facet each contribution came from. */
   capabilities?: RunCapabilitiesView | undefined;
-  /** The question waiting for an answer: its record is marked, and it is answered below the conversation. */
-  pendingQuestionId?: string | undefined;
+  /** The question waiting for an answer: its record shows the prompt, and it is answered below the conversation. */
+  pendingQuestion?: QuestionView | undefined;
 }) {
   const resultSeq = state.kind === 'succeeded' ? state.resultSeq : undefined;
   const blocks = conversationBlocks(events, resultSeq);
+  const pendingId = pendingQuestion?.questionId;
+  const recorded =
+    pendingId !== undefined &&
+    events.some((event) => event.kind === 'question.asked' && event.payload.questionId === pendingId);
   return (
-    <ol className="conversation space-y-6">
-      <li className="turn turn-user flex flex-col items-end">
-        <div className="mb-1 flex items-baseline gap-2 text-xs">
+    <>
+      <ol className="conversation space-y-6">
+        <li className="turn turn-user flex flex-col items-end gap-1">
+          <p className="max-w-[85%] rounded-3xl bg-zinc-100 px-4 py-2.5 text-base leading-relaxed break-words whitespace-pre-wrap dark:bg-zinc-800">
+            <span className="speaker sr-only">You: </span>
+            {goal}
+          </p>
           <Stamp at={startedAt} />
-          <span className="speaker font-medium text-zinc-700 dark:text-zinc-300">You</span>
-        </div>
-        <p className="max-w-[85%] rounded-2xl rounded-tr-md bg-zinc-100 px-4 py-2.5 text-[0.9375rem] leading-relaxed break-words whitespace-pre-wrap dark:bg-zinc-800">
-          {goal}
-        </p>
-      </li>
-      {blocks.map((block) =>
-        block.kind === 'activity' ? (
-          <li key={`activity-${block.events[0]?.seq}`} className="activity">
-            <details className="group">
-              <summary className={summaryLine}>
-                <ChevronIcon />
-                {block.actor?.kind === 'delegate' && <span className="actor">{actorLabel(block.actor)} · </span>}
-                Activity <span className={hint}>· {activitySummary(block.events)}</span>
-              </summary>
-              <ol className="activity-events mt-2 ml-1.5 space-y-2 border-l border-zinc-200 pl-4 text-sm dark:border-zinc-800">
-                {block.events.map((event) => (
-                  <li key={event.seq} className={eventClass(event)} data-seq={event.seq}>
-                    <Stamp at={event.recordedAt} />
-                    <EventBody event={event} final={false} capabilities={capabilities} />
-                  </li>
-                ))}
-              </ol>
-            </details>
-          </li>
-        ) : (
-          <ShownEvent
-            key={block.event.seq}
-            event={block.event}
-            final={block.event.seq === resultSeq}
-            capabilities={capabilities}
-            pending={block.event.kind === 'question.asked' && block.event.payload.questionId === pendingQuestionId}
-          />
-        ),
-      )}
-    </ol>
+        </li>
+        {blocks.map((block) =>
+          block.kind === 'activity' ? (
+            <li key={`activity-${block.events[0]?.seq}`} className="activity">
+              <details className="group">
+                <summary className={summaryLine}>
+                  <ChevronIcon />
+                  {block.actor?.kind === 'delegate' && <span className="actor">{actorLabel(block.actor)} · </span>}
+                  Activity <span className={hint}>· {activitySummary(block.events)}</span>
+                </summary>
+                <ol className="activity-events mt-2 ml-1.5 space-y-3 border-l border-zinc-200 pl-4 text-sm dark:border-zinc-800">
+                  {block.events.map((event) => (
+                    <li key={event.seq} className={eventClass(event)} data-seq={event.seq}>
+                      <Timed at={event.recordedAt}>
+                        <EventBody event={event} final={false} capabilities={capabilities} pending={false} />
+                      </Timed>
+                    </li>
+                  ))}
+                </ol>
+              </details>
+            </li>
+          ) : (
+            <ShownEvent
+              key={block.event.seq}
+              event={block.event}
+              final={block.event.seq === resultSeq}
+              capabilities={capabilities}
+              pending={block.event.kind === 'question.asked' && block.event.payload.questionId === pendingId}
+            />
+          ),
+        )}
+      </ol>
+      {pendingQuestion !== undefined && !recorded && <ProvisionalQuestion question={pendingQuestion} />}
+    </>
+  );
+}
+
+/**
+ * A waiting question whose record has not arrived yet (the session's state is read before its history). It is shown
+ * after what has arrived, outside the ordered conversation and without a time, and gives way to the record itself.
+ */
+function ProvisionalQuestion({ question }: { question: QuestionView }) {
+  return (
+    <section
+      id={questionRecordId(question.questionId)}
+      aria-label="Waiting question"
+      className={cx(QUESTION_CARD, 'provisional-question mt-6')}
+    >
+      <QuestionPrompt questionId={question.questionId} actor={question.asker} prompt={question.prompt} />
+      <p className={cx('mt-2', meta)}>Its place in the conversation is still loading.</p>
+    </section>
   );
 }
 
@@ -180,10 +215,56 @@ const eventClass = (event: RunEvent) => `event event-${event.kind.replace('.', '
 
 function Stamp({ at }: { at: string }) {
   return (
-    <time dateTime={at} title={at} className={cx('block text-xs', muted)}>
-      {formatTime(at)}
+    <time dateTime={at} title={formatTime(at)} className={cx('shrink-0 tabular-nums', meta)}>
+      {formatClock(at)}
     </time>
   );
+}
+
+/** An entry with its time at the end of its first line, as in an activity feed. */
+function Timed({ at, children }: { at: string; children: ReactNode }) {
+  return (
+    <div className="flex items-baseline gap-3">
+      <div className="min-w-0 flex-1">{children}</div>
+      <Stamp at={at} />
+    </div>
+  );
+}
+
+const QUESTION_CARD =
+  'rounded-xl border border-amber-300 bg-amber-50/50 px-4 py-3 dark:border-amber-800 dark:bg-amber-950/20';
+
+/**
+ * How a shown event that is not a message is set: a problem or an uncertain outcome stands out, a question is a
+ * card, and routine status lines are quiet single lines.
+ */
+function eventTone(event: RunEvent, pending: boolean): string {
+  if (event.kind === 'question.asked') {
+    return pending ? QUESTION_CARD : 'rounded-xl border border-zinc-200 px-4 py-3 dark:border-zinc-800';
+  }
+  switch (notable(event)) {
+    case 'problem':
+      return 'notable rounded-lg border border-red-200 bg-red-50/60 px-3 py-2 dark:border-red-900/60 dark:bg-red-950/30';
+    case 'uncertain':
+      return 'notable rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 dark:border-amber-900/60 dark:bg-amber-950/30';
+    default:
+      return quiet(event) ? `quiet ${muted}` : '';
+  }
+}
+
+/** Shown events that only mark a change of course: kept in order, set as quiet lines. */
+function quiet(event: RunEvent): boolean {
+  switch (event.kind) {
+    case 'run.created':
+    case 'run.status':
+    case 'cancellation.accepted':
+    case 'question.closed':
+      return true;
+    case 'delegation.finished':
+      return event.payload.outcome === 'result';
+    default:
+      return false;
+  }
 }
 
 function ShownEvent({
@@ -201,8 +282,8 @@ function ShownEvent({
     const actor = event.payload.actor;
     return (
       <li className={`turn turn-assistant ${eventClass(event)}`} data-seq={event.seq}>
-        <div className="mb-1 flex flex-wrap items-baseline gap-2">
-          <span className="speaker text-sm font-semibold">
+        <div className="mb-1.5 flex flex-wrap items-baseline gap-2">
+          <span className="speaker text-xs font-medium text-zinc-700 dark:text-zinc-300">
             {actor?.kind === 'delegate' ? actorLabel(actor) : 'Assistant'}
           </span>
           {final && (
@@ -218,31 +299,25 @@ function ShownEvent({
       </li>
     );
   }
-  const tone = notable(event);
+  const tone = eventTone(event, pending);
+  if (tone.startsWith('quiet')) {
+    return (
+      <li className={cx(eventClass(event), 'flex flex-wrap items-baseline gap-x-2 text-xs', tone)} data-seq={event.seq}>
+        <EventBody event={event} final={final} capabilities={capabilities} pending={false} />
+        <Stamp at={event.recordedAt} />
+      </li>
+    );
+  }
+  const isQuestion = event.kind === 'question.asked';
   return (
     <li
-      className={cx(
-        eventClass(event),
-        'text-sm',
-        tone === 'problem' &&
-          'notable rounded-lg border border-red-200 bg-red-50/60 px-3 py-2 dark:border-red-900/60 dark:bg-red-950/30',
-        tone === 'uncertain' &&
-          'notable rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 dark:border-amber-900/60 dark:bg-amber-950/30',
-        event.kind === 'question.asked' &&
-          cx(
-            'rounded-xl border px-4 py-3',
-            pending
-              ? 'border-amber-300 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-950/20'
-              : 'border-zinc-200 dark:border-zinc-800',
-          ),
-      )}
+      id={pending && isQuestion ? questionRecordId(event.payload.questionId) : undefined}
+      className={cx(eventClass(event), 'text-sm', tone)}
       data-seq={event.seq}
     >
-      <Stamp at={event.recordedAt} />
-      <EventBody event={event} final={final} capabilities={capabilities} />
-      {pending && (
-        <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-400">Waiting for your answer below.</p>
-      )}
+      <Timed at={event.recordedAt}>
+        <EventBody event={event} final={final} capabilities={capabilities} pending={pending} />
+      </Timed>
     </li>
   );
 }
@@ -339,14 +414,37 @@ function toolLabel(payload: Extract<RunEvent, { kind: 'tool.operation' }>['paylo
 
 const TEXT = 'whitespace-pre-wrap break-words';
 
+/** A question's asker and prompt: the one place the prompt is shown, and what the answer form is described by. */
+function QuestionPrompt({
+  questionId,
+  actor,
+  prompt,
+}: {
+  questionId: string;
+  actor: ActorRef | undefined;
+  prompt: string;
+}) {
+  return (
+    <div className="question-record space-y-1">
+      <p className={sectionTitle}>{actor?.kind === 'delegate' ? `Question from ${actorLabel(actor)}` : 'Question'}</p>
+      <p id={questionPromptId(questionId)} className={cx(TEXT, 'prompt text-base')}>
+        {prompt}
+      </p>
+    </div>
+  );
+}
+
 function EventBody({
   event,
   final,
   capabilities,
+  pending,
 }: {
   event: RunEvent;
   final: boolean;
   capabilities: RunCapabilitiesView | undefined;
+  /** The event is the question waiting for an answer: its choices are offered by the answer form instead. */
+  pending: boolean;
 }) {
   switch (event.kind) {
     case 'run.created':
@@ -412,19 +510,29 @@ function EventBody({
     }
     case 'question.asked':
       return (
-        <div className="question-record mt-1 space-y-1">
-          <p className="text-xs font-semibold tracking-wide text-zinc-500 uppercase dark:text-zinc-400">
-            {event.payload.actor?.kind === 'delegate' ? `Question from ${actorLabel(event.payload.actor)}` : 'Question'}
-          </p>
-          <p className={cx(TEXT, 'text-[0.9375rem]')}>{event.payload.prompt}</p>
-          {event.payload.input.kind === 'choice' && (
-            <ul className="list-disc pl-5">
-              {event.payload.input.options.map((option) => (
-                <li key={JSON.stringify(option.value)}>
-                  {option.label} <span className={hint}>({formatValue(option.value)})</span>
-                </li>
-              ))}
-            </ul>
+        <div className="mt-1 space-y-2">
+          <QuestionPrompt
+            questionId={event.payload.questionId}
+            actor={event.payload.actor}
+            prompt={event.payload.prompt}
+          />
+          {pending ? (
+            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium text-amber-700 dark:text-amber-400">
+              Waiting for your answer below.
+              <button type="button" className={button.link} onClick={focusAnswer}>
+                Answer ↓
+              </button>
+            </p>
+          ) : (
+            event.payload.input.kind === 'choice' && (
+              <ul className="list-disc pl-5">
+                {event.payload.input.options.map((option) => (
+                  <li key={JSON.stringify(option.value)}>
+                    {option.label} <span className={hint}>({formatValue(option.value)})</span>
+                  </li>
+                ))}
+              </ul>
+            )
           )}
         </div>
       );

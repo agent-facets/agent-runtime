@@ -12,7 +12,27 @@ import type {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ApiClient } from '../api/client.ts';
 import { actorLabel, formatTime } from './format.ts';
-import { button, ChevronIcon, card, code, cx, hint, muted, notice, subheading, summaryLine } from './ui.tsx';
+import {
+  ChevronIcon,
+  card,
+  cardList,
+  code,
+  column,
+  cx,
+  emptyState,
+  Fact,
+  Facts,
+  hint,
+  meta,
+  muted,
+  Notice,
+  notice,
+  pageTitle,
+  sectionTitle,
+  smallButton,
+  subheading,
+  summaryLine,
+} from './ui.tsx';
 
 export type CatalogState =
   | { kind: 'idle' }
@@ -99,6 +119,33 @@ function contributionStatus(contribution: ContributionView): string {
   return 'ready';
 }
 
+/** How a contribution's or server's state reads at a glance: ready is quiet, a refusal stands out. */
+type Tone = 'ok' | 'attention' | 'problem' | 'quiet';
+const TONE_TEXT: Record<Tone, string> = {
+  ok: 'text-emerald-700 dark:text-emerald-400',
+  attention: 'text-amber-700 dark:text-amber-400',
+  problem: 'text-red-700 dark:text-red-400',
+  quiet: muted,
+};
+
+function contributionTone(contribution: ContributionView): Tone {
+  if (contribution.availability.kind === 'refused') return 'problem';
+  return contribution.allowed === false ? 'attention' : 'ok';
+}
+
+function connectionTone(server: ServerView): Tone {
+  if (server.transport !== 'stdio') return 'problem';
+  switch (server.connection.kind) {
+    case 'approved':
+      return 'ok';
+    case 'reapproval_required':
+    case 'not_configured':
+      return 'attention';
+    default:
+      return 'problem';
+  }
+}
+
 function ServerEntry({
   client,
   revision,
@@ -122,29 +169,37 @@ function ServerEntry({
   };
   const { connection, observation } = server;
   return (
-    <li className={cx('server space-y-2 p-4', card)}>
-      <p className="text-sm">
-        <strong className="font-semibold">{server.serverId}</strong>{' '}
-        <span className={hint}>({originsLabel(server.origins)})</span> — {CONNECTION_LABELS[connection.kind]}
-        {server.transport !== 'stdio' && ' · transport not supported'}
-      </p>
+    <li className={cx('server space-y-3 p-4', card)}>
+      <div>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm">
+          <strong className="min-w-0 font-semibold break-words">{server.serverId}</strong>
+          <span className={cx('text-xs font-medium', TONE_TEXT[connectionTone(server)])}>
+            {CONNECTION_LABELS[connection.kind]}
+            {server.transport !== 'stdio' && ' · transport not supported'}
+          </span>
+        </div>
+        <p className={cx('mt-0.5', meta)}>{originsLabel(server.origins)}</p>
+      </div>
       {connection.currentDigest !== undefined && connection.kind !== 'approved' && (
         <p className={cx('text-sm', hint)}>
           Digest to review and approve: <code className={cx(code, 'break-all')}>{connection.currentDigest}</code>
         </p>
       )}
-      <GrantList grants={server.grants} />
+      <div>
+        <h3 className={cx(sectionTitle, 'mb-1.5')}>Granted tools</h3>
+        <GrantList grants={server.grants} />
+      </div>
       {connection.kind === 'approved' && server.transport === 'stdio' && (
         <p className="flex flex-wrap items-center gap-3 text-sm">
-          <button type="button" className={button.secondary} disabled={busy} onClick={() => void inspect()}>
+          <button type="button" className={smallButton.secondary} disabled={busy} onClick={() => void inspect()}>
             {busy ? 'Inspecting…' : 'Inspect server'}
           </button>
           <span className={hint}>Starts it briefly to list its tools; calls nothing and approves nothing.</span>
         </p>
       )}
-      {problem !== undefined && <p className={notice('error')}>{problem}</p>}
+      {problem !== undefined && <Notice tone="error">{problem}</Notice>}
       {observation !== undefined && (
-        <div className="observation space-y-2">
+        <div className="observation space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
           <p className={cx('text-sm', hint)}>Tools listed {formatTime(observation.observedAt)}:</p>
           <ul className={LIST}>
             {observation.tools.map((tool, index) =>
@@ -182,7 +237,7 @@ function ServerEntry({
 /** A JSON value, formatted and contained. */
 export function Json({ value }: { value: unknown }) {
   return (
-    <pre className="mt-2 max-h-96 overflow-auto rounded-lg bg-zinc-100 p-3 font-mono text-xs break-all whitespace-pre-wrap dark:bg-zinc-900">
+    <pre className="mt-2 max-h-96 overflow-auto rounded-lg bg-zinc-100 p-3 font-mono text-xs break-all whitespace-pre-wrap dark:bg-zinc-800/60">
       {JSON.stringify(value, null, 2)}
     </pre>
   );
@@ -197,10 +252,15 @@ export function CapabilitiesPage({ client }: { client: ApiClient }) {
   }, [load]);
   return (
     <main className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-3xl px-4 py-8">
+      <div className={cx(column, 'py-8')}>
         <div className="mb-6 flex items-center justify-between gap-4">
-          <h1 className="text-xl font-semibold tracking-tight">Installed capabilities</h1>
-          <button type="button" className={button.secondary} onClick={() => void load()}>
+          <h1 className={pageTitle}>Installed capabilities</h1>
+          <button
+            type="button"
+            className={smallButton.secondary}
+            disabled={catalog.state.kind === 'loading'}
+            onClick={() => void load()}
+          >
             Refresh
           </button>
         </div>
@@ -214,33 +274,47 @@ export function CapabilitiesPage({ client }: { client: ApiClient }) {
 export function InstalledCapabilities({ client, catalog }: { client: ApiClient; catalog: Catalog }) {
   const { state } = catalog;
   return (
-    <section className="capabilities space-y-4">
-      {(state.kind === 'loading' || state.kind === 'idle') && <p className={cx('text-sm', hint)}>Loading…</p>}
-      {state.kind === 'error' && <p className={notice('error')}>The installed capabilities could not be loaded.</p>}
+    <section className="capabilities space-y-3">
+      {(state.kind === 'loading' || state.kind === 'idle') && <p className={emptyState}>Loading…</p>}
+      {state.kind === 'error' && <Notice tone="error">The installed capabilities could not be loaded.</Notice>}
       {state.kind === 'loaded' && state.catalog.kind === 'unconfigured' && (
-        <p className={cx('text-sm', hint)}>No runtime facets are configured for this deployment.</p>
+        <p className={emptyState}>No runtime facets are configured for this deployment.</p>
       )}
       {state.kind === 'loaded' && state.catalog.kind === 'unavailable' && (
         <p className={notice('error')}>The installation cannot be read ({words(state.catalog.reason)}).</p>
       )}
       {state.kind === 'loaded' && state.catalog.kind === 'ready' && (
         <>
-          <h2 className={subheading}>Contributions</h2>
-          <ul className={cx('contributions divide-y divide-zinc-200 dark:divide-zinc-800', card)}>
-            {state.catalog.contributions.map((contribution) => (
-              <li key={contribution.id} className="px-4 py-3 text-sm">
-                <code className={code}>{contribution.id}</code>{' '}
-                <span className={hint}>({originsLabel(contribution.origins)})</span> —{' '}
-                {contributionStatus(contribution)}
-                {contribution.description !== undefined && (
-                  <p className="mt-1 whitespace-pre-wrap break-words">{contribution.description}</p>
-                )}
-              </li>
-            ))}
-          </ul>
-          <h2 className={subheading}>MCP servers</h2>
+          <h2 className={cx(sectionTitle, 'pt-2')}>Commands, skills and agents</h2>
+          {state.catalog.contributions.length === 0 ? (
+            <p className={emptyState}>Nothing is installed.</p>
+          ) : (
+            <ul className={cx('contributions', cardList)}>
+              {state.catalog.contributions.map((contribution) => (
+                <li key={contribution.id} className="px-4 py-3 text-sm">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                    <span className="min-w-0 font-medium break-words">
+                      {contribution.name} <span className={cx('font-normal', meta)}>{contribution.kind}</span>
+                    </span>
+                    <span className={cx('text-xs font-medium', TONE_TEXT[contributionTone(contribution)])}>
+                      {contributionStatus(contribution)}
+                    </span>
+                  </div>
+                  <p className={cx('mt-0.5 break-words', meta)}>
+                    <code className={code}>{contribution.id}</code> · {originsLabel(contribution.origins)}
+                  </p>
+                  {contribution.description !== undefined && (
+                    <p className="mt-1.5 whitespace-pre-wrap break-words text-zinc-700 dark:text-zinc-300">
+                      {contribution.description}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          <h2 className={cx(sectionTitle, 'pt-4')}>MCP servers</h2>
           {state.catalog.servers.length === 0 ? (
-            <p className={cx('text-sm', hint)}>No servers are installed.</p>
+            <p className={emptyState}>No servers are installed.</p>
           ) : (
             <ul className="servers space-y-3">
               {state.catalog.servers.map((server) => (
@@ -284,14 +358,13 @@ export function RunCapabilitiesPanel({ capabilities }: { capabilities: RunCapabi
   const delegated = new Set(used.delegations.map((entry) => entry.agentId));
   const called = new Set(used.operations.filter((row) => row.kind === 'mcp').map((row) => row.subject));
   return (
-    <details className={cx('capabilities group px-4 py-3', card)}>
+    <details className="capabilities group open:basis-full">
       <summary className={summaryLine}>
         <ChevronIcon />
         Capabilities <span className={hint}>· {command.name}</span>
       </summary>
-      <dl className="facts mt-3 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-sm">
-        <dt className={muted}>Command</dt>
-        <dd className="min-w-0 break-words">
+      <Facts className="mt-3">
+        <Fact label="Command">
           <code className={code}>{command.id}</code> <span className={hint}>({originsLabel(command.origins)})</span>
           {command.arguments !== '' && (
             <>
@@ -299,12 +372,11 @@ export function RunCapabilitiesPanel({ capabilities }: { capabilities: RunCapabi
               with arguments <span className="whitespace-pre-wrap">{command.arguments}</span>
             </>
           )}
-        </dd>
-        <dt className={muted}>Limits</dt>
-        <dd>
+        </Fact>
+        <Fact label="Limits">
           Up to {limits.maxDelegations} delegations, depth {limits.delegationDepth}
-        </dd>
-      </dl>
+        </Fact>
+      </Facts>
       <h3 className={subheading}>Bound to this session</h3>
       <ul className={cx('bound', LIST)}>
         {bound.skills.map((skill) => (

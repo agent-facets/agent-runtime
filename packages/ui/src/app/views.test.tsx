@@ -24,6 +24,7 @@ import { type Catalog, InstalledCapabilities } from './Capabilities.tsx';
 import {
   FAILURE_LABELS,
   formatAge,
+  formatClock,
   parseTaskBudget,
   STATE_DESCRIPTIONS,
   STATE_LABELS,
@@ -96,7 +97,7 @@ describe('run views', () => {
       const html = page(state);
       expect(html).toContain(`status-${state.kind}`);
       expect(html).toContain(STATE_LABELS[state.kind]);
-      expect(html.includes('Stop session')).toBe(state.kind === 'working' || state.kind === 'waiting');
+      expect(visible(html).includes('Stop session')).toBe(state.kind === 'working' || state.kind === 'waiting');
       // A finished session needs no explanation beyond its status; every other state explains itself.
       expect(html.includes(STATE_DESCRIPTIONS[state.kind])).toBe(state.kind !== 'succeeded');
     }
@@ -133,7 +134,7 @@ describe('run views', () => {
     expect(details).toContain('shared with any delegated agents');
     // Details start closed.
     expect(detailsTag).not.toBe('');
-    expect(detailsTag).not.toContain('open');
+    expect(detailsTag).not.toContain('open=""');
   });
 
   test('unconfirmed requests are not shown as used, but count against what remains', () => {
@@ -385,7 +386,7 @@ describe('the sidebar', () => {
     expect(html).not.toContain('<b>');
     expect(text).toContain('Waiting for you');
     expect(text).toContain('OpenAI');
-    expect(text).toContain('Started');
+    expect(text).toContain('· started ');
     expect(text).toContain('00000000');
     expect(html).toContain(`href="#/runs/${RUN}"`);
     expect(html).not.toContain('aria-current');
@@ -399,6 +400,19 @@ describe('the sidebar', () => {
     expect(formatAge('2026-09-30T09:00:00Z', now)).toBe('3h');
     expect(formatAge('2026-09-28T12:00:00Z', now)).toBe('2d');
     expect(formatAge('not a time', now)).toBe('not a time');
+  });
+
+  test('clock times carry a date only when not today, and a year only when not this year', () => {
+    const now = new Date(2026, 8, 30, 12).getTime();
+    const today = formatClock(new Date(2026, 8, 30, 9, 5).toISOString(), now);
+    const earlier = formatClock(new Date(2026, 8, 28, 9, 5).toISOString(), now);
+    const lastYear = formatClock(new Date(2025, 8, 28, 9, 5).toISOString(), now);
+    expect(today).not.toContain('28');
+    expect(today).toMatch(/9:05/);
+    expect(earlier).toContain('28');
+    expect(earlier).not.toContain('2026');
+    expect(lastYear).toContain('2025');
+    expect(formatClock('not a time', now)).toBe('not a time');
   });
 
   test('routes: home, a session, and the installed capabilities', () => {
@@ -492,10 +506,11 @@ describe('the conversation', () => {
       '5',
       '6',
       '7',
-      ['8'],
-      '9',
+      // The call paused for an answer is how the question was asked: it folds, and the question itself shows.
+      ['8', '9'],
       '10',
-      '11',
+      // Waiting is said by the question itself.
+      ['11'],
       '12',
     ]);
   });
@@ -569,12 +584,33 @@ describe('the conversation', () => {
     expect(form).toBeGreaterThan(html.lastIndexOf('</ol>'));
     expect(html).toContain('id="pending-question"');
     expect(html).toContain('type="radio"');
+    // The prompt is shown once, in the record, and the form is described by it; the choices are offered only by the
+    // form, not listed again in the record.
+    expect((visible(html).match(/Proceed\?/g) ?? []).length).toBe(1);
+    const promptId = /<p id="(question-prompt-[^"]+)"[^>]*>Proceed\?<\/p>/.exec(html)?.[1];
+    expect(promptId).toBeDefined();
+    expect(html).toContain(`aria-describedby="${promptId}"`);
+    expect(html.slice(record, html.indexOf('data-seq="3"'))).not.toContain('Yes');
+    expect(visible(html.slice(form))).toContain('Yes');
 
-    // Before the question's own event has arrived, it can already be answered.
+    // Before the question's own event has arrived, it can already be answered: its prompt is shown once, as a
+    // provisional entry after the conversation, with no place or time of its own.
     const early = page(waiting, [message(1, 'Before.')], 'loading', { pendingQuestion }, '3');
     expect(early).toContain('aria-label="Answer the question"');
-    expect((early.match(/Proceed\?/g) ?? []).length).toBe(1);
+    expect((visible(early).match(/Proceed\?/g) ?? []).length).toBe(1);
     expect(visible(early)).not.toContain('Waiting for your answer below.');
+    const provisional = early.indexOf('provisional-question');
+    expect(provisional).toBeGreaterThan(early.lastIndexOf('</ol>'));
+    expect(provisional).toBeLessThan(early.indexOf('aria-label="Answer the question"'));
+    expect(early).toContain(`aria-describedby="${promptId}"`);
+    expect(early.slice(provisional, early.indexOf('aria-label="Answer the question"'))).not.toContain('<time');
+  });
+
+  test('once answered, a question shows its choices with their values again', () => {
+    const html = page({ kind: 'working' }, [asked(1), answered(2, false)]);
+    expect(visible(html)).toContain('Yes (true)');
+    expect(visible(html)).toContain('No (false)');
+    expect(visible(html)).toContain('Answer accepted: false');
   });
 
   test('an answered question stays in the conversation and no form is offered', () => {
