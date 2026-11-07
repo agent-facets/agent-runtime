@@ -4,7 +4,7 @@ import { canonicalAnswer, type QuestionView } from '@agent-runtime/contracts';
 import { type FormEvent, useState } from 'react';
 import type { ApiClient } from '../api/client.ts';
 import { actorLabel, formatValue } from './format.ts';
-import { button, cx, field, label, muted, notice } from './ui.tsx';
+import { button, cx, field, label, muted, Notice, optionRow } from './ui.tsx';
 
 const INVALID: Record<string, string> = {
   answer_missing: 'Choose or enter an answer.',
@@ -17,10 +17,37 @@ const INVALID: Record<string, string> = {
   answer_selection_count: 'Select an allowed number of options.',
 };
 
-type Notice = { tone: 'error' | 'uncertain' | 'info'; text: string };
+type AnswerNotice = { tone: 'error' | 'uncertain' | 'info'; text: string };
 
 /** The pending question's form, which the session page moves to on request. */
 export const QUESTION_FORM_ID = 'pending-question';
+
+/** The element holding a question's record (or, before history has it, its provisional entry). */
+export const questionRecordId = (questionId: string) => `question-${questionId}`;
+
+/** The element holding a question's prompt: the form is described by it, so the prompt is shown only once. */
+export const questionPromptId = (questionId: string) => `question-prompt-${questionId}`;
+
+/** Moves to the answer form's first control, on request. */
+export function focusAnswer() {
+  document.getElementById(QUESTION_FORM_ID)?.querySelector<HTMLElement>('input, textarea')?.focus();
+}
+
+/** Brings a question's prompt into view and focus, on request. */
+function viewQuestion(questionId: string) {
+  const record = document.getElementById(questionRecordId(questionId));
+  if (record === null) return;
+  record.tabIndex = -1;
+  record.scrollIntoView({ block: 'center' });
+  record.focus({ preventScroll: true });
+}
+
+const askerLabel = (question: QuestionView) =>
+  question.asker === undefined
+    ? 'The agent asks'
+    : question.asker.kind === 'root'
+      ? 'The root agent asks'
+      : `${actorLabel(question.asker)} asks`;
 
 export function QuestionForm({
   client,
@@ -39,7 +66,7 @@ export function QuestionForm({
   const [single, setSingle] = useState<number | undefined>();
   const [multiple, setMultiple] = useState<ReadonlySet<number>>(new Set());
   const [busy, setBusy] = useState(false);
-  const [message, setNotice] = useState<Notice | undefined>();
+  const [message, setNotice] = useState<AnswerNotice | undefined>();
 
   const answer = (): { ok: true; value: unknown } | { ok: false } => {
     if (input.kind === 'text') return { ok: true, value: text };
@@ -77,33 +104,32 @@ export function QuestionForm({
   };
 
   return (
+    // The prompt itself is in the conversation (or its provisional entry above the form): the form only answers it,
+    // and is described by it, so a screen reader hears the question with the controls.
     <form
       id={QUESTION_FORM_ID}
-      className={cx(
-        'question space-y-3 border-amber-300 p-4 shadow-sm dark:border-amber-800',
-        'rounded-xl border bg-white dark:bg-zinc-900',
-      )}
+      className="question space-y-3"
       onSubmit={submit}
       aria-label="Answer the question"
+      aria-describedby={questionPromptId(question.questionId)}
     >
-      <div>
-        <h3 className="text-xs font-semibold tracking-wide text-amber-700 uppercase dark:text-amber-400">
-          {question.asker === undefined
-            ? 'The agent asks'
-            : question.asker.kind === 'root'
-              ? 'The root agent asks'
-              : `${actorLabel(question.asker)} asks`}
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h3 className="flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-400">
+          <span aria-hidden="true" className="size-1.5 rounded-full bg-amber-500" />
+          {askerLabel(question)}
         </h3>
-        <p className="prompt mt-1 text-[0.9375rem] break-words whitespace-pre-wrap">{question.prompt}</p>
+        <button type="button" className={button.link} onClick={() => viewQuestion(question.questionId)}>
+          View question ↑
+        </button>
       </div>
       {input.kind === 'text' && (
         <label className={label}>
-          Your answer
+          <span className="sr-only">Your answer</span>
           <textarea
             name="answer"
             value={text}
             rows={2}
-            className={cx(field, 'max-h-40')}
+            className={cx(field, 'max-h-40 resize-y')}
             onChange={(event) => setText(event.target.value)}
           />
           <span className={cx('mt-1 block text-xs font-normal', muted)}>
@@ -112,19 +138,16 @@ export function QuestionForm({
         </label>
       )}
       {input.kind === 'choice' && (
-        <fieldset className="max-h-48 space-y-1 overflow-y-auto">
-          <legend className={cx('mb-1 text-xs', muted)}>
+        <fieldset className="flex flex-wrap gap-2">
+          <legend className={cx('mb-2 text-xs', muted)}>
             {input.multiple ? `Choose ${input.minSelections} to ${input.maxSelections}` : 'Choose one'}
           </legend>
           {input.options.map((option, index) => (
-            <label
-              key={JSON.stringify(option.value)}
-              className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-zinc-200 px-3 py-2 text-sm hover:bg-zinc-50 has-checked:border-zinc-900 has-checked:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800 dark:has-checked:border-zinc-100 dark:has-checked:bg-zinc-800"
-            >
+            <label key={JSON.stringify(option.value)} className={optionRow}>
               <input
                 type={input.multiple ? 'checkbox' : 'radio'}
                 name="answer"
-                className="accent-zinc-900 dark:accent-zinc-100"
+                className="mt-0.5 accent-zinc-900 dark:accent-zinc-100"
                 checked={input.multiple ? multiple.has(index) : single === index}
                 onChange={() => {
                   if (!input.multiple) return setSingle(index);
@@ -134,7 +157,7 @@ export function QuestionForm({
                   setMultiple(next);
                 }}
               />
-              {option.label}
+              <span className="min-w-0 break-words">{option.label}</span>
             </label>
           ))}
         </fieldset>
@@ -143,7 +166,11 @@ export function QuestionForm({
         <button type="submit" className={button.primary} disabled={busy}>
           {busy ? 'Sending…' : 'Send answer'}
         </button>
-        {message !== undefined && <p className={cx(notice(message.tone), 'flex-1')}>{message.text}</p>}
+        {message !== undefined && (
+          <Notice tone={message.tone} className="min-w-48 flex-1">
+            {message.text}
+          </Notice>
+        )}
       </div>
     </form>
   );

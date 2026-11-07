@@ -669,12 +669,15 @@ page is a single composer. A session's page has a slim header — status, model,
 while it runs — then any failure with its category and guidance, **Details** (workspace, exact times, full budget
 accounting — `consumed` of `maximum`, plus any `unconfirmed` admissions — and the ID), and its conversation. The
 conversation is the owner's message followed by every recorded event in order. Assistant messages, questions,
-answers, delegations, status changes and anything failed or uncertain are always shown. Consecutive routine work
-(model requests and tool calls that completed normally) by one agent is folded into an **Activity** entry in place,
-which opens to every event with its time and tool results. A pending question stays in its place in the
-conversation and is answered in a form docked below it, like a reply (in a command run, it names the agent that
-asked). New activity never scrolls the page; **Jump to latest** appears when newer entries are out of view. A session
-cannot yet be continued with another message.
+answers, delegations, other status changes and anything failed or uncertain are always shown. Consecutive routine work
+(model requests and tool calls that completed normally, the call that asks a question, and the working and waiting
+status changes, which the question itself announces) by one agent is folded into an **Activity** entry in place,
+which opens to every event with its time and tool results. A pending question's prompt is shown once, in its place
+in the conversation, and is answered in a form below it, like a reply (in a command run, it names the agent that
+asked); **View question** and **Answer** move between the two. On a short screen the form follows the conversation
+instead of covering it. New activity never scrolls the page; **Jump to latest** appears when newer entries are out of
+view. A session cannot yet be continued with another message. [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) describes the
+console's design and the rules for changing it.
 
 Assistant messages are rendered as Markdown (paragraphs, lists, emphasis, code and links) with
 [`react-markdown`](https://github.com/remarkjs/react-markdown): raw HTML is shown as text, images are not loaded,

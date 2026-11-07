@@ -9,20 +9,34 @@ import { type Catalog, originsLabel, useCatalog } from './Capabilities.tsx';
 import { ConnectAnthropic, ConnectOpenAI } from './Connect.tsx';
 import { parseTaskBudget, providerLabel, TASK_BUDGET_GUIDANCE } from './format.ts';
 import { runHref } from './route.ts';
-import { ArrowUpIcon, button, ChevronIcon, card, cx, field, label, muted, notice, summaryLine } from './ui.tsx';
+import {
+  ArrowUpIcon,
+  button,
+  column,
+  composer,
+  cx,
+  Disclosure,
+  field,
+  label,
+  meta,
+  muted,
+  Notice,
+  notice,
+  pageTitle,
+} from './ui.tsx';
 
 export function Home({ client }: { client: ApiClient }) {
   const catalog = useCatalog(client);
   return (
     <main className="flex h-full overflow-y-auto">
-      <div className="m-auto w-full max-w-2xl px-4 py-10">
+      <div className={cx(column, 'my-auto py-10')}>
         <StartForm client={client} catalog={catalog} />
       </div>
     </main>
   );
 }
 
-type Notice = { tone: 'error' | 'uncertain'; text: string } | undefined;
+type StartNotice = { tone: 'error' | 'uncertain'; text: string } | undefined;
 type Mode = 'goal' | 'command';
 type StartContent =
   | { provider: Provider; goal: string; stepBudget: number }
@@ -39,7 +53,7 @@ export function StartForm({ client, catalog }: { client: ApiClient; catalog: Cat
   // The session's model-request limit as typed; seeded once from the configured default, then the owner's to change.
   const [budgetText, setBudgetText] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
-  const [notice_, setNotice] = useState<Notice>();
+  const [notice_, setNotice] = useState<StartNotice>();
   // A start whose acknowledgement was lost: retried exactly as sent, whatever has been refreshed or edited since.
   const [unsettled, setUnsettled] = useState<StartBody | undefined>();
   const identity = useRef(new RequestIdentity<StartContent>());
@@ -121,20 +135,16 @@ export function StartForm({ client, catalog }: { client: ApiClient; catalog: Cat
 
   return (
     <section className="start">
-      <h1 className="mb-6 text-center text-2xl font-semibold tracking-tight">New session</h1>
-      <div className="space-y-3">
-        {optionsError && <p className={notice('error')}>The runtime’s options could not be loaded.</p>}
-        {options !== undefined && !options.workspace.available && (
-          <p className={notice('error')}>The workspace “{options.workspace.label}” is not available.</p>
-        )}
-      </div>
-      <form
-        onSubmit={submit}
-        className={cx(
-          card,
-          'mt-3 shadow-sm focus-within:border-zinc-400 focus-within:shadow-md dark:focus-within:border-zinc-600',
-        )}
-      >
+      <h1 className={cx(pageTitle, 'mb-6 text-center')}>New session</h1>
+      {(optionsError || (options !== undefined && !options.workspace.available)) && (
+        <div className="mb-3 space-y-3">
+          {optionsError && <Notice tone="error">The runtime’s options could not be loaded.</Notice>}
+          {options !== undefined && !options.workspace.available && (
+            <Notice tone="error">The workspace “{options.workspace.label}” is not available.</Notice>
+          )}
+        </div>
+      )}
+      <form onSubmit={submit} aria-label="Start a session" className={composer}>
         {mode === 'goal' ? (
           <label className="block">
             <span className="sr-only">Your message</span>
@@ -144,7 +154,7 @@ export function StartForm({ client, catalog }: { client: ApiClient; catalog: Cat
               rows={4}
               required
               placeholder="What should the agent do?"
-              className="block max-h-[50dvh] min-h-28 w-full resize-y rounded-t-xl border-0 bg-transparent px-4 pt-4 pb-2 text-[15px] placeholder:text-zinc-400 focus:outline-none"
+              className="block max-h-[50dvh] min-h-28 w-full resize-y rounded-t-2xl border-0 bg-transparent px-4 pt-4 pb-2 text-base placeholder:text-zinc-400 focus:outline-none dark:placeholder:text-zinc-500"
               onChange={(event) => setGoal(event.target.value)}
               onKeyDown={(event) => {
                 // Ctrl/Cmd+Enter starts the session; Enter alone adds a line.
@@ -178,7 +188,8 @@ export function StartForm({ client, catalog }: { client: ApiClient; catalog: Cat
               <label
                 key={value}
                 className={cx(
-                  'cursor-pointer rounded-md px-2.5 py-1 text-xs font-medium has-focus-visible:outline-2 has-focus-visible:outline-blue-600',
+                  'cursor-pointer rounded-md px-2.5 py-1 text-xs font-medium pointer-coarse:py-2',
+                  'has-focus-visible:outline-2 has-focus-visible:outline-blue-600',
                   mode === value
                     ? 'bg-white text-zinc-900 shadow-xs dark:bg-zinc-950 dark:text-zinc-100'
                     : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
@@ -195,14 +206,17 @@ export function StartForm({ client, catalog }: { client: ApiClient; catalog: Cat
               </label>
             ))}
           </fieldset>
-          <label className="min-w-0">
-            <span className="sr-only">Model</span>
+          {/* Named directly rather than by a wrapping label, whose text would include the selected option's. */}
+          <span className="min-w-0">
             <select
               name="provider"
+              aria-label="Model"
               value={provider ?? ''}
-              className="h-8 max-w-full truncate rounded-md border-0 bg-transparent pr-7 pl-2 text-xs font-medium text-zinc-700 hover:bg-zinc-100 focus-visible:outline-2 focus-visible:outline-blue-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              disabled={options === undefined}
+              className="h-8 max-w-[14rem] truncate rounded-md border-0 bg-transparent pr-7 pl-2 text-xs font-medium text-zinc-700 hover:bg-zinc-100 pointer-coarse:h-11 sm:max-w-xs dark:text-zinc-300 dark:hover:bg-zinc-800"
               onChange={(event) => setProvider(event.target.value as Provider)}
             >
+              {options === undefined && <option value="">Loading models…</option>}
               {options?.providers.map((entry) => (
                 <option key={entry.provider} value={entry.provider}>
                   {providerLabel(entry.provider)} · {entry.model}
@@ -210,7 +224,7 @@ export function StartForm({ client, catalog }: { client: ApiClient; catalog: Cat
                 </option>
               ))}
             </select>
-          </label>
+          </span>
           <button type="submit" disabled={!canStart} className={cx(button.primary, 'ml-auto')}>
             {busy ? 'Starting…' : identity.current.pending ? 'Submit again' : 'Start session'}
             {!busy && <ArrowUpIcon />}
@@ -224,7 +238,7 @@ export function StartForm({ client, catalog }: { client: ApiClient; catalog: Cat
             {selected.readiness === 'reauthorization_required' && ' Connect it below.'}
           </p>
         )}
-        {notice_ !== undefined && <p className={notice(notice_.tone)}>{notice_.text}</p>}
+        {notice_ !== undefined && <Notice tone={notice_.tone}>{notice_.text}</Notice>}
         {unsettled !== undefined && (
           <p className="flex flex-wrap items-center gap-2 text-sm">
             <button type="button" className={button.secondary} disabled={busy} onClick={() => void send(unsettled)}>
@@ -263,37 +277,6 @@ export function StartForm({ client, catalog }: { client: ApiClient; catalog: Cat
   );
 }
 
-/**
- * A disclosure the owner may close, which stays open while `forced`: a value or state that needs attention is
- * never hidden. Its contents stay mounted when closed, so nothing typed or in progress is lost.
- */
-function Disclosure({
-  className,
-  summary,
-  forced,
-  children,
-}: {
-  className: string;
-  summary: ReactNode;
-  forced: boolean;
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <details
-      className={cx('group', className)}
-      open={open || forced}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-    >
-      <summary className={summaryLine}>
-        <ChevronIcon />
-        {summary}
-      </summary>
-      <div className="mt-3 w-full">{children}</div>
-    </details>
-  );
-}
-
 /** Settings most sessions leave alone. An invalid limit keeps them open. */
 export function SessionOptions({
   budgetText,
@@ -306,7 +289,7 @@ export function SessionOptions({
   const invalid = budgetText !== undefined && limit === undefined;
   return (
     <Disclosure
-      className="disclosure options open:basis-full"
+      className="options open:basis-full"
       forced={invalid}
       summary={
         <>
@@ -327,7 +310,7 @@ export function SessionOptions({
 export function ProviderConnection({ ready, children }: { ready: boolean; children: ReactNode }) {
   return (
     <Disclosure
-      className="disclosure connection-settings open:basis-full"
+      className="connection-settings open:basis-full"
       forced={!ready}
       summary={
         <>
@@ -357,21 +340,23 @@ export function TaskBudgetField({
     <div className="field max-w-sm">
       <label className={label}>
         Model-request limit
-        <input
-          type="number"
-          name="stepBudget"
-          inputMode="numeric"
-          min={STEP_BUDGET_MIN}
-          max={STEP_BUDGET_MAX}
-          step={1}
-          required
-          value={budgetText ?? ''}
-          disabled={budgetText === undefined}
-          aria-invalid={invalid}
-          aria-describedby="step-budget-help"
-          className={cx(field, 'w-32 aria-invalid:border-red-500')}
-          onChange={(event) => setBudgetText(event.target.value)}
-        />
+        <span className="block w-32">
+          <input
+            type="number"
+            name="stepBudget"
+            inputMode="numeric"
+            min={STEP_BUDGET_MIN}
+            max={STEP_BUDGET_MAX}
+            step={1}
+            required
+            value={budgetText ?? ''}
+            disabled={budgetText === undefined}
+            aria-invalid={invalid}
+            aria-describedby="step-budget-help"
+            className={field}
+            onChange={(event) => setBudgetText(event.target.value)}
+          />
+        </span>
       </label>
       <p
         id="step-budget-help"
@@ -402,10 +387,17 @@ function CommandFields(props: {
     </button>
   );
   if (state.kind === 'idle' || state.kind === 'loading') {
-    return <p className={cx('text-sm', muted)}>Loading installed commands…</p>;
+    return <p className={cx('py-2 text-sm', muted)}>Loading installed commands…</p>;
   }
   if (state.kind === 'error') {
-    return <p className={notice('error')}>The installed commands could not be loaded. {refresh}</p>;
+    return (
+      <div className="flex flex-wrap items-center gap-3">
+        <Notice tone="error" className="flex-1">
+          The installed commands could not be loaded.
+        </Notice>
+        {refresh}
+      </div>
+    );
   }
   if (state.catalog.kind === 'unconfigured') {
     return (
@@ -414,10 +406,21 @@ function CommandFields(props: {
   }
   if (state.catalog.kind === 'unavailable') {
     return (
-      <p className={notice('error')}>
-        The installed commands cannot be read ({state.catalog.reason.replaceAll('_', ' ')}). Send a message, or{' '}
+      <div className="flex flex-wrap items-center gap-3">
+        <p className={cx(notice('error'), 'flex-1')}>
+          The installed commands cannot be read ({state.catalog.reason.replaceAll('_', ' ')}). Send a message instead,
+          or try again.
+        </p>
         {refresh}
-      </p>
+      </div>
+    );
+  }
+  if (commands.length === 0) {
+    return (
+      <div className="flex flex-wrap items-center gap-3">
+        <p className={cx('flex-1 text-sm', muted)}>No commands are installed. Send a message instead.</p>
+        {refresh}
+      </div>
     );
   }
   return (
@@ -427,6 +430,7 @@ function CommandFields(props: {
           Command
           <select
             name="command"
+            aria-label="Command"
             value={props.commandId}
             className={field}
             onChange={(event) => props.setCommandId(event.target.value)}
@@ -444,10 +448,9 @@ function CommandFields(props: {
         </label>
         {refresh}
       </div>
-      {commands.length === 0 && <p className={cx('text-sm', muted)}>No commands are installed.</p>}
       {command !== undefined && (
         <>
-          <p className={cx('text-xs', muted)}>
+          <p className={meta}>
             {command.name} · {originsLabel(command.origins)}
           </p>
           {command.description !== undefined && (
@@ -459,7 +462,7 @@ function CommandFields(props: {
               name="arguments"
               value={props.args}
               rows={3}
-              className={field}
+              className={cx(field, 'max-h-[40dvh] resize-y')}
               onChange={(event) => props.setArgs(event.target.value)}
             />
           </label>
