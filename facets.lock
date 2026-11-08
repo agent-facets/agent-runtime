@@ -129,8 +129,8 @@
         "kind": "registry",
         "registry": "https://api.agentfacets.io"
       },
-      "version": "1.0.0",
-      "integrity": "sha256:5733e9753ea5b9e2a4ac1ff9f7d4f05ad6c6b2ac74fd1862cca8da2120d554c0",
+      "version": "1.0.1",
+      "integrity": "sha256:d06388ae3a2b022454b856025d295241ed9b34dcca7f5a9bf21523d22fd3c9a2",
       "assets": [
         {
           "scope": "project",
@@ -142,7 +142,7 @@
           "files": [
             {
               "path": "skills/graphite-submit-branch-rules/SKILL.md",
-              "integrity": "sha256:c612d55c2104ff93da406f349b784a08ac975a5b49b726008b8ccc52d6da785a"
+              "integrity": "sha256:9959d2a5ba65003c781e4ed11d3d45584a5f6552f1da51d362be285287869201"
             }
           ]
         },
@@ -885,8 +885,8 @@
         "kind": "registry",
         "registry": "https://api.agentfacets.io"
       },
-      "version": "1.0.0",
-      "integrity": "sha256:4780eb79bd4fee05089a56e172dd45cbe6b67bcd49a88806aee1d08e90c6cfb9",
+      "version": "1.0.1",
+      "integrity": "sha256:c089920c3762220074b9b5401c5782b7ecc7da848110e262bb55b6ad37ddaeaf",
       "assets": [
         {
           "scope": "project",
@@ -898,7 +898,7 @@
           "files": [
             {
               "path": "skills/ste100-writer/SKILL.md",
-              "integrity": "sha256:e56ac69655f39e1ed912132eaf39dbed26f5919255352a998c8476dc5dd893e1"
+              "integrity": "sha256:f271a37caadb6c0fc6a5b948f7972f9d2734b92b602f18555984d372c917302f"
             },
             {
               "path": "skills/ste100-writer/references/checklist.md",
