@@ -40,6 +40,9 @@ What to test, and where:
 ## Documentation
 
 - Never link to an archived OpenSpec change (`openspec/changes/archive/`, or a change's path once it has been archived). Archives are local-only; name the change in plain text instead, or link to the main spec under `openspec/specs/`.
+- Before you create or revise any OpenSpec prose, load the `ste100-writer` skill.
+  Obey Article IV in `openspec/config.yaml`, including its scope, accuracy rules, and final checks.
+  This requirement also applies when the workflow does not fetch OpenSpec instructions.
 
 ## Console design
 

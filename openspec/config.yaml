@@ -58,6 +58,38 @@ context: |
   - Proposals referencing behavior covered by existing documentation MUST cite the documentation and any required updates
   - Implementations that contradict documentation SHOULD thoroughly describe how to update the documentation and correct any misalignment
 
+  ---
+
+  ## Article IV: Simplified Technical English
+
+  ### Statement
+  All new or revised OpenSpec prose in this repository MUST comply with ASD-STE100 Simplified Technical English.
+  Before agents create or revise this prose, they MUST load the `ste100-writer` skill.
+  Agents MUST use the skill's rules and complete its final checklist.
+
+  ### Scope
+  This article applies to proposals, designs, specifications, tasks, adversarial artifacts, reviews, and other OpenSpec prose.
+  It also applies to revisions made through reconciliation or specification sync.
+  The requirement applies to new or revised prose only.
+  This article does not require changes to untouched prose.
+
+  ### Technical accuracy
+  Agents MUST preserve technical meaning and RFC 2119 requirement levels.
+  Agents MUST preserve required OpenSpec syntax, required headings, exact template text, code, paths, and identifiers.
+  These fixed elements are not prose to rewrite for language compliance.
+  If a language rule conflicts with technical accuracy or required syntax, agents MUST report the conflict.
+  Agents MUST NOT change technical meaning or required syntax to satisfy a language rule.
+
+  ### Rationale
+  Consistent language makes artifacts easier to read and review.
+  The installed skill supplies the language rules without a separate copy in this constitution.
+
+  ### Enforcement
+  Before agents finish an artifact, they MUST check its new or revised prose with the skill's checklist.
+  Agents MUST correct failures in that prose.
+  Agents MUST report unresolved conflicts and checks they cannot complete, including uncertain Dictionary entries.
+  Agents MUST NOT claim verified compliance while these issues remain unresolved.
+
 # Add custom rules for specific artifacts.
 rules:
   specs:
