@@ -100,6 +100,7 @@ Run from the repository root (prefix with `mise exec --` if mise is not activate
 |---|---|
 | `bun run dev` | Runs the runtime from source: console edits reload in the browser, backend edits restart the backend (see [Development](#development)). |
 | `bun run dev:stack <command>` | Operates the containerized development deployment (`compose.dev.yaml`, project `agent-runtime-dev`); see [Development deployment](#development-deployment). |
+| `bun run live:stack <command>` | Operates the live deployment (`compose.yaml`, project `agent-runtime-live`): lifecycle, explicit builds and deployments, and Tailscale recovery; see [Live deployment](#live-deployment). |
 | `bun run build` | Builds the application to `packages/runtime/dist/`, the runtime facet adapter to `packages/facet-adapter/dist/` and the (empty) MCP program set to `packages/mcp-programs/dist/`. |
 | `bun run start` | Runs the built application. |
 | `bun run check` | The complete non-live gate through Turbo: lint, typechecks, unit tests, the build, then the facet, integration, browser, container and development-container suites one at a time. Reuses valid cached results. Requires Docker, `bun run browser:install` and a `facet` CLI on `PATH` (CI installs the pinned one). CI runs this. |
@@ -891,6 +892,63 @@ container: open the login link it prints (`docker compose logs tailscale`), or, 
 generate a one-time auth key in the Tailscale admin console and run
 `docker compose exec tailscale tailscale login --auth-key=<key>` (do not run the console's install script on the
 host; only the container should join).
+
+### Live deployment
+
+`bun run live:stack` operates the live deployment: the project `agent-runtime-live` with `compose.yaml` only. It
+keeps its environment file and management state in `~/.local/state/agent-runtime-live/` (mode `0700`):
+`compose.env`, `deployment.json` (the selected runtime image ID and any unfinished operation) and
+`management.lock`. One management operation runs at a time. The command passes no ambient `COMPOSE_*` or
+`AGENT_RUNTIME_*` variables to Docker, and it never removes a volume, an image or a Tailscale identity.
+
+Daily operation:
+
+```bash
+bun run live:stack status            # containers, images, readiness and the Tailscale node
+bun run live:stack logs              # follow the runtime; name a service, or use --tail <n>, --since <t>, --no-follow
+bun run live:stack stop              # stop every service; `stop runtime` stops only the runtime
+bun run live:stack start             # start the existing containers and wait for readiness
+bun run live:stack restart           # restart the runtime container as it is
+bun run live:stack reload            # recreate the runtime on the selected image (after a configuration change)
+bun run live:stack auth anthropic status
+bun run live:stack down --yes        # remove containers and network; volumes and the selected image stay
+```
+
+`start`, `restart` and `reload` never build, pull or change the image. `start` does not create containers; after
+`down`, create them with `deploy --image <selected image ID>`. A restarted container keeps its configuration and
+mounts, so use `reload` after you change the environment file or replace the operator configuration file.
+
+Releases are two explicit steps:
+
+```bash
+bun run live:stack build                          # build a production image under a new release tag; deploys nothing
+bun run live:stack deploy --image <tag or image ID>
+```
+
+`deploy` accepts only a production runtime image that is present locally. It shows the current and new image IDs,
+asks for confirmation (`--yes` when there is no terminal), recreates only the runtime and records the image after
+`/readyz` reports ready. Finish or cancel waiting runs first: work in progress is interrupted, and a run waiting for
+an answer may not continue under another build. A failed deployment is not rolled back. It stays recorded as
+unfinished, and other image changes are refused until you deploy its target again or deploy the previous image. Going
+back is not possible after the new image migrated the database.
+
+Tailscale:
+
+```bash
+bun run live:stack tailscale status    # node state, Serve configuration and the runtime's attachment
+bun run live:stack tailscale enroll    # the login link, if the node needs one
+bun run live:stack tailscale recover   # recreate the Tailscale container on its identity volume, then the runtime
+```
+
+The runtime shares the Tailscale container's network namespace, so a replaced Tailscale container leaves the
+runtime unreachable until the runtime is recreated. `recover` does both, in order, and waits up to two minutes for
+readiness while PostgreSQL releases the old database session. If the node needs to sign in, recovery stops: enroll
+it, then run `recover` again. The tailnet access policy and node removal stay in the Tailscale admin console.
+
+Unlike `dev:stack`, the live deployment runs a built image: `reload` recreates the container instead of signalling a
+supervisor, and `auth` runs the bundled `bun dist/auth.js`. `auth --offline ...` runs it in a one-off container while
+the runtime is stopped, for example `auth --offline mcp set <slot> < token-file`. The facets overlay is not
+supported by `live:stack`.
 
 ### Runtime facets in a deployment
 

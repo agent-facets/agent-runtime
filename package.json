@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "bun run --cwd packages/runtime dev",
     "dev:stack": "bun --no-env-file scripts/dev-stack.ts",
+    "live:stack": "bun --no-env-file scripts/live-stack.ts",
     "start": "bun run --cwd packages/runtime start",
     "build": "bun --no-env-file scripts/run-turbo.ts build",
     "check": "bun --no-env-file scripts/run-turbo.ts check",
